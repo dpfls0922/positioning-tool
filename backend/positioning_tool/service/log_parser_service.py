@@ -1,0 +1,741 @@
+import csv
+import json
+import math
+import os
+import re
+from datetime import datetime, timedelta
+
+from backend.positioning_tool.service.paths import PATHS
+from backend.positioning_tool.model.log_entities import Coordinate, Line, CoordType, LineType, RouteRequestType
+
+EARTH_RADIUS = 6371000.0
+DEG2RAD = math.pi / 180.0
+
+
+COORDINATES = {coord_type: [] for coord_type in CoordType}
+LINES = {line_type: [] for line_type in LineType}
+min_timestamp = datetime.max
+max_timestamp = datetime.min
+last_road_match_state = None
+last_route_match_state = None
+last_threshold_info = None
+log_base_timestamp = None
+DLT_RELEVANT_BYTE_KEYWORDS = [
+    b"[GPS]",
+    b"[GNSS]",
+    b"CNaviModule::ReceiveGps pos(",
+    b"Match  Pos",
+    b"Match Pos",
+    b"[MM_RESULT]",
+    b"requestRouting",
+    b"shouldStayRoute distance:",
+    b"[[MM] : 4] State =",
+]
+
+
+def lat_lon_dist(lat1, lon1, lat2, lon2):
+    local_x = -(((lon2 - lon1) * DEG2RAD) * math.cos(DEG2RAD * lat1)) * EARTH_RADIUS
+    local_y = ((lat2 - lat1) * DEG2RAD) * EARTH_RADIUS
+    return math.sqrt((local_x * local_x) + (local_y * local_y))
+
+
+def reset_runtime_state():
+    global COORDINATES, LINES
+    global min_timestamp, max_timestamp
+    global last_road_match_state, last_route_match_state, last_threshold_info, log_base_timestamp
+
+    COORDINATES = {coord_type: [] for coord_type in CoordType}
+    LINES = {line_type: [] for line_type in LineType}
+    min_timestamp = datetime.max
+    max_timestamp = datetime.min
+    last_road_match_state = None
+    last_route_match_state = None
+    last_threshold_info = None
+    log_base_timestamp = None
+
+
+def parse_log(log_file_path=None):
+    global last_road_match_state, last_route_match_state, last_threshold_info
+    global log_base_timestamp
+
+    current_id = 1
+    temp_gnss1_coord = None
+    temp_gnss2_coord = None
+    last_dr_coordinate = None
+    last_vpm_coordinate = None
+    last_road_match_coord = None
+    last_route_match_coord = None
+    source_path = log_file_path or PATHS.log_file_path
+    log_base_timestamp = infer_initial_timestamp(source_path)
+    current_timestamp = log_base_timestamp
+    line_number = 0
+
+    if not os.path.exists(source_path):
+        print(f"오류: 로그 파일 '{source_path}'을 찾을 수 없습니다.")
+        return False
+
+    for dlt_id, line, reception_timestamp in iterate_log_records(source_path):
+            line_number += 1
+
+            # Priority: DLT storage-header reception timestamp (absolute time).
+            if reception_timestamp is not None:
+                current_timestamp = reception_timestamp
+            else:
+                parsed_timestamp = parse_datetime(line, current_timestamp)
+                if parsed_timestamp:
+                    current_timestamp = parsed_timestamp
+
+            timestamp = current_timestamp
+            if timestamp:
+                update_timestamp_range(timestamp)
+
+            threshold_info = parse_threshold_info(line)
+            if threshold_info:
+                last_threshold_info = threshold_info
+
+            road_match_state = parse_road_match_state(line)
+            route_match_state = parse_route_match_state(line)
+            if road_match_state:
+                last_road_match_state = road_match_state
+            if route_match_state:
+                last_route_match_state = route_match_state
+
+            for coord_type in CoordType:
+                if coord_type.pattern is None:
+                    continue
+
+                match = coord_type.pattern.search(line)
+                if not match:
+                    continue
+
+                if coord_type == CoordType.GNSS1:
+                    gnss_lat = float(match.group(1))
+                    gnss_lon = float(match.group(2))
+                    heading = float(match.group(3))
+                    speed = float(match.group(4))
+                    raw_lat = float(match.group(5))
+                    raw_lon = float(match.group(6))
+
+                    if gnss_lat == 0.0 and gnss_lon == 0.0:
+                        break
+
+                    temp_gnss1_coord = Coordinate(
+                        dlt_id=dlt_id,
+                        type=coord_type,
+                        latitude=gnss_lat,
+                        longitude=gnss_lon,
+                        heading=heading,
+                        extra={"Speed": speed},
+                        timestamp=timestamp,
+                    )
+
+                    # Some logs do not include separate [GNSS] lines.
+                    # In those cases, use the DR tuple in [GPS] as Raw GNSS.
+                    if raw_lat != 0.0 or raw_lon != 0.0:
+                        temp_gnss2_coord = Coordinate(
+                            dlt_id=dlt_id,
+                            type=CoordType.GNSS2,
+                            latitude=raw_lat,
+                            longitude=raw_lon,
+                            heading=heading,
+                            extra={"Speed": speed},
+                            timestamp=timestamp,
+                        )
+
+                elif coord_type == CoordType.GNSS2:
+                    latitude = float(match.group(1)) / 10000000
+                    longitude = float(match.group(2)) / 10000000
+                    heading = float(match.group(3))
+                    speed = float(match.group(4))
+
+                    if latitude == 0.0 and longitude == 0.0:
+                        break
+
+                    temp_gnss2_coord = Coordinate(
+                        dlt_id=dlt_id,
+                        type=coord_type,
+                        latitude=latitude,
+                        longitude=longitude,
+                        heading=heading,
+                        extra={"Speed": speed},
+                        timestamp=timestamp,
+                    )
+
+                elif coord_type == CoordType.DR:
+                    latitude = float(match.group(1))
+                    longitude = float(match.group(2))
+                    speed = float(match.group(3))
+                    is_dr = int(match.group(4))
+                    heading = float(match.group(5))
+
+                    if latitude == 0.0 and longitude == 0.0:
+                        break
+
+                    if temp_gnss1_coord:
+                        temp_gnss1_coord.id = current_id
+
+                        # DR correction must connect: previous DR -> current GNSS
+                        if last_dr_coordinate:
+                            dist = lat_lon_dist(
+                                temp_gnss1_coord.latitude,
+                                temp_gnss1_coord.longitude,
+                                last_dr_coordinate.latitude,
+                                last_dr_coordinate.longitude,
+                            )
+                            speed_val = temp_gnss1_coord.extra.get("Speed", 0.0)
+                            correction_extra = {
+                                "reason": f"dist={dist:.2f}m, speed={speed_val:.2f}",
+                            }
+
+                            LINES[LineType.DR_CORRECTION].append(
+                                Line(
+                                    id=current_id,
+                                    type=LineType.DR_CORRECTION,
+                                    start=(last_dr_coordinate.latitude, last_dr_coordinate.longitude),
+                                    end=(temp_gnss1_coord.latitude, temp_gnss1_coord.longitude),
+                                    timestamp=temp_gnss1_coord.timestamp,
+                                    extra=correction_extra,
+                                )
+                            )
+
+                        LINES[LineType.GNSS_TO_DR].append(
+                            Line(
+                                id=current_id,
+                                type=LineType.GNSS_TO_DR,
+                                start=(temp_gnss1_coord.latitude, temp_gnss1_coord.longitude),
+                                end=(latitude, longitude),
+                                timestamp=temp_gnss1_coord.timestamp,
+                                extra={},
+                            )
+                        )
+                        COORDINATES[CoordType.GNSS1].append(temp_gnss1_coord)
+                        temp_gnss1_coord = None
+
+                    if temp_gnss2_coord:
+                        temp_gnss2_coord.id = current_id
+                        COORDINATES[CoordType.GNSS2].append(temp_gnss2_coord)
+                        temp_gnss2_coord = None
+
+                    dr_coordinate = Coordinate(
+                        id=current_id,
+                        dlt_id=dlt_id,
+                        type=coord_type,
+                        latitude=latitude,
+                        longitude=longitude,
+                        heading=heading,
+                        extra={"isDRGps": is_dr, "Speed": speed},
+                        timestamp=timestamp,
+                    )
+
+                    COORDINATES[coord_type].append(dr_coordinate)
+                    last_dr_coordinate = dr_coordinate
+                    current_id += 1
+
+                elif coord_type == CoordType.ROAD_MATCH:
+                    if "[MM_RESULT]" not in line:
+                        continue
+                    latitude, longitude, heading = map(float, match.groups())
+                    if latitude == 0.0 and longitude == 0.0:
+                        break
+
+                    road_coordinate = Coordinate(
+                        id=current_id - 1,
+                        dlt_id=dlt_id,
+                        type=coord_type,
+                        latitude=latitude,
+                        longitude=longitude,
+                        heading=heading,
+                        timestamp=timestamp,
+                        extra={"match_state": last_road_match_state if last_road_match_state else ""},
+                    )
+                    COORDINATES[coord_type].append(road_coordinate)
+                    last_road_match_coord = road_coordinate
+
+                elif coord_type == CoordType.ROUTE_MATCH:
+                    if "[MM_RESULT]" in line:
+                        continue
+                    latitude, longitude, heading = map(float, match.groups())
+                    if latitude == 0.0 and longitude == 0.0:
+                        break
+
+                    route_coordinate = Coordinate(
+                        id=current_id - 1,
+                        dlt_id=dlt_id,
+                        type=coord_type,
+                        latitude=latitude,
+                        longitude=longitude,
+                        heading=heading,
+                        timestamp=timestamp,
+                        extra={"match_state": last_route_match_state if last_route_match_state else ""},
+                    )
+                    COORDINATES[coord_type].append(route_coordinate)
+                    last_route_match_coord = route_coordinate
+
+                elif coord_type == CoordType.VPM:
+                    latitude = float(match.group(1))
+                    longitude = float(match.group(2))
+                    heading = float(match.group(3))
+                    speed = float(match.group(4))
+                    match_dist = float(match.group(5)) if match.group(5) is not None else None
+                    facility_type = int(match.group(6)) if match.group(6) is not None else None
+
+                    if latitude == 0.0 and longitude == 0.0:
+                        break
+
+                    vpm = Coordinate(
+                        id=current_id - 1,
+                        dlt_id=dlt_id,
+                        type=coord_type,
+                        latitude=latitude,
+                        longitude=longitude,
+                        heading=heading,
+                        extra={"Speed": speed, "MatchDist": match_dist, "FacilityType": facility_type},
+                        timestamp=timestamp,
+                    )
+                    last_vpm_coordinate = vpm
+                    COORDINATES[coord_type].append(vpm)
+
+                    if last_dr_coordinate:
+                        LINES[LineType.DR_TO_VPM].append(
+                            Line(
+                                id=last_dr_coordinate.id,
+                                type=LineType.DR_TO_VPM,
+                                start=(last_dr_coordinate.latitude, last_dr_coordinate.longitude),
+                                end=(latitude, longitude),
+                                timestamp=timestamp if timestamp else last_dr_coordinate.timestamp,
+                            )
+                        )
+
+                elif coord_type == CoordType.REQUEST:
+                    if last_vpm_coordinate:
+                        group2_value = int(match.group(2))
+                        group2_enum = RouteRequestType.get_type_by_value(group2_value)
+                        extra_info = {
+                            "group_1": match.group(1),
+                            "group_2_text": group2_enum.label,
+                        }
+
+                        if (
+                            group2_enum == RouteRequestType.REROUTE_BREAKAWAY
+                            and last_threshold_info
+                            and last_road_match_coord
+                            and last_route_match_coord
+                        ):
+                            distance_exceeded = last_threshold_info["distance"] > last_threshold_info["distance_threshold"]
+                            angle_exceeded = last_threshold_info["angle_diff"] > last_threshold_info["angle_threshold"]
+
+                            if distance_exceeded or angle_exceeded:
+                                deviation_type = None
+                                if distance_exceeded and angle_exceeded:
+                                    deviation_type = "both"
+                                elif distance_exceeded:
+                                    deviation_type = "distance"
+                                elif angle_exceeded:
+                                    deviation_type = "angle"
+
+                                LINES[LineType.DEVIATION].append(
+                                    Line(
+                                        id=current_id - 1,
+                                        type=LineType.DEVIATION,
+                                        start=(last_road_match_coord.latitude, last_road_match_coord.longitude),
+                                        end=(last_route_match_coord.latitude, last_route_match_coord.longitude),
+                                        timestamp=timestamp,
+                                        distance_threshold=last_threshold_info["distance_threshold"],
+                                        angle_threshold=last_threshold_info["angle_threshold"],
+                                        actual_distance=last_threshold_info["distance"],
+                                        actual_angle_diff=last_threshold_info["angle_diff"],
+                                        local_distance=last_threshold_info["local_distance"],
+                                        route_distance=last_threshold_info["route_distance"],
+                                        deviation_type=deviation_type,
+                                    )
+                                )
+
+                        request_coordinate = Coordinate(
+                            id=current_id - 1,
+                            dlt_id=dlt_id,
+                            type=coord_type,
+                            latitude=last_vpm_coordinate.latitude,
+                            longitude=last_vpm_coordinate.longitude,
+                            heading=last_vpm_coordinate.heading,
+                            extra=extra_info,
+                            timestamp=timestamp,
+                        )
+                        COORDINATES[coord_type].append(request_coordinate)
+
+                # Do not stop at first match. One physical line can contain
+                # multiple embedded DLT records in this log format.
+                continue
+
+    normalize_sequential_ids()
+    fill_missing_timestamps()
+    recompute_timestamp_range_from_coords()
+    return True
+
+
+def iterate_log_records(source_path):
+    """
+    Yield normalized records as:
+      (dlt_id, message_text, reception_timestamp_or_none)
+    For .dlt, parse storage header timestamp directly from binary records.
+    For text files (or fallback), emit line-based records.
+    """
+    parsed_binary = False
+    if source_path.lower().endswith(".dlt"):
+        for dlt_id, message_text, reception_ts in iterate_dlt_storage_records(source_path):
+            parsed_binary = True
+            yield dlt_id, message_text, reception_ts
+        if parsed_binary:
+            return
+
+    with open(source_path, "r", encoding="utf-8", errors="replace") as file:
+        for line_number, line in enumerate(file, start=1):
+            yield line_number, line, None
+
+
+def iterate_dlt_storage_records(source_path):
+    marker = b"DLT\x01"
+    with open(source_path, "rb") as file:
+        data = file.read()
+
+    if not data:
+        return
+
+    data_len = len(data)
+    record_id = 0
+    starts = [m.start() for m in re.finditer(re.escape(marker), data)]
+    if not starts:
+        return
+
+    for idx, start in enumerate(starts):
+        end = starts[idx + 1] if idx + 1 < len(starts) else data_len
+        if end - start < 16:
+            continue
+
+        # Storage header: "DLT\x01" + seconds(4 LE) + microseconds(4 LE) + ecu(4)
+        seconds = int.from_bytes(data[start + 4:start + 8], byteorder="little", signed=False)
+        microseconds = int.from_bytes(data[start + 8:start + 12], byteorder="little", signed=False)
+        try:
+            reception_timestamp = datetime.fromtimestamp(seconds + (microseconds / 1_000_000.0))
+        except (OSError, OverflowError, ValueError):
+            reception_timestamp = None
+
+        record_id += 1
+        if not is_relevant_dlt_record_slice(data, start, end):
+            continue
+
+        record = data[start:end]
+        message_text = record.decode("utf-8", errors="replace")
+        yield record_id, message_text, reception_timestamp
+
+
+def is_relevant_dlt_record_slice(data_bytes, start, end):
+    for keyword in DLT_RELEVANT_BYTE_KEYWORDS:
+        if data_bytes.find(keyword, start, end) != -1:
+            return True
+
+    # VPM payload line format: "[MM] <lat>, <lon>, ..."
+    # Exclude verbose MM diagnostic lines like "[[MM] : 4] ..."
+    mm_pos = data_bytes.find(b"[MM] ", start, end)
+    if mm_pos < 0:
+        return False
+
+    value_pos = mm_pos + len(b"[MM] ")
+    if value_pos >= end:
+        return False
+
+    first_char = data_bytes[value_pos:value_pos + 1]
+    return first_char in b"-0123456789"
+
+
+def is_relevant_dlt_record(record_bytes):
+    # Backward-compatible helper for ad-hoc callers.
+    if any(keyword in record_bytes for keyword in DLT_RELEVANT_BYTE_KEYWORDS):
+        return True
+
+    # VPM payload line format: "[MM] <lat>, <lon>, ..."
+    # Exclude verbose MM diagnostic lines like "[[MM] : 4] ..."
+    mm_pos = record_bytes.find(b"[MM] ")
+    if mm_pos < 0:
+        return False
+
+    value_pos = mm_pos + len(b"[MM] ")
+    if value_pos >= len(record_bytes):
+        return False
+
+    first_char = record_bytes[value_pos:value_pos + 1]
+    return first_char in b"-0123456789"
+
+
+def update_timestamp_range(timestamp):
+    global min_timestamp, max_timestamp
+    if timestamp:
+        if timestamp < min_timestamp:
+            min_timestamp = timestamp
+        if timestamp > max_timestamp:
+            max_timestamp = timestamp
+
+
+def parse_datetime(line, last_timestamp=None):
+    def is_plausible(candidate):
+        if candidate is None:
+            return False
+
+        # Reject obvious outliers (e.g. random 14-digit payload interpreted as datetime).
+        if log_base_timestamp:
+            if abs((candidate.date() - log_base_timestamp.date()).days) > 7:
+                return False
+
+        if last_timestamp:
+            # Avoid large backward/forward jumps caused by malformed extraction.
+            if candidate < (last_timestamp - timedelta(hours=12)):
+                return False
+            if candidate > (last_timestamp + timedelta(days=2)):
+                return False
+        return True
+
+    # 1) Full datetime in line: yyyy-MM-dd HH:mm:ss(.SSS...)
+    full_dt_match = re.search(
+        r"\b(20\d{2}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?)\b",
+        line,
+    )
+    if full_dt_match:
+        for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S"):
+            try:
+                candidate = datetime.strptime(f"{full_dt_match.group(1)} {full_dt_match.group(2)}", fmt)
+                if is_plausible(candidate):
+                    return candidate
+            except ValueError:
+                pass
+
+    # 2) Compact datetime in trusted context: yyyyMMddHHmmss, <epoch-ms>
+    # This avoids matching unrelated 14-digit payload values.
+    compact_dt_match = re.search(
+        r"\b(20\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])(?:[01]\d|2[0-3])[0-5]\d[0-5]\d)\b\s*,\s*\d{13}\b",
+        line,
+    )
+    if compact_dt_match:
+        try:
+            candidate = datetime.strptime(compact_dt_match.group(1), "%Y%m%d%H%M%S")
+            if is_plausible(candidate):
+                return candidate
+        except ValueError:
+            pass
+
+    time_only_patterns = [r"\b\d{2}:\d{2}:\d{2}\.\d{1,6}\b", r"\b\d{2}:\d{2}:\d{2}\b"]
+    time_formats = ["%H:%M:%S.%f", "%H:%M:%S"]
+
+    if last_timestamp:
+        for pattern in time_only_patterns:
+            match = re.search(pattern, line)
+            if not match:
+                continue
+            t_str = match.group()
+            for fmt in time_formats:
+                try:
+                    parsed_time = datetime.strptime(t_str, fmt).time()
+                    candidate = last_timestamp.replace(
+                        hour=parsed_time.hour,
+                        minute=parsed_time.minute,
+                        second=parsed_time.second,
+                        microsecond=parsed_time.microsecond,
+                    )
+                    if candidate < last_timestamp:
+                        # Time-only logs frequently arrive out-of-order across threads.
+                        # Never roll date from time-only pattern; keep monotonic timestamp.
+                        candidate = last_timestamp
+                    return candidate
+                except ValueError:
+                    pass
+
+    return None
+
+
+def infer_initial_timestamp(log_file_path):
+    filename = os.path.basename(log_file_path)
+    # Prefer yyyyMMdd_HHmmss / yyyyMMddHHmmss in filename when available.
+    m = re.search(r"(20\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01]))[_-]?([01]\d[0-5]\d[0-5]\d)", filename)
+    if m:
+        try:
+            return datetime.strptime(f"{m.group(1)}{m.group(2)}", "%Y%m%d%H%M%S")
+        except ValueError:
+            pass
+
+    # Fallback: yyyyMMdd (midnight)
+    m = re.search(r"(20\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01]))", filename)
+    if m:
+        try:
+            return datetime.strptime(m.group(1), "%Y%m%d")
+        except ValueError:
+            pass
+
+    # Legacy fallback: yymmdd
+    m = re.search(r"(\d{6})", filename)
+    if not m:
+        return None
+
+    yymmdd = m.group(1)
+    try:
+        year = 2000 + int(yymmdd[0:2])
+        month = int(yymmdd[2:4])
+        day = int(yymmdd[4:6])
+        return datetime(year, month, day, 0, 0, 0, 0)
+    except ValueError:
+        return None
+
+
+def normalize_sequential_ids():
+    all_coords = [coord for coords in COORDINATES.values() for coord in coords]
+    all_lines = [line for lines in LINES.values() for line in lines]
+
+    # Keep marker ids stable in original DLT log order.
+    # Timestamp can be noisy/missing in some logs, which causes ID jumps.
+    all_coords.sort(
+        key=lambda coord: (
+            coord.dlt_id is None,
+            coord.dlt_id if coord.dlt_id is not None else 10**15,
+            coord.timestamp if coord.timestamp else datetime.min,
+        )
+    )
+    all_lines.sort(key=lambda line: (line.timestamp if line.timestamp else datetime.min))
+
+    # Coordinate IDs are per-type sequential IDs (1..N) in DLT order.
+    # This keeps each layer's ID progression intuitive.
+    per_type_counters = {coord_type: 0 for coord_type in CoordType}
+    for coord in all_coords:
+        coord_type = coord.type
+        if coord_type not in per_type_counters:
+            continue
+        per_type_counters[coord_type] += 1
+        coord.id = per_type_counters[coord_type]
+
+    for index, line in enumerate(all_lines, start=1):
+        line.id = index
+
+
+def fill_missing_timestamps():
+    global log_base_timestamp
+    all_coords = [coord for coords in COORDINATES.values() for coord in coords]
+    if not all_coords:
+        return
+
+    all_coords.sort(key=lambda coord: coord.id if coord.id is not None else 0)
+    known_times = [coord.timestamp for coord in all_coords if coord.timestamp is not None]
+    if not known_times:
+        base = (log_base_timestamp or datetime(1970, 1, 1)).replace(microsecond=0)
+        for offset, coord in enumerate(all_coords):
+            coord.timestamp = base + timedelta(milliseconds=offset)
+        return
+
+    first_known = known_times[0]
+    last_seen = None
+    for coord in all_coords:
+        if coord.timestamp is None:
+            if last_seen is None:
+                coord.timestamp = first_known
+            else:
+                coord.timestamp = last_seen + timedelta(milliseconds=1)
+        last_seen = coord.timestamp
+
+
+def recompute_timestamp_range_from_coords():
+    global min_timestamp, max_timestamp
+    all_coords = [coord for coords in COORDINATES.values() for coord in coords if coord.timestamp is not None]
+    if not all_coords:
+        min_timestamp = datetime.max
+        max_timestamp = datetime.min
+        return
+
+    min_timestamp = min(coord.timestamp for coord in all_coords)
+    max_timestamp = max(coord.timestamp for coord in all_coords)
+
+
+def parse_road_match_state(line):
+    road_match_state = re.search(r"\[MM_RESULT\] State = (\w+)", line)
+    if road_match_state:
+        return road_match_state.group(1)
+    return None
+
+
+def parse_route_match_state(line):
+    route_match_state = re.search(r"navisdk :: \[\[MM\] : 4\] State = (\w+)", line)
+    if route_match_state:
+        return route_match_state.group(1)
+    return None
+
+
+def parse_threshold_info(line):
+    threshold_match = re.search(
+        r"shouldStayRoute distance:([\d\.]+), distanceThreshold:([\d\.]+), angleDiff:([\d\.]+), angleThreshold:([\d\.]+), localDistance:([\d\.]+), routeDistance:([\d\.]+)",
+        line,
+    )
+    if threshold_match:
+        return {
+            "distance": float(threshold_match.group(1)),
+            "distance_threshold": float(threshold_match.group(2)),
+            "angle_diff": float(threshold_match.group(3)),
+            "angle_threshold": float(threshold_match.group(4)),
+            "local_distance": float(threshold_match.group(5)),
+            "route_distance": float(threshold_match.group(6)),
+        }
+    return None
+
+
+def write_data_to_csv(out_path=None):
+    out_path = out_path or PATHS.output_csv
+    header = ["type", "index", "dlt_id", "latitude", "longitude", "heading", "is_dr", "timestamp"]
+
+    with open(out_path, "w", newline="", encoding="utf-8") as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(header)
+
+        for coord_type, coords in COORDINATES.items():
+            for coord in coords:
+                writer.writerow(
+                    [
+                        coord_type.type,
+                        coord.id,
+                        coord.dlt_id,
+                        coord.latitude,
+                        coord.longitude,
+                        coord.heading if coord.heading is not None else "",
+                        coord.extra.get("isDRGps", ""),
+                        coord.timestamp.strftime("%Y/%m/%d %H:%M:%S.%f") if coord.timestamp else "",
+                    ]
+                )
+
+
+def build_runtime_payload():
+    all_coords = [coord.to_json() for coords in COORDINATES.values() for coord in coords]
+    all_lines = [line.to_json() for lines in LINES.values() for line in lines]
+    all_coords.sort(key=lambda c: c.get("id") if c.get("id") is not None else 0)
+    all_lines.sort(key=lambda l: l.get("id") if l.get("id") is not None else 0)
+    valid_ids = [data["id"] for data in all_coords if data.get("id") is not None]
+
+    min_ts_ms = int(min_timestamp.timestamp() * 1000) if min_timestamp != datetime.max else 0
+    max_ts_ms = int(max_timestamp.timestamp() * 1000) if max_timestamp != datetime.min else 1
+    max_id = max(valid_ids) if valid_ids else 1
+
+    return {
+        "min_timestamp_ms": min_ts_ms,
+        "max_timestamp_ms": max_ts_ms,
+        "max_id": max_id,
+        "coords": all_coords,
+        "lines": all_lines,
+    }
+
+
+def write_data_to_json(out_path=None):
+    out_path = out_path or PATHS.output_json
+    payload = build_runtime_payload()
+    with open(out_path, "w", encoding="utf-8") as file:
+        json.dump(
+            {
+                "min_timestamp_ms": payload["min_timestamp_ms"],
+                "max_timestamp_ms": payload["max_timestamp_ms"],
+                "coords": payload["coords"],
+                "lines": payload["lines"],
+            },
+            file,
+            ensure_ascii=False,
+            indent=2,
+        )
