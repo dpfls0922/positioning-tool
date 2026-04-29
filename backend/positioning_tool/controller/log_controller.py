@@ -42,6 +42,17 @@ def _cleanup_temp_file(path):
         os.remove(path)
 
 
+def _read_shape_kind_from_request(req, source: str = "args") -> str:
+    if source == "form":
+        raw_kind = req.form.get("kind", "")
+    else:
+        raw_kind = req.args.get("kind", "")
+    kind = (raw_kind or "").strip().lower()
+    if kind not in {"link", "node"}:
+        raise ValueError("kind 파라미터는 link 또는 node 여야 합니다.")
+    return kind
+
+
 def create_log_controller() -> Blueprint:
     bp = Blueprint("log", __name__)
 
@@ -99,51 +110,38 @@ def create_log_controller() -> Blueprint:
     @bp.get("/api/road-shape")
     def get_road_shape_state():
         try:
-            if not RoadShapeService.exists():
+            metas = RoadShapeService.load_all_meta()
+            if not RoadShapeService.any_exists():
                 return jsonify({"ok": True, "exists": False})
-            meta = RoadShapeService.load_meta()
-            return jsonify({"ok": True, "exists": True, "meta": meta})
+            return jsonify({"ok": True, "exists": True, "metas": metas})
         except Exception as ex:
             return jsonify({"ok": False, "error": str(ex)}), 500
 
     @bp.get("/api/road-shape/content")
     def get_road_shape_content():
         try:
-            content = RoadShapeService.load_zip_bytes()
+            kind = _read_shape_kind_from_request(request, source="args")
+            content = RoadShapeService.load_zip_bytes(kind)
             if content is None:
-                return jsonify({"ok": False, "error": "저장된 road shape가 없습니다."}), 404
+                return jsonify({"ok": False, "error": f"저장된 {kind} road shape가 없습니다."}), 404
             return Response(
                 content,
                 mimetype="application/zip",
-                headers={"Content-Disposition": "inline; filename=current_road_shape.zip"},
+                headers={"Content-Disposition": f"inline; filename=current_road_shape_{kind}.zip"},
             )
+        except ValueError as ex:
+            return jsonify({"ok": False, "error": str(ex)}), 400
         except Exception as ex:
             return jsonify({"ok": False, "error": str(ex)}), 500
 
     @bp.post("/api/road-shape")
     def upload_road_shape():
-        try:
-            upload = request.files.get("file")
-            if upload is None or not upload.filename:
-                return jsonify({"ok": False, "error": "업로드할 zip 파일이 없습니다."}), 400
-
-            if not upload.filename.lower().endswith(".zip"):
-                return jsonify({"ok": False, "error": "road shape는 .zip 파일만 지원합니다."}), 400
-
-            min_zoom_raw = request.form.get("min_zoom", "16")
-            min_zoom = int(min_zoom_raw)
-            file_bytes = upload.read()
-            if not file_bytes:
-                return jsonify({"ok": False, "error": "빈 파일입니다."}), 400
-
-            meta = RoadShapeService.save_zip(file_bytes, upload.filename, min_zoom)
-            return jsonify({"ok": True, "meta": meta})
-        except Exception as ex:
-            return jsonify({"ok": False, "error": str(ex)}), 500
+        return jsonify({"ok": False, "error": "Road Shape는 폴더 업로드(/api/road-shape/folder)만 지원합니다."}), 400
 
     @bp.post("/api/road-shape/folder")
     def upload_road_shape_folder():
         try:
+            kind = _read_shape_kind_from_request(request, source="form")
             uploads = request.files.getlist("files")
             rel_paths = request.form.getlist("paths")
             folder_name = (request.form.get("folder_name") or "road_shape").strip() or "road_shape"
@@ -170,16 +168,26 @@ def create_log_controller() -> Blueprint:
                 files_with_paths=files_with_paths,
                 folder_name=folder_name,
                 min_zoom=min_zoom,
+                kind=kind,
             )
-            return jsonify({"ok": True, "meta": meta})
+            return jsonify({"ok": True, "meta": meta, "kind": kind})
+        except ValueError as ex:
+            return jsonify({"ok": False, "error": str(ex)}), 400
         except Exception as ex:
             return jsonify({"ok": False, "error": str(ex)}), 500
 
     @bp.delete("/api/road-shape")
     def clear_road_shape():
         try:
-            RoadShapeService.clear()
+            raw_kind = (request.args.get("kind") or "").strip()
+            if raw_kind:
+                kind = _read_shape_kind_from_request(request, source="args")
+                RoadShapeService.clear(kind)
+            else:
+                RoadShapeService.clear()
             return jsonify({"ok": True})
+        except ValueError as ex:
+            return jsonify({"ok": False, "error": str(ex)}), 400
         except Exception as ex:
             return jsonify({"ok": False, "error": str(ex)}), 500
 

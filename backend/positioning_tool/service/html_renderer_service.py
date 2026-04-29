@@ -84,6 +84,150 @@ def build_html_head(static_version):
         <script src="https://cdnjs.cloudflare.com/ajax/libs/Leaflet.awesome-markers/2.0.2/leaflet.awesome-markers.min.js"></script>
         <script src="https://unpkg.com/shpjs@latest/dist/shp.min.js"></script>
         <link rel="stylesheet" href="./static/css/map.css?v={static_version}" type="text/css">
+        <style>
+        /* ===== 새 업로드 패널 UI ===== */
+        .upload-section {{ margin-bottom: 10px; }}
+        .upload-section-label {{
+            font-size: 11px; font-weight: 600; color: #334155;
+            text-transform: uppercase; letter-spacing: .04em;
+            display: flex; align-items: center; gap: 6px; margin-bottom: 6px;
+        }}
+        .upload-hint {{
+            font-size: 10px; color: #475569; font-weight: 400;
+            text-transform: none; letter-spacing: 0;
+        }}
+        .upload-divider {{
+            border: none; border-top: 1px solid #dbe3ef; margin: 10px 0;
+        }}
+        .drop-zone {{
+            display: flex; align-items: center; justify-content: center;
+            flex-direction: column; gap: 4px;
+            border: 1.5px dashed #cbd5e1; border-radius: 8px;
+            padding: 10px 8px; cursor: pointer; transition: border-color .18s, background .18s;
+            background: #f8fafc; min-height: 52px; box-sizing: border-box;
+        }}
+        .drop-zone:hover {{ border-color: #3b82f6; background: #eef2ff; }}
+        .drop-zone-icon {{ font-size: 16px; color: #334155; }}
+        .drop-zone-text {{ font-size: 11px; color: #334155; text-align: center; line-height: 1.3; }}
+        .drop-zone-text-sm {{ font-size: 10px; color: #475569; text-align: center; line-height: 1.3; }}
+        .drop-zone-badge {{
+            font-size: 10px; font-weight: 700; padding: 1px 6px;
+            border-radius: 4px; margin-bottom: 2px;
+        }}
+        .drop-zone-badge-link {{ background: #dbeafe; color: #1d4ed8; }}
+        .drop-zone-badge-node {{ background: #e2e8f0; color: #334155; }}
+        .shape-upload-row {{
+            display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 6px;
+        }}
+        .drop-zone-half {{ min-height: 58px; }}
+        .shape-btn-row {{
+            display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 6px;
+        }}
+        .upload-action-btn {{
+            width: 100%; padding: 7px 0; font-size: 12px; font-weight: 600;
+            background: #2563eb; color: #fff; border: none; border-radius: 6px;
+            cursor: pointer; transition: background .15s;
+        }}
+        .upload-action-btn:hover {{ background: #3b82f6; }}
+        .upload-action-btn:disabled {{ background: #93c5fd; cursor: not-allowed; color: #ffffff; }}
+        .upload-action-half {{ width: 100%; }}
+        .upload-clear-btn {{
+            width: 100%; padding: 6px 0; font-size: 11px; font-weight: 500;
+            background: #fff; color: #ef4444; border: 1px solid #ef4444;
+            border-radius: 6px; cursor: pointer; transition: background .15s;
+        }}
+        .upload-clear-btn:hover {{ background: #fef2f2; }}
+        .road-shape-state-bar {{
+            font-size: 10px; color: #334155; padding: 4px 6px;
+            background: #eff6ff; border-radius: 5px; margin-bottom: 7px;
+            border-left: 2px solid #3b82f6; line-height: 1.4;
+        }}
+        .upload-status-text {{
+            font-size: 10px; color: #475569; margin-top: 8px; padding: 0 2px;
+        }}
+        /* ===== Progress bar — indeterminate shimmer ===== */
+        @keyframes shimmer {{
+            0%   {{ background-position: -400px 0; }}
+            100% {{ background-position: 400px 0; }}
+        }}
+        @keyframes progress-pulse {{
+            0%,100% {{ opacity: 1; }}
+            50%      {{ opacity: .65; }}
+        }}
+        #uploadProgressWrap {{
+            height: 5px; border-radius: 3px; background: #dbeafe;
+            margin-top: 6px; overflow: hidden;
+        }}
+        #uploadProgressBar {{
+            height: 100%; width: 0; border-radius: 3px;
+            background: #3b82f6; transition: width .25s ease;
+        }}
+        #uploadProgressBar.progress-active {{
+            background: linear-gradient(90deg,
+                #2563eb 0%, #60a5fa 40%, #2563eb 60%, #60a5fa 100%);
+            background-size: 400px 100%;
+            animation: shimmer 1.2s linear infinite;
+        }}
+        #uploadProgressBar.progress-indeterminate {{
+            width: 100% !important;
+            background: linear-gradient(90deg,
+                #bfdbfe 0%, #3b82f6 30%, #60a5fa 50%, #3b82f6 70%, #bfdbfe 100%);
+            background-size: 400px 100%;
+            animation: shimmer 1.4s linear infinite, progress-pulse 2s ease-in-out infinite;
+        }}
+
+        /* ===== 레이어 우클릭 컨텍스트 메뉴 ===== */
+        .layer-ctx-trigger {{
+            background: none; border: none; color: #64748b; cursor: pointer;
+            padding: 2px 4px; font-size: 11px; border-radius: 3px; margin-left: 2px;
+        }}
+        .layer-ctx-trigger:hover {{ color: #2563eb; background: #eff6ff; }}
+        .layer-ctx-menu {{
+            position: fixed; z-index: 9999; min-width: 270px; max-width: 320px;
+            background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 10px;
+            padding: 12px; box-shadow: 0 8px 20px rgba(15, 23, 42, .15);
+        }}
+        .layer-ctx-menu.hidden {{ display: none; }}
+        .layer-ctx-title {{
+            font-size: 12px; font-weight: 700; color: #1f2937;
+            margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid #dbe3ef;
+        }}
+        .layer-ctx-subtitle {{
+            font-size: 10px; font-weight: 600; color: #475569;
+            text-transform: uppercase; letter-spacing: .04em; margin: 8px 0 5px;
+        }}
+        .layer-ctx-row {{
+            display: flex; align-items: center; gap: 5px; margin-bottom: 5px; flex-wrap: wrap;
+        }}
+        .layer-ctx-input {{
+            flex: 1; min-width: 0; padding: 5px 7px; font-size: 11px;
+            background: #fff; border: 1px solid #cbd5e1; border-radius: 5px;
+            color: #1f2937;
+        }}
+        .layer-ctx-color {{
+            width: 30px; height: 28px; padding: 1px; border-radius: 4px;
+            border: 1px solid #cbd5e1; cursor: pointer; background: #fff;
+        }}
+        .layer-ctx-weight {{
+            width: 54px; padding: 5px 5px; font-size: 11px;
+            background: #fff; border: 1px solid #cbd5e1; border-radius: 5px;
+            color: #1f2937;
+        }}
+        .layer-ctx-label {{
+            font-size: 10px; color: #64748b; white-space: nowrap;
+        }}
+        .layer-ctx-btn {{
+            padding: 5px 10px; font-size: 11px; font-weight: 600;
+            background: #2563eb; color: #fff; border: none; border-radius: 5px; cursor: pointer;
+        }}
+        .layer-ctx-btn:hover {{ background: #3b82f6; }}
+        .layer-ctx-close {{
+            margin-top: 10px; width: 100%; padding: 5px 0; font-size: 11px;
+            background: #fff; border: 1px solid #cbd5e1; border-radius: 5px;
+            color: #475569; cursor: pointer;
+        }}
+        .layer-ctx-close:hover {{ background: #eff6ff; }}
+        </style>
         """
     ).strip()
 
@@ -94,6 +238,7 @@ def build_html_body():
         <div id="map"></div>
         {add_right_toolbar()}
         {add_upload_panel()}
+        {add_export_panel()}
         {add_distance_tool()}
         {add_radius_tool()}
         {add_playback_tool()}
@@ -153,30 +298,107 @@ def add_upload_panel():
     return """
     <div id="uploadPanel" class="tool-panel hidden">
         <div class="tool-panel-header">
-            <span>파일 업로드/파싱</span>
+            <span>파일 업로드</span>
             <button class="panel-close-btn" data-close-panel="uploadPanel">닫기</button>
         </div>
         <div class="tool-panel-body">
-            <div class="upload-card">
-                <div class="upload-subtitle">DLT 로그</div>
-                <input id="logFileInput" type="file" accept=".txt,.log,.dlt">
-                <button id="parseUploadButton">업로드 후 파싱</button>
-                <input id="issueIdInput" type="text" placeholder="이슈번호(예: TAMB-16753)">
-                <button id="exportHtmlButton" disabled>Export HTML</button>
-            </div>
-            <div class="upload-card">
-                <div class="upload-subtitle">도로 링크/노드 Shape</div>
-                <div id="roadShapeStateText" class="road-shape-state">저장된 파일 없음</div>
-                <input id="shpFolderInput" type="file" webkitdirectory directory multiple>
-                <div class="shp-zoom-config">
-                    <label for="shpMinZoomInput">표시 시작 줌</label>
-                    <input id="shpMinZoomInput" type="number" min="0" max="22" step="1" value="16">
+
+            <div class="upload-section">
+                <div class="upload-section-label">
+                    <i class="fa fa-file-text-o"></i> DLT 로그
                 </div>
-                <button id="parseShpButton">SHP 폴더 업로드</button>
-                <button id="clearShpButton" class="secondary-btn">저장된 Shape 삭제</button>
+                <label class="drop-zone" id="logDropZone">
+                    <input id="logFileInput" type="file" accept=".txt,.log,.dlt" style="display:none">
+                    <i class="fa fa-upload drop-zone-icon"></i>
+                    <span id="logFileNameText" class="drop-zone-text">파일 선택 또는 드래그</span>
+                </label>
+                <button id="parseUploadButton" class="upload-action-btn">파싱 시작</button>
             </div>
-            <div id="uploadStatusText">대기 중</div>
+
+            <div class="upload-divider"></div>
+
+            <div class="upload-section">
+                <div class="upload-section-label">
+                    <i class="fa fa-map-o"></i> Road Shape
+                    <span class="upload-hint">브라우저 로컬 파싱(.shp/.shx/.dbf 폴더), 레이어 우클릭으로 스타일 설정</span>
+                </div>
+                <div id="roadShapeStateText" class="road-shape-state-bar">저장된 파일 없음</div>
+                <div class="shape-upload-row">
+                    <label class="drop-zone drop-zone-half" id="linkDropZone">
+                        <input id="linkShpFolderInput" type="file" webkitdirectory directory multiple style="display:none">
+                        <span class="drop-zone-badge drop-zone-badge-link">Link</span>
+                        <span id="linkShpFileText" class="drop-zone-text-sm">폴더 선택</span>
+                    </label>
+                    <label class="drop-zone drop-zone-half" id="nodeDropZone">
+                        <input id="nodeShpFolderInput" type="file" webkitdirectory directory multiple style="display:none">
+                        <span class="drop-zone-badge drop-zone-badge-node">Node</span>
+                        <span id="nodeShpFileText" class="drop-zone-text-sm">폴더 선택</span>
+                    </label>
+                </div>
+                <div class="shape-btn-row">
+                    <button id="parseLinkShpButton" class="upload-action-btn upload-action-half">링크 업로드</button>
+                    <button id="parseNodeShpButton" class="upload-action-btn upload-action-half">노드 업로드</button>
+                </div>
+                <button id="clearShpButton" class="upload-clear-btn">
+                    <i class="fa fa-trash-o"></i> 저장된 Shape 삭제
+                </button>
+            </div>
+
+            <div id="uploadStatusText" class="upload-status-text">대기 중</div>
             <div id="uploadProgressWrap"><div id="uploadProgressBar"></div></div>
+        </div>
+    </div>
+
+    <!-- 레이어 우클릭 컨텍스트 메뉴 -->
+    <div id="layerContextMenu" class="layer-ctx-menu hidden">
+        <div class="layer-ctx-title" id="layerCtxTitle">레이어 스타일</div>
+        <div id="layerCtxLinkSection">
+            <div class="layer-ctx-subtitle">링크 스타일 규칙 추가</div>
+            <div class="layer-ctx-row">
+                <select id="linkStylePropSelect" class="layer-ctx-input">
+                    <option value="">필드 선택</option>
+                </select>
+                <input id="linkStyleValueInput" type="text" placeholder="값 (예: 10)" class="layer-ctx-input">
+            </div>
+            <div class="layer-ctx-row">
+                <input id="linkStyleColorInput" type="color" value="#8b5cf6" title="선 색상" class="layer-ctx-color">
+                <input id="linkStyleWeightInput" type="number" min="0.5" max="12" step="0.1" value="2.1" title="선 두께" class="layer-ctx-weight" placeholder="두께">
+                <button id="addLinkStyleRuleButton" class="layer-ctx-btn">규칙 추가</button>
+            </div>
+            <div id="linkStyleRuleList" class="style-rule-list"></div>
+            <div id="linkBaseRuleEditor" class="style-rule-list"></div>
+        </div>
+        <div id="layerCtxNodeSection">
+            <div class="layer-ctx-subtitle">노드 스타일</div>
+            <div class="layer-ctx-row">
+                <label class="layer-ctx-label">색상</label>
+                <input id="nodeColorInput" type="color" value="#22c3d6" class="layer-ctx-color">
+                <label class="layer-ctx-label">외곽</label>
+                <input id="nodeStrokeInput" type="color" value="#0f8aa6" class="layer-ctx-color">
+                <label class="layer-ctx-label">크기</label>
+                <input id="nodeRadiusInput" type="number" min="1" max="12" step="0.1" value="3.2" class="layer-ctx-weight">
+                <label class="layer-ctx-label">두께</label>
+                <input id="nodeWeightInput" type="number" min="0" max="5" step="0.1" value="1" class="layer-ctx-weight">
+            </div>
+            <button id="applyNodeStyleButton" class="layer-ctx-btn">노드 스타일 적용</button>
+        </div>
+        <button class="layer-ctx-close" id="layerCtxClose">닫기</button>
+    </div>
+    """
+
+
+def add_export_panel():
+    return """
+    <div id="exportPanel" class="tool-panel export-panel hidden">
+        <div class="tool-panel-header">
+            <span>내보내기</span>
+            <button class="panel-close-btn" data-close-panel="exportPanel">닫기</button>
+        </div>
+        <div class="tool-panel-body export-panel-body">
+            <input id="issueIdInput" type="text" placeholder="이슈번호(예: TAMB-16753)">
+            <button id="exportHtmlMenuButton" class="menu-action-btn" disabled>
+                <i class="fa fa-file-text-o"></i><span>HTML 내보내기</span>
+            </button>
         </div>
     </div>
     """
@@ -272,6 +494,7 @@ def add_right_toolbar():
         </div>
         <div class="tool-stack" id="utilityGroup">
             <button class="tool-btn" id="toolUploadBtn" title="업로드/파싱"><i class="fa fa-upload"></i></button>
+            <button class="tool-btn" id="toolExportBtn" title="내보내기"><i class="fa fa-share-square-o"></i></button>
             <button class="tool-btn" id="toolPlaybackBtn" title="타임라인"><i class="fa fa-clock-o"></i></button>
             <button class="tool-btn" id="toolLegendBtn" title="범례"><i class="fa fa-list"></i></button>
         </div>
