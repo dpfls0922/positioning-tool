@@ -119,7 +119,9 @@ let distancePickMode = false;
 let distanceSelectionMode = 'map';
 let pickedDistancePoints = [];
 let distanceMarkers = [];
+let distanceLabelMarkers = [];
 let distanceLine = null;
+let distancePreviewLine = null;
 let radiusPickMode = false;
 let radiusSelectionMode = 'map';
 let radiusCenterPoint = null;
@@ -191,24 +193,45 @@ function init() {
         }
     });
     map.on('mousemove', (e) => {
+        if (distancePickMode && distanceSelectionMode === 'map') {
+            updateDistancePreviewLine(e.latlng);
+        }
         if (radiusPickMode && radiusDrawState === 'drawing') {
             updateRadiusPreview(e.latlng, false);
         }
     });
     map.on('contextmenu', (e) => {
-        if (!radiusPickMode) return;
-        L.DomEvent.stop(e);
+        let handled = false;
 
-        if (radiusDrawState === 'drawing') {
-            updateRadiusPreview(e.latlng, true);
+        if (distancePickMode) {
+            handled = true;
+            distancePickMode = false;
+            setDistancePickButtonState();
+            if (distancePreviewLine) {
+                map.removeLayer(distancePreviewLine);
+                distancePreviewLine = null;
+            }
+            if (pickedDistancePoints.length === 1) {
+                pickedDistancePoints = [];
+                clearDistanceVisuals();
+                const resultEl = document.getElementById('distanceResult');
+                if (resultEl) resultEl.textContent = '거리 결과: 선택 종료(우클릭).';
+            }
+        }
+
+        if (radiusPickMode) {
+            handled = true;
+            if (radiusDrawState === 'drawing') {
+                updateRadiusPreview(e.latlng, true);
+            }
             radiusDrawState = 'idle';
             radiusPickMode = false;
             setRadiusPickButtonState();
-            return;
         }
 
-        resetRadiusSelection(false);
-        setRadiusResultText('반경 결과: 취소됨(우클릭).');
+        if (handled) {
+            L.DomEvent.stop(e);
+        }
     });
 
     document.addEventListener('keydown', (e) => {
@@ -289,13 +312,55 @@ function updateDistanceResult(pointA, pointB, sourceLabel) {
         `${formatDistancePoint(pointA, 'A')} / ${formatDistancePoint(pointB, 'B')}`;
 }
 
+function updateDistanceResultForPath(sourceLabel) {
+    const resultEl = document.getElementById('distanceResult');
+    if (!resultEl) return;
+    if (!Array.isArray(pickedDistancePoints) || pickedDistancePoints.length < 2) {
+        setDistanceGuideMessage();
+        return;
+    }
+
+    let total = 0;
+    for (let i = 1; i < pickedDistancePoints.length; i += 1) {
+        const prev = pickedDistancePoints[i - 1];
+        const curr = pickedDistancePoints[i];
+        total += latLonDistanceMeters(prev.lat, prev.lon, curr.lat, curr.lon);
+    }
+    resultEl.innerHTML = `거리 결과 (${sourceLabel}): <strong>${total.toFixed(2)} m</strong><br>` +
+        `점 ${pickedDistancePoints.length}개 · 우클릭으로 선택 종료`;
+}
+
+function setDistancePreviewResult(previewMeters) {
+    const resultEl = document.getElementById('distanceResult');
+    if (!resultEl) return;
+    if (!Array.isArray(pickedDistancePoints) || pickedDistancePoints.length === 0) return;
+
+    let total = 0;
+    for (let i = 1; i < pickedDistancePoints.length; i += 1) {
+        const prev = pickedDistancePoints[i - 1];
+        const curr = pickedDistancePoints[i];
+        total += latLonDistanceMeters(prev.lat, prev.lon, curr.lat, curr.lon);
+    }
+    const segmentText = Number.isFinite(previewMeters)
+        ? `상대거리: <strong>${previewMeters.toFixed(2)} m</strong><br>`
+        : '';
+    resultEl.innerHTML = `${segmentText}총거리: <strong>${total.toFixed(2)} m</strong><br>` +
+        `점 ${pickedDistancePoints.length}개 · 우클릭으로 선택 종료`;
+}
+
 function clearDistanceVisuals() {
     distanceMarkers.forEach(marker => map.removeLayer(marker));
     distanceMarkers = [];
+    distanceLabelMarkers.forEach(marker => map.removeLayer(marker));
+    distanceLabelMarkers = [];
 
     if (distanceLine) {
         map.removeLayer(distanceLine);
         distanceLine = null;
+    }
+    if (distancePreviewLine) {
+        map.removeLayer(distancePreviewLine);
+        distancePreviewLine = null;
     }
 }
 
@@ -304,34 +369,46 @@ function drawDistanceVisuals() {
 
     if (pickedDistancePoints.length === 0) return;
 
-    const first = pickedDistancePoints[0];
-    const markerA = L.circleMarker([first.lat, first.lon], {
-        radius: 6,
-        color: '#0056b3',
-        fillColor: '#0056b3',
-        fillOpacity: 0.9,
-        weight: 2
-    }).addTo(map).bindPopup('A');
-    distanceMarkers.push(markerA);
+    pickedDistancePoints.forEach((point, idx) => {
+        const isStart = idx === 0;
+        const marker = L.circleMarker([point.lat, point.lon], {
+            radius: 7,
+            color: '#7c3aed',
+            fillColor: '#ffffff',
+            fillOpacity: 0.98,
+            weight: 4
+        }).addTo(map);
+        if (isStart) marker.bindPopup('A');
+        distanceMarkers.push(marker);
+    });
 
     if (pickedDistancePoints.length < 2) return;
 
-    const second = pickedDistancePoints[1];
-    const markerB = L.circleMarker([second.lat, second.lon], {
-        radius: 6,
-        color: '#198754',
-        fillColor: '#198754',
-        fillOpacity: 0.9,
-        weight: 2
-    }).addTo(map).bindPopup('B');
-    distanceMarkers.push(markerB);
-
-    distanceLine = L.polyline([[first.lat, first.lon], [second.lat, second.lon]], {
-        color: '#0d6efd',
-        weight: 2,
-        dashArray: '6, 6',
+    const latlngs = pickedDistancePoints.map((point) => [point.lat, point.lon]);
+    distanceLine = L.polyline(latlngs, {
+        color: '#7c3aed',
+        weight: 3,
         opacity: 0.9
     }).addTo(map);
+
+    let cumulative = 0;
+    for (let i = 1; i < pickedDistancePoints.length; i += 1) {
+        const prev = pickedDistancePoints[i - 1];
+        const curr = pickedDistancePoints[i];
+        cumulative += latLonDistanceMeters(prev.lat, prev.lon, curr.lat, curr.lon);
+
+        const label = L.marker([curr.lat, curr.lon], {
+            icon: L.divIcon({
+                className: 'distance-segment-label-wrapper',
+                html: `<span class="distance-segment-label">${Math.round(cumulative)}m</span>`,
+                iconSize: [0, 0],
+                iconAnchor: [-2, 18]
+            }),
+            interactive: false,
+            keyboard: false
+        }).addTo(map);
+        distanceLabelMarkers.push(label);
+    }
 }
 
 function setDistancePickButtonState() {
@@ -359,9 +436,32 @@ function resetDistanceSelection() {
     }
 }
 
+function updateDistancePreviewLine(latlng) {
+    if (!distancePickMode || distanceSelectionMode !== 'map') return;
+    if (!latlng || !Array.isArray(pickedDistancePoints) || pickedDistancePoints.length === 0) return;
+
+    const last = pickedDistancePoints[pickedDistancePoints.length - 1];
+    const meters = latLonDistanceMeters(last.lat, last.lon, latlng.lat, latlng.lng);
+    if (!Number.isFinite(meters) || meters <= 0) return;
+
+    if (distancePreviewLine) {
+        map.removeLayer(distancePreviewLine);
+        distancePreviewLine = null;
+    }
+    distancePreviewLine = L.polyline([[last.lat, last.lon], [latlng.lat, latlng.lng]], {
+        color: '#d946ef',
+        weight: 3,
+        opacity: 0.9,
+        dashArray: '8, 6'
+    }).addTo(map);
+
+    setDistancePreviewResult(meters);
+}
+
 function handleMapDistancePick(latlng) {
-    if (pickedDistancePoints.length >= 2) {
-        pickedDistancePoints = [];
+    if (distancePreviewLine) {
+        map.removeLayer(distancePreviewLine);
+        distancePreviewLine = null;
     }
 
     pickedDistancePoints.push(buildDistancePoint(latlng.lat, latlng.lng, 'map'));
@@ -372,9 +472,7 @@ function handleMapDistancePick(latlng) {
         return;
     }
 
-    updateDistanceResult(pickedDistancePoints[0], pickedDistancePoints[1], '지도 점 선택');
-    distancePickMode = false;
-    setDistancePickButtonState();
+    updateDistanceResultForPath('지도 점 선택');
 }
 
 function parseCoordinateInput(id, min, max) {
@@ -436,8 +534,8 @@ function setDistanceGuideMessage() {
     }
 
     resultEl.textContent = distanceSelectionMode === 'marker'
-        ? '거리 결과: 마커를 클릭해 두 번째 점(B)을 선택하세요.'
-        : '거리 결과: 지도에서 두 번째 점(B)을 선택하세요.';
+        ? '거리 결과: 마커를 계속 클릭해 경로를 추가하세요. 우클릭으로 종료.'
+        : '거리 결과: 지도에서 점을 계속 선택하세요. 우클릭으로 종료.';
 }
 
 function handleDistanceModeChange() {
@@ -519,6 +617,18 @@ function setRadiusCenter(lat, lon) {
     if (lonInput) lonInput.value = lon.toFixed(6);
 
     if (radiusCenterMarker) map.removeLayer(radiusCenterMarker);
+    if (radiusCircle) {
+        map.removeLayer(radiusCircle);
+        radiusCircle = null;
+    }
+    if (radiusGuideLine) {
+        map.removeLayer(radiusGuideLine);
+        radiusGuideLine = null;
+    }
+    if (radiusDeleteMarker) {
+        map.removeLayer(radiusDeleteMarker);
+        radiusDeleteMarker = null;
+    }
     radiusCenterMarker = L.circleMarker([lat, lon], {
         radius: 6,
         color: '#ef4444',
@@ -592,10 +702,13 @@ function updateRadiusPreview(edgeLatLng, finalize) {
 
 function setRadiusMetricInfo(radiusMeters, finalized) {
     const prefix = finalized ? '반경 결과(확정)' : '반경 프리뷰';
+    const hint = (finalized && radiusPickMode)
+        ? '<br><span style="font-size:11px;color:#64748b;">다음 중심점을 클릭하거나 우클릭으로 종료하세요.</span>'
+        : '';
     const resultEl = document.getElementById('radiusResult');
     if (!resultEl) return;
     resultEl.innerHTML =
-        `${prefix}: <strong>${radiusMeters.toFixed(1)} m</strong>`;
+        `${prefix}: <strong>${radiusMeters.toFixed(1)} m</strong>${hint}`;
 }
 
 function handleMapRadiusPick(latlng) {
@@ -607,9 +720,7 @@ function handleMapRadiusPick(latlng) {
     }
     if (radiusDrawState === 'drawing') {
         updateRadiusPreview(latlng, true);
-        radiusDrawState = 'idle';
-        radiusPickMode = false;
-        setRadiusPickButtonState();
+        radiusDrawState = 'await_center';
     }
 }
 
@@ -647,11 +758,11 @@ function handleMarkerDistancePick(marker) {
     const latlng = marker.getLatLng();
     if (!latlng) return;
 
-    if (pickedDistancePoints.length >= 2) {
-        pickedDistancePoints = [];
-    }
-
     pickedDistancePoints.push(buildDistancePoint(latlng.lat, latlng.lng, 'marker', marker));
+    if (distancePreviewLine) {
+        map.removeLayer(distancePreviewLine);
+        distancePreviewLine = null;
+    }
     drawDistanceVisuals();
 
     if (pickedDistancePoints.length < 2) {
@@ -659,9 +770,7 @@ function handleMarkerDistancePick(marker) {
         return;
     }
 
-    updateDistanceResult(pickedDistancePoints[0], pickedDistancePoints[1], '마커 선택');
-    distancePickMode = false;
-    setDistancePickButtonState();
+    updateDistanceResultForPath('마커 선택');
 }
 
 function attachMarkerDistancePick(marker) {

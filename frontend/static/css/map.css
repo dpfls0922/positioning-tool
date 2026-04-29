@@ -758,6 +758,24 @@ html, body {
     box-shadow: none;
 }
 
+.distance-segment-label-wrapper {
+    background: transparent;
+    border: 0;
+}
+
+.distance-segment-label {
+    display: inline-block;
+    padding: 2px 7px;
+    border: 2px solid #7c3aed;
+    border-radius: 4px;
+    background: rgba(243, 232, 255, 0.98);
+    color: #7c3aed;
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1;
+    white-space: nowrap;
+}
+
 .distance-pick,
 .distance-inputs {
     display: flex;
