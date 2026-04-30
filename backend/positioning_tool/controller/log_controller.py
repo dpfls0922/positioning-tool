@@ -1,6 +1,10 @@
 import os
 import tempfile
 import time
+import json
+import base64
+from urllib import error as urllib_error
+from urllib import request as urllib_request
 
 from flask import Blueprint, Response, jsonify, request, send_from_directory
 
@@ -51,6 +55,57 @@ def _read_shape_kind_from_request(req, source: str = "args") -> str:
     if kind not in {"link", "node"}:
         raise ValueError("kind 파라미터는 link 또는 node 여야 합니다.")
     return kind
+
+
+def _build_ntmapstg_route_request(payload):
+    endpoint = (payload.get("endpoint") or "").strip() or "https://ntmapstg.tmap.co.kr:9443/tmap-channel/rsd/ev/route"
+    access_key = (payload.get("accessKey") or "").strip()
+    headers = payload.get("headers") or {}
+    body = payload.get("body")
+
+    if not isinstance(headers, dict):
+        raise ValueError("headers 형식이 올바르지 않습니다.")
+    if not isinstance(body, dict):
+        raise ValueError("body 형식이 올바르지 않습니다.")
+
+    normalized_headers = {}
+    for key, value in headers.items():
+        if key is None or value is None:
+            continue
+        key_str = str(key).strip()
+        val_str = str(value).strip()
+        if key_str and val_str:
+            normalized_headers[key_str] = val_str
+
+    if access_key:
+        normalized_headers.setdefault("accessKey", access_key)
+        normalized_headers.setdefault("appKey", access_key)
+
+    normalized_headers.setdefault("Accept", "application/octet-stream")
+    normalized_headers.setdefault("Content-Type", "application/json; charset=UTF-8")
+
+    return {
+        "endpoint": endpoint,
+        "headers": normalized_headers,
+        "body": body,
+    }
+
+
+def _call_ntmapstg_route_api(route_request):
+    req = urllib_request.Request(
+        route_request["endpoint"],
+        data=json.dumps(route_request["body"]).encode("utf-8"),
+        headers=route_request["headers"],
+        method="POST",
+    )
+    with urllib_request.urlopen(req, timeout=25) as resp:
+        raw_bytes = resp.read()
+        content_type = resp.headers.get("Content-Type", "application/octet-stream")
+        return {
+            "status": resp.status,
+            "content_type": content_type,
+            "body_base64": base64.b64encode(raw_bytes).decode("ascii"),
+        }
 
 
 def create_log_controller() -> Blueprint:
@@ -104,6 +159,39 @@ def create_log_controller() -> Blueprint:
                     "file_name": os.path.basename(out_path),
                 }
             )
+        except Exception as ex:
+            return jsonify({"ok": False, "error": str(ex)}), 500
+
+    @bp.post("/api/tmap-route")
+    def request_tmap_route_api():
+        try:
+            payload = request.get_json(silent=True) or {}
+            route_request = _build_ntmapstg_route_request(payload)
+            response_json = _call_ntmapstg_route_api(route_request)
+            return jsonify({
+                "ok": True,
+                "endpoint": route_request["endpoint"],
+                "request_headers": route_request["headers"],
+                "request_body": route_request["body"],
+                "response": response_json,
+            })
+        except ValueError as ex:
+            return jsonify({"ok": False, "error": str(ex)}), 400
+        except urllib_error.HTTPError as ex:
+            detail_bytes = ex.read()
+            detail = detail_bytes.decode("utf-8", errors="replace")
+            try:
+                detail_json = json.loads(detail)
+            except Exception:
+                detail_json = None
+            return jsonify({
+                "ok": False,
+                "error": f"ntmapstg API HTTP {ex.code}",
+                "detail": detail_json or detail,
+                "detail_base64": base64.b64encode(detail_bytes).decode("ascii"),
+            }), ex.code
+        except urllib_error.URLError as ex:
+            return jsonify({"ok": False, "error": f"ntmapstg API 연결 실패: {ex.reason}"}), 502
         except Exception as ex:
             return jsonify({"ok": False, "error": str(ex)}), 500
 

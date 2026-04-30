@@ -83,6 +83,8 @@ def build_html_head(static_version):
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/Leaflet.awesome-markers/2.0.2/leaflet.awesome-markers.css" />
         <script src="https://cdnjs.cloudflare.com/ajax/libs/Leaflet.awesome-markers/2.0.2/leaflet.awesome-markers.min.js"></script>
         <script src="https://unpkg.com/shpjs@latest/dist/shp.min.js"></script>
+        <script src="./static/js/tmap_coord.js?v={static_version}"></script>
+        <script src="./static/js/tmap_tvas_parser.js?v={static_version}"></script>
         <link rel="stylesheet" href="./static/css/map.css?v={static_version}" type="text/css">
         <style>
         /* ===== 새 업로드 패널 UI ===== */
@@ -227,6 +229,46 @@ def build_html_head(static_version):
             color: #475569; cursor: pointer;
         }}
         .layer-ctx-close:hover {{ background: #eff6ff; }}
+
+        /* ===== Tmap route panel ===== */
+        .route-waypoint-bar {{
+            min-height: 34px; padding: 8px; border: 1px solid #dbe3ef; border-radius: 8px;
+            background: #f8fafc; display: flex; flex-wrap: wrap; gap: 6px; align-items: flex-start;
+        }}
+        .route-waypoint-empty {{
+            font-size: 11px; color: #64748b; line-height: 1.5;
+        }}
+        .route-wp-chip {{
+            display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px;
+            border-radius: 999px; font-size: 11px; font-weight: 600; border: 1px solid transparent;
+        }}
+        .route-wp-chip button {{
+            border: none; background: transparent; cursor: pointer; font-size: 13px; line-height: 1;
+            padding: 0; color: inherit;
+        }}
+        .route-wp-chip-start {{ background: rgba(34, 197, 94, 0.14); color: #15803d; border-color: rgba(34, 197, 94, 0.28); }}
+        .route-wp-chip-via {{ background: rgba(245, 158, 11, 0.14); color: #b45309; border-color: rgba(245, 158, 11, 0.28); }}
+        .route-wp-chip-dest {{ background: rgba(239, 68, 68, 0.14); color: #b91c1c; border-color: rgba(239, 68, 68, 0.28); }}
+        .route-panel-note {{
+            font-size: 11px; color: #64748b; line-height: 1.45; margin-bottom: 8px;
+        }}
+        .route-panel-grid {{
+            display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px;
+        }}
+        .route-panel-grid .route-panel-col {{
+            display: flex; flex-direction: column; gap: 4px;
+        }}
+        .route-panel-grid label {{
+            font-size: 11px; color: #475569; font-weight: 600;
+        }}
+        .route-panel-grid input,
+        .route-panel-grid select {{
+            width: 100%; box-sizing: border-box; padding: 7px 8px; font-size: 12px;
+            border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; color: #1f2937;
+        }}
+        .route-panel-status {{
+            font-size: 11px; color: #475569; margin-top: 8px; line-height: 1.45; white-space: pre-wrap;
+        }}
         </style>
         """
     ).strip()
@@ -239,6 +281,7 @@ def build_html_body():
         {add_right_toolbar()}
         {add_upload_panel()}
         {add_export_panel()}
+        {add_route_tool()}
         {add_distance_tool()}
         {add_radius_tool()}
         {add_playback_tool()}
@@ -404,6 +447,45 @@ def add_export_panel():
     """
 
 
+def add_route_tool():
+    return """
+    <div id="routePanel" class="tool-panel hidden">
+        <div class="tool-panel-header">
+            <span>경로 요청</span>
+            <button class="panel-close-btn" data-close-panel="routePanel">닫기</button>
+        </div>
+        <div class="tool-panel-body">
+            <div class="route-panel-note">
+                지도 우클릭으로 출발지, 경유지, 목적지를 선택하고 Tmap 경로 요청을 보냅니다.
+            </div>
+            <div id="routeWaypointBar" class="route-waypoint-bar">
+                <span class="route-waypoint-empty">지도 우클릭으로 경로점을 지정하세요.</span>
+            </div>
+            <div class="route-panel-grid">
+                <div class="route-panel-col">
+                    <label for="tmapAppKeyInput">TMAP_ACCESS_KEY</label>
+                    <input id="tmapAppKeyInput" type="password" placeholder="TMAP_ACCESS_KEY 입력">
+                </div>
+                <div class="route-panel-col">
+                    <label for="tmapRouteOptionSelect">경로 옵션</label>
+                    <select id="tmapRouteOptionSelect">
+                        <option value="0">교통최적+추천</option>
+                        <option value="1">교통최적+무료우선</option>
+                        <option value="2">교통최적+최소시간</option>
+                        <option value="3">교통최적+초보</option>
+                    </select>
+                </div>
+            </div>
+            <div class="shape-btn-row" style="margin-top:10px;">
+                <button id="tmapRouteRequestButton" class="upload-action-btn upload-action-half">경로 요청</button>
+                <button id="tmapRouteClearButton" class="upload-clear-btn">경로/선택 초기화</button>
+            </div>
+            <div id="tmapRouteStatus" class="route-panel-status">대기 중</div>
+        </div>
+    </div>
+    """
+
+
 def add_distance_tool():
     return """
     <div id="distancePanel" class="tool-panel hidden">
@@ -489,6 +571,7 @@ def add_right_toolbar():
             <button class="tool-btn tool-zoom-btn" id="toolZoomOutBtn" title="축소"><i class="fa fa-minus"></i></button>
         </div>
         <div class="tool-stack" id="measureGroup">
+            <button class="tool-btn" id="toolRouteBtn" title="경로 요청"><i class="fa fa-code-fork"></i></button>
             <button class="tool-btn" id="toolDistanceBtn" title="거리 재기"><i class="fa fa-arrows-h"></i></button>
             <button class="tool-btn" id="toolRadiusBtn" title="반경 재기"><i class="fa fa-circle-o"></i></button>
         </div>

@@ -69,6 +69,7 @@ class LineType(Enum):
     DR_CORRECTION = "DR Correction"
     DR_TO_VPM = "DR to VPM"
     DEVIATION = "Deviation"
+    ROUTE_INFO = "Route Info"
 
 
 class RouteRequestType(Enum):

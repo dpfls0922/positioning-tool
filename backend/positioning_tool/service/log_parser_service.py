@@ -20,6 +20,7 @@ last_road_match_state = None
 last_route_match_state = None
 last_threshold_info = None
 log_base_timestamp = None
+last_tvas_header_info = None
 DLT_RELEVANT_BYTE_KEYWORDS = [
     b"[GPS]",
     b"[GNSS]",
@@ -28,9 +29,21 @@ DLT_RELEVANT_BYTE_KEYWORDS = [
     b"Match Pos",
     b"[MM_RESULT]",
     b"requestRouting",
+    b"NaviARSupportServer::setRouteInformation",
     b"shouldStayRoute distance:",
     b"[[MM] : 4] State =",
 ]
+
+SET_ROUTE_INFORMATION_PATTERN = re.compile(
+    r"NaviARSupportServer::setRouteInformation linkID:\s*"
+    r"(-?\d+)\((\-?\d+)\),\s*dir:\s*(\-?\d+),\s*(\-?\d+)"
+    r"(?:,\s*(\-?\d+),\s*(\-?\d+))?,\s*"
+    r"size:\s*(\d+),\s*v\[st\]:\s*(\-?\d+),\s*(\-?\d+),\s*v\[en\]:\s*(\-?\d+),\s*(\-?\d+)"
+)
+TVAS_HEADER_ROUTE_OPT_PATTERN = re.compile(r"navisdk :: \[\[TVAS Header\] : \d+\] RouteOptCode = (\-?\d+)")
+TVAS_HEADER_SERVICE_CNT_PATTERN = re.compile(r"navisdk :: \[\[TVAS Header\] : \d+\] ServiceCnt = (\-?\d+)")
+TVAS_HEADER_TOTAL_TIME_PATTERN = re.compile(r"navisdk :: \[\[TVAS Header\] : \d+\] TotalTime = (\-?\d+)")
+TVAS_HEADER_TOTAL_DIST_PATTERN = re.compile(r"navisdk :: \[\[TVAS Header\] : \d+\] TotalDist = (\-?\d+)")
 
 
 def lat_lon_dist(lat1, lon1, lat2, lon2):
@@ -42,7 +55,7 @@ def lat_lon_dist(lat1, lon1, lat2, lon2):
 def reset_runtime_state():
     global COORDINATES, LINES
     global min_timestamp, max_timestamp
-    global last_road_match_state, last_route_match_state, last_threshold_info, log_base_timestamp
+    global last_road_match_state, last_route_match_state, last_threshold_info, log_base_timestamp, last_tvas_header_info
 
     COORDINATES = {coord_type: [] for coord_type in CoordType}
     LINES = {line_type: [] for line_type in LineType}
@@ -52,11 +65,12 @@ def reset_runtime_state():
     last_route_match_state = None
     last_threshold_info = None
     log_base_timestamp = None
+    last_tvas_header_info = None
 
 
 def parse_log(log_file_path=None):
     global last_road_match_state, last_route_match_state, last_threshold_info
-    global log_base_timestamp
+    global log_base_timestamp, last_tvas_header_info
 
     current_id = 1
     temp_gnss1_coord = None
@@ -92,6 +106,25 @@ def parse_log(log_file_path=None):
             threshold_info = parse_threshold_info(line)
             if threshold_info:
                 last_threshold_info = threshold_info
+
+            tvas_header_info = parse_tvas_header_info(line, last_tvas_header_info)
+            if tvas_header_info is not None:
+                last_tvas_header_info = tvas_header_info
+
+            route_info = parse_set_route_information(line)
+            if route_info:
+                if last_tvas_header_info:
+                    route_info["extra"]["tvas_header"] = dict(last_tvas_header_info)
+                LINES[LineType.ROUTE_INFO].append(
+                    Line(
+                        id=current_id,
+                        type=LineType.ROUTE_INFO,
+                        start=(route_info["start_lat"], route_info["start_lon"]),
+                        end=(route_info["end_lat"], route_info["end_lon"]),
+                        timestamp=timestamp,
+                        extra=route_info["extra"],
+                    )
+                )
 
             road_match_state = parse_road_match_state(line)
             route_match_state = parse_route_match_state(line)
@@ -678,6 +711,74 @@ def parse_threshold_info(line):
             "route_distance": float(threshold_match.group(6)),
         }
     return None
+
+
+def parse_set_route_information(line):
+    match = SET_ROUTE_INFORMATION_PATTERN.search(line)
+    if not match:
+        return None
+
+    link_id_raw = int(match.group(1))
+    link_id = int(match.group(2))
+    direction = int(match.group(3))
+    link_type = int(match.group(4))
+    optional_link_str_code = match.group(5)
+    optional_road_length = match.group(6)
+    vertex_size = int(match.group(7))
+    start_lat = int(match.group(8)) / 10000000.0
+    start_lon = int(match.group(9)) / 10000000.0
+    end_lat = int(match.group(10)) / 10000000.0
+    end_lon = int(match.group(11)) / 10000000.0
+
+    extra = {
+        "source": "setRouteInformation",
+        "link_id": link_id,
+        "link_id_raw": link_id_raw,
+        "dir": direction,
+        "link_type": link_type,
+        "vertex_size": vertex_size,
+    }
+    if optional_link_str_code is not None:
+        extra["link_str_code"] = int(optional_link_str_code)
+    if optional_road_length is not None:
+        extra["road_length"] = int(optional_road_length)
+
+    return {
+        "start_lat": start_lat,
+        "start_lon": start_lon,
+        "end_lat": end_lat,
+        "end_lon": end_lon,
+        "extra": extra,
+    }
+
+
+def parse_tvas_header_info(line, previous_info=None):
+    info = dict(previous_info or {})
+    matched = False
+
+    match = TVAS_HEADER_ROUTE_OPT_PATTERN.search(line)
+    if match:
+        info["route_opt_code"] = int(match.group(1))
+        matched = True
+
+    match = TVAS_HEADER_SERVICE_CNT_PATTERN.search(line)
+    if match:
+        info["service_cnt"] = int(match.group(1))
+        matched = True
+
+    match = TVAS_HEADER_TOTAL_TIME_PATTERN.search(line)
+    if match:
+        info["total_time"] = int(match.group(1))
+        matched = True
+
+    match = TVAS_HEADER_TOTAL_DIST_PATTERN.search(line)
+    if match:
+        info["total_dist"] = int(match.group(1))
+        matched = True
+
+    if matched:
+        return info
+    return previous_info
 
 
 def write_data_to_csv(out_path=None):
