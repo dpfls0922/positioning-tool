@@ -78,6 +78,29 @@ def render_simple_export_html(markers_data: list[dict], lines_data: list[dict], 
             const linesData = {lines_json};
             const overlayGroups = {{}};
             const GOOD_MATCH_STATES = new Set(['MATCH_OK_TRANSIENT', 'MATCH_OK_GOOD']);
+            const highlightedFilteredGnssIds = new Set();
+
+            function collectHighlightedFilteredGnssIds(coords) {{
+              let awaitingFirstNormalFilteredGnss = false;
+              for (const coord of Array.isArray(coords) ? coords : []) {{
+                if (!coord || coord.type !== 'Filtered GNSS') continue;
+                const transition = coord.extra?.gnss_mode_transition;
+                const gnssMode = String(coord.extra?.gnss_mode || '').trim();
+
+                if (transition?.from === 'BusSleep' && transition?.to === 'Normal') {{
+                  awaitingFirstNormalFilteredGnss = true;
+                }}
+
+                if (awaitingFirstNormalFilteredGnss && gnssMode === 'Normal') {{
+                  const highlightKey = Number.isFinite(coord.id)
+                    ? `id:${{coord.id}}`
+                    : `ts:${{coord.timestamp_ms ?? ''}}:${{coord.latitude ?? ''}}:${{coord.longitude ?? ''}}`;
+                  highlightedFilteredGnssIds.add(highlightKey);
+                  awaitingFirstNormalFilteredGnss = false;
+                }}
+              }}
+            }}
+            collectHighlightedFilteredGnssIds(markersData);
 
             function makePopupText(coord) {{
               const coordtype = coord.type || 'Unknown';
@@ -97,6 +120,16 @@ def render_simple_export_html(markers_data: list[dict], lines_data: list[dict], 
               if (coord.extra && coord.extra.Speed !== undefined) {{
                 const speed = Number(coord.extra.Speed);
                 text += `<br>Speed: ${{Number.isFinite(speed) ? speed.toFixed(2) : coord.extra.Speed}}`;
+              }}
+              if (coordtype === 'Filtered GNSS') {{
+                const gnssMode = coord.extra?.gnss_mode;
+                if (gnssMode) {{
+                  text += `<br>GNSS mode: ${{gnssMode}}`;
+                }}
+                const transition = coord.extra?.gnss_mode_transition;
+                if (transition?.from && transition?.to) {{
+                  text += `<br>Mode transition: ${{transition.from}} -> ${{transition.to}}`;
+                }}
               }}
 
               if (coordtype === 'DR-based') {{
@@ -132,12 +165,16 @@ def render_simple_export_html(markers_data: list[dict], lines_data: list[dict], 
                   }})
                 }}).bindPopup(popup).addTo(overlayGroups[type]);
               }} else {{
+                const highlightKey = Number.isFinite(coord.id)
+                  ? `id:${{coord.id}}`
+                  : `ts:${{coord.timestamp_ms ?? ''}}:${{coord.latitude ?? ''}}:${{coord.longitude ?? ''}}`;
+                const isTransitionHighlight = highlightedFilteredGnssIds.has(highlightKey);
                 L.circleMarker([lat, lon], {{
-                  radius: 4,
-                  color: color,
-                  fillColor: color,
+                  radius: isTransitionHighlight ? 7 : 4,
+                  color: isTransitionHighlight ? '#22c55e' : color,
+                  fillColor: isTransitionHighlight ? '#22c55e' : color,
                   fillOpacity: 0.85,
-                  weight: 1
+                  weight: isTransitionHighlight ? 3 : 1
                 }}).bindPopup(popup).addTo(overlayGroups[type]);
               }}
             }});

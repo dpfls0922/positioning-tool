@@ -149,6 +149,9 @@ html, body {
     padding: 10px 12px;
     border-bottom: 1px solid #3a3f46;
     background: var(--surface-soft);
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
 }
 
 .filter-title {
@@ -162,6 +165,9 @@ html, body {
     display: flex;
     flex-direction: column;
     gap: 6px;
+    max-height: 100%;
+    overflow-y: auto;
+    padding-right: 4px;
 }
 
 .layer-tree-card {
@@ -746,6 +752,39 @@ html, body {
     color: #fff;
 }
 
+#exportCsvMenuButton {
+    background: #10b981;
+    border-color: #10b981;
+    color: #fff;
+}
+
+#exportCsvMenuButton i {
+    color: #fff;
+}
+
+.dr-heading-icon-wrapper {
+    background: transparent;
+    border: 0;
+}
+
+.dr-heading-icon {
+    width: 16px;
+    height: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transform-origin: 50% 50%;
+}
+
+.dr-heading-arrow {
+    width: 0;
+    height: 0;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-bottom: 12px solid #ef4444;
+    filter: drop-shadow(0 0 1px rgba(15, 23, 42, 0.6));
+}
+
 .road-link-label {
     background: rgba(15, 23, 42, 0.46);
     border: 1px solid rgba(148, 163, 184, 0.35);
@@ -846,6 +885,29 @@ html, body {
 .legend-list {
     line-height: 1.7;
     font-size: 12px;
+    min-width: 220px;
+    gap: 8px;
+}
+
+#legendPanel {
+    width: 260px;
+}
+
+.legend-toggle-card {
+    padding: 8px 10px;
+    margin-bottom: 8px;
+    background: #f8fafc;
+    border: 1px solid #dbe3ef;
+    border-radius: 8px;
+}
+
+.legend-toggle-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: #334155;
+    cursor: pointer;
 }
 
 #toolBackdrop {

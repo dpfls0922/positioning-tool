@@ -21,9 +21,17 @@ last_route_match_state = None
 last_threshold_info = None
 log_base_timestamp = None
 last_tvas_header_info = None
+current_route_session_id = None
+current_route_session_index = 0
+route_session_indices = {}
+route_session_sequence = {}
+current_gnss_mode = None
+pending_gnss_mode_transition = None
 DLT_RELEVANT_BYTE_KEYWORDS = [
     b"[GPS]",
     b"[GNSS]",
+    b"GNSS mode:",
+    b"GNSS rejected:",
     b"CNaviModule::ReceiveGps pos(",
     b"Match  Pos",
     b"Match Pos",
@@ -44,6 +52,13 @@ TVAS_HEADER_ROUTE_OPT_PATTERN = re.compile(r"navisdk :: \[\[TVAS Header\] : \d+\
 TVAS_HEADER_SERVICE_CNT_PATTERN = re.compile(r"navisdk :: \[\[TVAS Header\] : \d+\] ServiceCnt = (\-?\d+)")
 TVAS_HEADER_TOTAL_TIME_PATTERN = re.compile(r"navisdk :: \[\[TVAS Header\] : \d+\] TotalTime = (\-?\d+)")
 TVAS_HEADER_TOTAL_DIST_PATTERN = re.compile(r"navisdk :: \[\[TVAS Header\] : \d+\] TotalDist = (\-?\d+)")
+TVAS_SERVER_SESSION_PATTERN = re.compile(
+    r"TVAS server route nSessionID\s*:\s*([^,\s]+),\s*errorcode\s*:\s*([^,\s]+)"
+)
+GNSS_MODE_EVENT_PATTERN = re.compile(
+    r"GNSS mode:\s*event=([A-Za-z_]+)\s+from=([A-Za-z_]+)\s+to=([A-Za-z_]+)"
+)
+GNSS_MODE_INLINE_PATTERN = re.compile(r"mode=([A-Za-z_]+)")
 
 
 def lat_lon_dist(lat1, lon1, lat2, lon2):
@@ -56,6 +71,8 @@ def reset_runtime_state():
     global COORDINATES, LINES
     global min_timestamp, max_timestamp
     global last_road_match_state, last_route_match_state, last_threshold_info, log_base_timestamp, last_tvas_header_info
+    global current_route_session_id, current_route_session_index, route_session_indices, route_session_sequence
+    global current_gnss_mode, pending_gnss_mode_transition
 
     COORDINATES = {coord_type: [] for coord_type in CoordType}
     LINES = {line_type: [] for line_type in LineType}
@@ -66,11 +83,19 @@ def reset_runtime_state():
     last_threshold_info = None
     log_base_timestamp = None
     last_tvas_header_info = None
+    current_route_session_id = None
+    current_route_session_index = 0
+    route_session_indices = {}
+    route_session_sequence = {}
+    current_gnss_mode = None
+    pending_gnss_mode_transition = None
 
 
 def parse_log(log_file_path=None):
     global last_road_match_state, last_route_match_state, last_threshold_info
     global log_base_timestamp, last_tvas_header_info
+    global current_route_session_id, current_route_session_index, route_session_indices, route_session_sequence
+    global current_gnss_mode, pending_gnss_mode_transition
 
     current_id = 1
     temp_gnss1_coord = None
@@ -107,12 +132,38 @@ def parse_log(log_file_path=None):
             if threshold_info:
                 last_threshold_info = threshold_info
 
+            gnss_mode_info = parse_gnss_mode_info(line)
+            if gnss_mode_info:
+                current_gnss_mode = gnss_mode_info["mode"]
+                if gnss_mode_info.get("transition"):
+                    pending_gnss_mode_transition = gnss_mode_info["transition"]
+
+            route_session_info = parse_route_session_info(line)
+            if route_session_info:
+                current_route_session_id = route_session_info["session_id"]
+                current_route_session_index = route_session_indices.setdefault(
+                    current_route_session_id,
+                    len(route_session_indices) + 1,
+                )
+                route_session_sequence.setdefault(current_route_session_id, 0)
+                last_tvas_header_info = None
+
             tvas_header_info = parse_tvas_header_info(line, last_tvas_header_info)
             if tvas_header_info is not None:
                 last_tvas_header_info = tvas_header_info
 
             route_info = parse_set_route_information(line)
             if route_info:
+                session_id = current_route_session_id or "unknown"
+                session_index = current_route_session_index or route_session_indices.setdefault(
+                    session_id,
+                    len(route_session_indices) + 1,
+                )
+                route_session_sequence[session_id] = route_session_sequence.get(session_id, 0) + 1
+                route_info["extra"]["route_session_id"] = session_id
+                route_info["extra"]["route_session_index"] = session_index
+                route_info["extra"]["route_session_name"] = f"Route Info {session_index}"
+                route_info["extra"]["route_sequence"] = route_session_sequence[session_id]
                 if last_tvas_header_info:
                     route_info["extra"]["tvas_header"] = dict(last_tvas_header_info)
                 LINES[LineType.ROUTE_INFO].append(
@@ -161,6 +212,12 @@ def parse_log(log_file_path=None):
                         extra={"Speed": speed},
                         timestamp=timestamp,
                     )
+                    if current_gnss_mode:
+                        temp_gnss1_coord.extra["gnss_mode"] = current_gnss_mode
+                    if pending_gnss_mode_transition:
+                        temp_gnss1_coord.extra["gnss_mode_transition"] = pending_gnss_mode_transition
+                        temp_gnss1_coord.extra["gnss_transition_highlight"] = True
+                        pending_gnss_mode_transition = None
 
                     # Some logs do not include separate [GNSS] lines.
                     # In those cases, use the DR tuple in [GPS] as Raw GNSS.
@@ -778,6 +835,41 @@ def parse_tvas_header_info(line, previous_info=None):
 
     if matched:
         return info
+
+
+def parse_route_session_info(line):
+    match = TVAS_SERVER_SESSION_PATTERN.search(line)
+    if not match:
+        return None
+
+    return {
+        "session_id": match.group(1).strip(),
+        "error_code": match.group(2).strip(),
+    }
+
+
+def parse_gnss_mode_info(line):
+    event_match = GNSS_MODE_EVENT_PATTERN.search(line)
+    if event_match:
+        event_name = event_match.group(1).strip()
+        from_mode = event_match.group(2).strip()
+        to_mode = event_match.group(3).strip()
+        return {
+            "mode": to_mode,
+            "transition": {
+                "event": event_name,
+                "from": from_mode,
+                "to": to_mode,
+            },
+        }
+
+    inline_match = GNSS_MODE_INLINE_PATTERN.search(line)
+    if inline_match:
+        return {
+            "mode": inline_match.group(1).strip(),
+        }
+
+    return None
     return previous_info
 
 

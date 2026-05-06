@@ -3,6 +3,7 @@ import tempfile
 import time
 import json
 import base64
+import subprocess
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
@@ -44,6 +45,18 @@ def _build_parse_response(result, result_name, start_time):
 def _cleanup_temp_file(path):
     if path and os.path.exists(path):
         os.remove(path)
+
+
+def _reveal_in_finder(path: str) -> None:
+    if not path:
+        return
+    try:
+        subprocess.Popen(["open", "-R", path])
+    except Exception:
+        try:
+            subprocess.Popen(["open", os.path.dirname(path)])
+        except Exception:
+            pass
 
 
 def _read_shape_kind_from_request(req, source: str = "args") -> str:
@@ -152,6 +165,26 @@ def create_log_controller() -> Blueprint:
             out_path = LogService.export_last_result_html(issue_id=issue_id)
             if not out_path:
                 return jsonify({"ok": False, "error": "먼저 로그를 파싱해주세요."}), 400
+            _reveal_in_finder(out_path)
+            return jsonify(
+                {
+                    "ok": True,
+                    "path": out_path,
+                    "file_name": os.path.basename(out_path),
+                }
+            )
+        except Exception as ex:
+            return jsonify({"ok": False, "error": str(ex)}), 500
+
+    @bp.post("/api/export-csv")
+    def export_csv_api():
+        try:
+            body = request.get_json(silent=True) or {}
+            issue_id = (body.get("issue_id") or "").strip() or None
+            out_path = LogService.export_last_result_csv(issue_id=issue_id)
+            if not out_path:
+                return jsonify({"ok": False, "error": "먼저 로그를 파싱해주세요."}), 400
+            _reveal_in_finder(out_path)
             return jsonify(
                 {
                     "ok": True,

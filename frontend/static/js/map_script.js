@@ -1,6 +1,8 @@
 const map = L.map('map', { preferCanvas: true }).setView([37.5665, 126.9780], 15);
 const highlightLayer = L.layerGroup().addTo(map);
 const roadCanvasRenderer = L.canvas({ padding: 0.25 });
+let roadLinkSvgRenderer = null;
+let roadNodeSvgRenderer = null;
 
 const baseLayers = {
     "Google Maps": L.tileLayer('http://mt0.google.com/vt/lyrs=m&hl=ko&x={x}&y={y}&z={z}', {
@@ -39,8 +41,11 @@ const layerCountOverride = {};
 
 const ROAD_LINK_LAYER = 'Road Link';
 const ROAD_NODE_LAYER = 'Road Node';
+const ROUTE_INFO_MARKER_LAYER = 'Route Info Markers';
 const TMAP_ROUTE_LAYER = 'Tmap Route';
 const TMAP_WAYPOINT_LAYER = 'Tmap Waypoints';
+const ROUTE_INFO_LAYER_PREFIX = 'Route Info ';
+const ROUTE_INFO_MARKER_LAYER_PREFIX = 'Route Info Markers ';
 let roadLinkGeoLayer = null;
 let roadNodeGeoLayer = null;
 let roadLinkFeatureCount = 0;
@@ -115,6 +120,9 @@ let roadNodeStyleConfig = {
 };
 let selectedRoadFeatureRef = { kind: null, shpIndex: null };
 let routeInfoLinkIds = new Set();
+let selectedRouteInfoLineId = null;
+let selectedRouteInfoNextLineId = null;
+let selectedDrCoordinate = null;
 let tmapRouteResult = null;
 let tmapRouteRequesting = false;
 let tmapRouteWaypoints = {
@@ -144,6 +152,7 @@ let radiusDrawState = 'idle';
 let radiusDeleteMarker = null;
 let parsingProgressTimer = null;
 let parsingProgressValue = 0;
+let drHeadingArrowEnabled = false;
 
 const ROAD_SHAPE_CACHE_DIR = 'road_shape_cache_v1';
 const ROAD_SHAPE_MANIFEST_SUFFIX = '.manifest.json';
@@ -172,6 +181,7 @@ function init() {
     bind('radiusMode', 'change', handleRadiusModeChange);
     bind('radiusPickToggle', 'click', toggleRadiusPickMode);
     bind('radiusApplyButton', 'click', handleRadiusApplyInput);
+    bind('drHeadingToggle', 'change', handleDrHeadingToggleChange);
 
     document.getElementById('searchBox')?.addEventListener("keydown", (e) => {
         if (e.key === "Enter") handleDltSearch();
@@ -198,6 +208,7 @@ function init() {
 
     map.on('click', (e) => {
         highlightLayer.clearLayers();
+        clearRouteInfoSelection();
         if (distancePickMode && distanceSelectionMode === 'map') {
             handleMapDistancePick(e.latlng);
         }
@@ -260,6 +271,11 @@ function init() {
     updateMap();
 }
 
+function handleDrHeadingToggleChange(event) {
+    drHeadingArrowEnabled = !!event?.target?.checked;
+    renderFromCurrentData();
+}
+
 function initSlider(min, max) {
     const startMin = Number.isFinite(min) ? min : 0;
     const startMaxRaw = Number.isFinite(max) ? max : 1;
@@ -297,6 +313,128 @@ function refreshRouteInfoLinkIds(lines) {
             .filter((value) => Number.isFinite(value))
     );
     refreshRoadLayerStyles();
+}
+
+function renderRouteInfoMarkers(lines) {
+    const sourceLines = (Array.isArray(lines) ? lines : []).filter((line) => line?.type === 'Route Info');
+    clearRouteInfoMarkerLayers();
+    if (sourceLines.length === 0) {
+        return;
+    }
+
+    const sessionMap = new Map();
+    sourceLines.forEach((line) => {
+        const layerName = getRouteInfoLayerName(line);
+        if (!sessionMap.has(layerName)) {
+            sessionMap.set(layerName, []);
+        }
+        sessionMap.get(layerName).push(line);
+    });
+
+    sessionMap.forEach((sessionLines, routeLayerName) => {
+        const markerLayerName = getRouteInfoMarkerLayerName(routeLayerName);
+        const group = ensureTmapFeatureGroup(markerLayerName);
+        group.clearLayers();
+
+        const firstLine = sessionLines[0];
+        const lastLine = sessionLines[sessionLines.length - 1];
+
+        const startMarker = L.marker(firstLine.start, {
+            icon: buildTmapWaypointIcon('S', '#16a34a', '출발')
+        }).bindPopup(
+            `<b>${routeLayerName} Start</b><br>` +
+            `Lat: ${Number(firstLine.start[0]).toFixed(7)}<br>` +
+            `Lon: ${Number(firstLine.start[1]).toFixed(7)}`
+        );
+        group.addLayer(startMarker);
+
+        const endMarker = L.marker(lastLine.end, {
+            icon: buildTmapWaypointIcon('E', '#dc2626', '도착')
+        }).bindPopup(
+            `<b>${routeLayerName} End</b><br>` +
+            `Lat: ${Number(lastLine.end[0]).toFixed(7)}<br>` +
+            `Lon: ${Number(lastLine.end[1]).toFixed(7)}`
+        );
+        group.addLayer(endMarker);
+    });
+}
+
+function clearRouteInfoMarkerLayers() {
+    Object.keys(featureGroups).forEach((name) => {
+        if (name === ROUTE_INFO_MARKER_LAYER || name.startsWith(ROUTE_INFO_MARKER_LAYER_PREFIX)) {
+            featureGroups[name].clearLayers();
+        }
+    });
+}
+
+function getRouteInfoLayerName(line) {
+    const sessionName = line?.extra?.route_session_name;
+    if (typeof sessionName === 'string' && sessionName.trim()) {
+        return sessionName.trim();
+    }
+    return 'Route Info';
+}
+
+function getRouteInfoMarkerLayerName(routeLayerName) {
+    if (routeLayerName === 'Route Info') {
+        return ROUTE_INFO_MARKER_LAYER;
+    }
+    const suffix = routeLayerName.startsWith(ROUTE_INFO_LAYER_PREFIX)
+        ? routeLayerName.slice(ROUTE_INFO_LAYER_PREFIX.length)
+        : routeLayerName;
+    return `${ROUTE_INFO_MARKER_LAYER_PREFIX}${suffix}`.trim();
+}
+
+function getRouteInfoLineStyle(line) {
+    const isSelected = Number.isFinite(selectedRouteInfoLineId) && line?.id === selectedRouteInfoLineId;
+    const isNext = Number.isFinite(selectedRouteInfoNextLineId) && line?.id === selectedRouteInfoNextLineId;
+    if (isSelected) {
+        return { color: '#ef4444', weight: 6, dashArray: null, opacity: 1 };
+    }
+    if (isNext) {
+        return { color: '#2563eb', weight: 5, dashArray: '10 4', opacity: 0.98 };
+    }
+    return { color: '#f97316', weight: 4, dashArray: '8 5', opacity: 0.92 };
+}
+
+function applyRouteInfoPolylineStyle(polyline) {
+    const line = polyline?.lineData;
+    if (!line || line.type !== 'Route Info') return;
+    polyline.setStyle(getRouteInfoLineStyle(line));
+}
+
+function refreshRouteInfoPolylineStyles() {
+    polylines.forEach((polyline) => {
+        if (polyline?.lineData?.type === 'Route Info') {
+            applyRouteInfoPolylineStyle(polyline);
+        }
+    });
+}
+
+function getNextRouteInfoLine(currentLine, lines) {
+    const sessionIndex = currentLine?.extra?.route_session_index;
+    const currentSequence = currentLine?.extra?.route_sequence;
+    if (!Number.isFinite(sessionIndex) || !Number.isFinite(currentSequence)) {
+        return null;
+    }
+    return (Array.isArray(lines) ? lines : []).find((line) =>
+        line?.type === 'Route Info' &&
+        line?.extra?.route_session_index === sessionIndex &&
+        line?.extra?.route_sequence === currentSequence + 1
+    ) || null;
+}
+
+function selectRouteInfoLine(line, lines) {
+    selectedRouteInfoLineId = line?.id ?? null;
+    const nextLine = getNextRouteInfoLine(line, lines);
+    selectedRouteInfoNextLineId = nextLine?.id ?? null;
+    refreshRouteInfoPolylineStyles();
+}
+
+function clearRouteInfoSelection() {
+    selectedRouteInfoLineId = null;
+    selectedRouteInfoNextLineId = null;
+    refreshRouteInfoPolylineStyles();
 }
 
 function focusOnInitialView() {
@@ -1382,6 +1520,8 @@ function initUploadPanel() {
 
     const exportBtn = document.getElementById('exportHtmlMenuButton');
     if (exportBtn) exportBtn.disabled = !(Array.isArray(markersData) && markersData.length > 0);
+    const exportCsvBtn = document.getElementById('exportCsvMenuButton');
+    if (exportCsvBtn) exportCsvBtn.disabled = !(Array.isArray(markersData) && markersData.length > 0);
 
     syncRoadLinkRuleEnabledState();
     renderCustomLinkRuleList();
@@ -2026,6 +2166,7 @@ function initToolPanels() {
         });
     });
     bind('exportHtmlMenuButton', 'click', () => handleExportHtmlFromMenu());
+    bind('exportCsvMenuButton', 'click', () => handleExportCsvFromMenu());
     bind('toolBackdrop', 'click', closeAllToolPanels);
 }
 
@@ -2206,6 +2347,8 @@ function handleUploadAndParse() {
         setTimeout(() => renderLayerControls(), 0);
         const exportBtn = document.getElementById('exportHtmlMenuButton');
         if (exportBtn) exportBtn.disabled = false;
+        const exportCsvBtn = document.getElementById('exportCsvMenuButton');
+        if (exportCsvBtn) exportCsvBtn.disabled = false;
         finishParsingProgress(true, '완료');
     };
 
@@ -2634,6 +2777,65 @@ function toRoadInt(value) {
     return Number.isFinite(n) ? n : null;
 }
 
+function normalizeHeadingDegrees(value) {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return null;
+    const normalized = ((num % 360) + 360) % 360;
+    return normalized;
+}
+
+function computeHeadingDeltaDegrees(a, b) {
+    const h1 = normalizeHeadingDegrees(a);
+    const h2 = normalizeHeadingDegrees(b);
+    if (!Number.isFinite(h1) || !Number.isFinite(h2)) return null;
+    let diff = Math.abs(h1 - h2);
+    if (diff > 180) diff = 360 - diff;
+    return diff;
+}
+
+function computeSegmentHeadingDegrees(start, end) {
+    if (!Array.isArray(start) || !Array.isArray(end) || start.length < 2 || end.length < 2) {
+        return null;
+    }
+    const lat1 = Number(start[0]);
+    const lon1 = Number(start[1]);
+    const lat2 = Number(end[0]);
+    const lon2 = Number(end[1]);
+    if (![lat1, lon1, lat2, lon2].every(Number.isFinite)) return null;
+    const y = Math.sin((lon2 - lon1) * DEG2RAD) * Math.cos(lat2 * DEG2RAD);
+    const x =
+        Math.cos(lat1 * DEG2RAD) * Math.sin(lat2 * DEG2RAD) -
+        Math.sin(lat1 * DEG2RAD) * Math.cos(lat2 * DEG2RAD) * Math.cos((lon2 - lon1) * DEG2RAD);
+    const bearing = Math.atan2(y, x) * (180 / Math.PI);
+    return normalizeHeadingDegrees(bearing);
+}
+
+function firstLastCoordsFromGeometry(geometry) {
+    if (!geometry || !geometry.type) return null;
+    const coords = geometry.coordinates;
+    if (!Array.isArray(coords)) return null;
+
+    if (geometry.type === 'LineString' && coords.length >= 2) {
+        return { start: coords[0], end: coords[coords.length - 1] };
+    }
+    if (geometry.type === 'MultiLineString' && coords.length > 0) {
+        const firstLine = coords.find((line) => Array.isArray(line) && line.length >= 2);
+        const lastLine = [...coords].reverse().find((line) => Array.isArray(line) && line.length >= 2);
+        if (firstLine && lastLine) {
+            return { start: firstLine[0], end: lastLine[lastLine.length - 1] };
+        }
+    }
+    return null;
+}
+
+function computeRoadFeatureAngle(feature) {
+    const endpoints = firstLastCoordsFromGeometry(feature?.geometry);
+    if (!endpoints) return null;
+    const start = Array.isArray(endpoints.start) ? [endpoints.start[1], endpoints.start[0]] : null;
+    const end = Array.isArray(endpoints.end) ? [endpoints.end[1], endpoints.end[0]] : null;
+    return computeSegmentHeadingDegrees(start, end);
+}
+
 function classifyRoadLinkRule(props) {
     const roadCate = toRoadInt(findRoadPropValue(props, 'ROAD_CATE'));
     const linkFacil = toRoadInt(findRoadPropValue(props, 'LINK_FACIL'));
@@ -2687,15 +2889,17 @@ function isRoadNodeRuleEnabled(ruleKey) {
 function attachRoadShapePopup(feature, layer, kind, title) {
     const baseProps = { ...(feature?.properties || {}) };
     const shpIndex = getRoadFeatureIndex(feature);
+    const linkAngle = title === 'Road Link' ? computeRoadFeatureAngle(feature) : null;
     if (Number.isFinite(shpIndex)) {
         baseProps.SHP_INDEX = shpIndex + 1;
     }
+    if (Number.isFinite(linkAngle)) {
+        baseProps.LINK_ANGLE = `${linkAngle.toFixed(2)}°`;
+    }
 
+    layer.bindPopup(makeRoadPopupContent(baseProps, title), { maxWidth: 420, autoPan: false, keepInView: false });
     layer.on('click', (event) => {
         setSelectedRoadFeature(kind, feature);
-        if (!layer.getPopup()) {
-            layer.bindPopup('', { maxWidth: 420, autoPan: false, keepInView: false });
-        }
 
         const clickLat = Number(event?.latlng?.lat);
         const clickLon = Number(event?.latlng?.lng);
@@ -2704,10 +2908,22 @@ function attachRoadShapePopup(feature, layer, kind, title) {
             popupBaseProps.CLICK_LAT = clickLat.toFixed(6);
             popupBaseProps.CLICK_LON = clickLon.toFixed(6);
         }
+        if (Number.isFinite(linkAngle) && Number.isFinite(selectedDrCoordinate?.heading)) {
+            popupBaseProps.DR_HEADING = `${Number(selectedDrCoordinate.heading).toFixed(2)}°`;
+            const diff = computeHeadingDeltaDegrees(selectedDrCoordinate.heading, linkAngle);
+            if (Number.isFinite(diff)) {
+                popupBaseProps.DR_LINK_DIFF = `${diff.toFixed(2)}°`;
+            }
+        }
 
         const loadingProps = { ...popupBaseProps, 상태: '속성 조회 중...' };
         layer.setPopupContent(makeRoadPopupContent(loadingProps, title));
-        layer.openPopup(event?.latlng);
+        if (typeof layer.openPopup === 'function') {
+            layer.openPopup(event?.latlng);
+        }
+        if (event?.originalEvent) {
+            L.DomEvent.stop(event.originalEvent);
+        }
 
         if (!Number.isFinite(shpIndex)) return;
 
@@ -2721,10 +2937,36 @@ function attachRoadShapePopup(feature, layer, kind, title) {
     });
 }
 
+function ensureRoadInteractionPanes() {
+    const ensurePane = (name, zIndex) => {
+        let pane = map.getPane(name);
+        if (!pane) {
+            pane = map.createPane(name);
+        }
+        pane.style.zIndex = String(zIndex);
+        pane.style.pointerEvents = 'auto';
+        return pane;
+    };
+
+    ensurePane('roadLinkPane', 451);
+    ensurePane('roadNodePane', 452);
+
+    if (!roadLinkSvgRenderer) {
+        roadLinkSvgRenderer = L.svg({ pane: 'roadLinkPane' });
+    }
+    if (!roadNodeSvgRenderer) {
+        roadNodeSvgRenderer = L.svg({ pane: 'roadNodePane' });
+    }
+}
+
 function ensureRoadShapeLayers() {
+    ensureRoadInteractionPanes();
     if (!roadLinkGeoLayer) {
         roadLinkGeoLayer = L.geoJSON(null, {
-            renderer: roadCanvasRenderer,
+            pane: 'roadLinkPane',
+            renderer: roadLinkSvgRenderer,
+            interactive: true,
+            bubblingMouseEvents: false,
             style: (feature) => getRoadLinkStyle({
                 ...(feature?.properties || {}),
                 __featureRef: feature
@@ -2747,8 +2989,14 @@ function ensureRoadShapeLayers() {
 
     if (!roadNodeGeoLayer) {
         roadNodeGeoLayer = L.geoJSON(null, {
+            pane: 'roadNodePane',
+            interactive: true,
+            bubblingMouseEvents: false,
             pointToLayer: (feature, latlng) => L.circleMarker(latlng, {
-                renderer: roadCanvasRenderer,
+                pane: 'roadNodePane',
+                renderer: roadNodeSvgRenderer,
+                interactive: true,
+                bubblingMouseEvents: false,
                 ...getRoadNodeStyle({
                     ...(feature?.properties || {}),
                     __featureRef: feature
@@ -3029,6 +3277,9 @@ function getRoadPopupFieldSpecs(title) {
         return [
             { label: 'LINK_ID', keys: ['LINK_ID', 'LINBK_ID', 'LINBKID'] },
             { label: 'IDXNAME', keys: ['IDXNAME', 'LIDXNAME'] },
+            { label: 'LINK_ANGLE', keys: ['LINK_ANGLE'] },
+            { label: 'DR_HEADING', keys: ['DR_HEADING'] },
+            { label: 'DR_LINK_DIFF', keys: ['DR_LINK_DIFF'] },
             { label: 'LANE', keys: ['LANE'] },
             { label: 'LENGTH', keys: ['LENGTH'] },
             { label: 'ONEWAY', keys: ['ONEWAY'] },
@@ -3123,7 +3374,7 @@ function handleExportHtml(buttonId = 'exportHtmlMenuButton') {
             if (!res.ok || !data.ok) {
                 throw new Error(data.error || 'Export 실패');
             }
-            setUploadProgress(100, `Export 완료: ${data.file_name}`, false);
+            setUploadProgress(100, `Export 완료: ${data.file_name} (Finder 열림)`, false);
         })
         .catch((err) => {
             setUploadProgress(0, `실패: ${err.message}`, false);
@@ -3135,6 +3386,38 @@ function handleExportHtml(buttonId = 'exportHtmlMenuButton') {
 
 function handleExportHtmlFromMenu() {
     handleExportHtml('exportHtmlMenuButton');
+}
+
+function handleExportCsv(buttonId = 'exportCsvMenuButton') {
+    const exportBtn = document.getElementById(buttonId);
+    const issueInput = document.getElementById('issueIdInput');
+    const issueId = (issueInput?.value || '').trim();
+
+    if (exportBtn) exportBtn.disabled = true;
+    setUploadProgress(100, 'CSV Export 중...', true);
+
+    fetch('/api/export-csv', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ issue_id: issueId })
+    })
+        .then(async (res) => {
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || !data.ok) {
+                throw new Error(data.error || 'CSV Export 실패');
+            }
+            setUploadProgress(100, `CSV Export 완료: ${data.file_name} (Finder 열림)`, false);
+        })
+        .catch((err) => {
+            setUploadProgress(0, `실패: ${err.message}`, false);
+        })
+        .finally(() => {
+            if (exportBtn) exportBtn.disabled = false;
+        });
+}
+
+function handleExportCsvFromMenu() {
+    handleExportCsv('exportCsvMenuButton');
 }
 
 function isInSelectedRange(timestampMs, minVal, maxVal) {
@@ -3226,24 +3509,38 @@ function drawMarkers(coordinates) {
             requestGroups[key].timestamp_ms_list.push(coord.timestamp_ms);
         } else {
             const popupText = makePopupText(coord, coordtype);
-            const marker = L.circleMarker([latitude, longitude], {
-                radius: 3,
-                color: coord.color || 'black',
-                fill: coord.fill,
-                fillOpacity: 0.8
-            }).bindPopup(popupText);
+            const isGnssTransitionHighlight = coordtype === 'Filtered GNSS' && !!coord?.extra?.gnss_transition_highlight;
+            const useDrHeadingArrow = coordtype === 'DR-based' && drHeadingArrowEnabled;
+            const marker = useDrHeadingArrow
+                ? L.marker([latitude, longitude], {
+                    icon: buildDrHeadingIcon(coord.heading, coord.color || '#ef4444')
+                }).bindPopup(popupText)
+                : L.circleMarker([latitude, longitude], {
+                    radius: isGnssTransitionHighlight ? 6 : 3,
+                    color: coord.color || 'black',
+                    weight: isGnssTransitionHighlight ? 3 : 1,
+                    fill: coord.fill,
+                    fillOpacity: 0.8
+                }).bindPopup(popupText);
 
             marker.dlt_id = coord.dlt_id;
             marker.timestamp_ms = coord.timestamp_ms;
             marker.id = coord.id || 0;
             marker.data = coord;
+            marker._isIconMarker = useDrHeadingArrow;
             marker._baseStyle = {
                 opacity: 1,
-                fillOpacity: 0.8,
-                weight: marker.options.weight ?? 1,
-                radius: marker.options.radius ?? 3
+                fillOpacity: useDrHeadingArrow ? 1 : 0.8,
+                weight: marker.options?.weight ?? 1,
+                radius: useDrHeadingArrow ? null : (marker.options.radius ?? 3)
             };
             attachMarkerDistancePick(marker);
+            marker.on('click', () => {
+                if (coordtype === 'DR-based') {
+                    selectedDrCoordinate = coord;
+                    refreshDrSelectionStyles();
+                }
+            });
 
             addLayerToGroup(coordtype, marker);
             markers.push(marker);
@@ -3251,6 +3548,7 @@ function drawMarkers(coordinates) {
     });
 
     drawRequestGroupMarkers(requestGroups, markers);
+    refreshDrSelectionStyles();
     addOverlayLayers(featureGroups);
 }
 
@@ -3360,6 +3658,17 @@ function makePopupText(coordinate, coordtype) {
         text += `<br>Speed: ${parseFloat(coordinate.extra.Speed).toFixed(2)}`;
     }
 
+    if (coordtype === "Filtered GNSS") {
+        const gnssMode = coordinate.extra?.gnss_mode;
+        if (gnssMode) {
+            text += `<br>GNSS mode: ${gnssMode}`;
+        }
+        const transition = coordinate.extra?.gnss_mode_transition;
+        if (transition?.from && transition?.to) {
+            text += `<br>Mode transition: ${transition.from} -> ${transition.to}`;
+        }
+    }
+
     if (coordtype === "DR-based") {
         text += `<br>isDRGps: ${coordinate.extra?.isDRGps ?? ""}`;
     }
@@ -3375,9 +3684,63 @@ function makePopupText(coordinate, coordtype) {
     return text;
 }
 
+function buildDrHeadingIcon(heading, color = '#ef4444') {
+    const degrees = Number.isFinite(Number(heading)) ? Number(heading) : 0;
+    return L.divIcon({
+        className: 'dr-heading-icon-wrapper',
+        html:
+            `<div class="dr-heading-icon" style="transform: rotate(${degrees}deg);">` +
+            `<span class="dr-heading-arrow" style="border-bottom-color: ${color};"></span>` +
+            `</div>`,
+        iconSize: [16, 16],
+        iconAnchor: [8, 8],
+        popupAnchor: [0, -8]
+    });
+}
+
+function isSelectedDrCoordinate(coord) {
+    if (!coord || !selectedDrCoordinate) return false;
+    const selectedId = Number(selectedDrCoordinate.id);
+    const coordId = Number(coord.id);
+    if (Number.isFinite(selectedId) && Number.isFinite(coordId)) {
+        return selectedId === coordId;
+    }
+    return coord === selectedDrCoordinate;
+}
+
+function refreshDrSelectionStyles() {
+    markers.forEach((marker) => {
+        const coord = marker?.data;
+        if (!coord || coord.type !== 'DR-based') return;
+        const selected = isSelectedDrCoordinate(coord);
+        if (marker._isIconMarker) {
+            marker.setIcon(buildDrHeadingIcon(
+                coord.heading,
+                selected ? '#2563eb' : (coord.color || '#ef4444')
+            ));
+            if (typeof marker.setZIndexOffset === 'function') {
+                marker.setZIndexOffset(selected ? 1200 : 0);
+            }
+            return;
+        }
+        if (typeof marker.setStyle === 'function') {
+            marker.setStyle({
+                color: selected ? '#2563eb' : (coord.color || 'black'),
+                fillColor: selected ? '#60a5fa' : (coord.color || 'black'),
+                weight: selected ? 3 : 1
+            });
+            if (typeof marker.setRadius === 'function') {
+                marker.setRadius(selected ? 6 : (marker._baseStyle?.radius ?? 3));
+            }
+        }
+    });
+}
+
 function drawPolylines(lines) {
     polylines = [];
+    clearRouteInfoSelection();
     refreshRouteInfoLinkIds(lines);
+    renderRouteInfoMarkers(lines);
     lines.forEach(line => {
         const { type, extra } = line;
 
@@ -3387,12 +3750,15 @@ function drawPolylines(lines) {
         else if (type === "DR to VPM") color = "#9ca3af";
         else if (type === "Route Info") color = "#f97316";
 
-        const polyline = L.polyline([line.start, line.end], {
-            color: color,
-            weight: (type === "DR Correction") ? 3 : (type === "Route Info" ? 4 : 1),
-            dashArray: type === "Route Info" ? "8 5" : null,
-            opacity: type === "DR to VPM" ? 0.7 : (type === "Route Info" ? 0.92 : 0.8)
-        });
+        const baseStyle = type === "Route Info"
+            ? getRouteInfoLineStyle(line)
+            : {
+                color: color,
+                weight: (type === "DR Correction") ? 3 : 1,
+                dashArray: null,
+                opacity: type === "DR to VPM" ? 0.7 : 0.8
+            };
+        const polyline = L.polyline([line.start, line.end], baseStyle);
 
         polyline.id = line.id || 0;
         polyline.timestamp_ms = line.timestamp_ms;
@@ -3404,6 +3770,9 @@ function drawPolylines(lines) {
 
         polyline.on('click', (e) => {
             highlightEndpoints(line.start, line.end, color);
+            if (type === "Route Info") {
+                selectRouteInfoLine(line, lines);
+            }
 
             if (type === "Deviation") {
                 openDeviationPopup(polyline, line);
@@ -3414,19 +3783,27 @@ function drawPolylines(lines) {
                 L.popup().setLatLng(e.latlng).setContent(popupContent).openOn(map);
             }
             else if (type === "Route Info" && extra) {
-                const header = extra.tvas_header || {};
+                const routeAngle = computeSegmentHeadingDegrees(line.start, line.end);
                 const popupRows = [
+                    `session: ${extra.route_session_name ?? 'Route Info'}`,
+                    `order: ${extra.route_sequence ?? '-'}`,
                     `LINK_ID: ${extra.link_id ?? '-'}`,
                     `dir: ${extra.dir ?? '-'}`,
                     `linkType: ${extra.link_type ?? '-'}`,
                     `vertexSize: ${extra.vertex_size ?? '-'}`,
+                    `linkAngle: ${Number.isFinite(routeAngle) ? `${routeAngle.toFixed(2)}°` : '-'}`,
+                    `v[st]: ${Number(line.start[0]).toFixed(7)}, ${Number(line.start[1]).toFixed(7)}`,
+                    `v[en]: ${Number(line.end[0]).toFixed(7)}, ${Number(line.end[1]).toFixed(7)}`,
                 ];
+                if (Number.isFinite(selectedDrCoordinate?.heading)) {
+                    popupRows.push(`DR heading: ${Number(selectedDrCoordinate.heading).toFixed(2)}°`);
+                    const diff = computeHeadingDeltaDegrees(selectedDrCoordinate.heading, routeAngle);
+                    if (Number.isFinite(diff)) popupRows.push(`DR-link diff: ${diff.toFixed(2)}°`);
+                }
+                const nextLine = getNextRouteInfoLine(line, lines);
+                if (nextLine?.extra?.link_id !== undefined) popupRows.push(`next LINK_ID: ${nextLine.extra.link_id}`);
                 if (extra.link_str_code !== undefined) popupRows.push(`strCode: ${extra.link_str_code}`);
                 if (extra.road_length !== undefined) popupRows.push(`roadLength: ${extra.road_length}`);
-                if (header.route_opt_code !== undefined) popupRows.push(`routeOptCode: ${header.route_opt_code}`);
-                if (header.service_cnt !== undefined) popupRows.push(`serviceCnt: ${header.service_cnt}`);
-                if (header.total_time !== undefined) popupRows.push(`totalTime: ${header.total_time}`);
-                if (header.total_dist !== undefined) popupRows.push(`totalDist: ${header.total_dist}`);
 
                 const popupContent =
                     `<strong>[Route Info]</strong><br>` +
@@ -3436,7 +3813,8 @@ function drawPolylines(lines) {
             L.DomEvent.stopPropagation(e);
         });
 
-        addLayerToGroup(type, polyline);
+        const layerName = type === 'Route Info' ? getRouteInfoLayerName(line) : type;
+        addLayerToGroup(layerName, polyline);
         polylines.push(polyline);
     });
     addOverlayLayers(featureGroups);
@@ -3612,6 +3990,8 @@ function addControlLayers() {
 }
 
 function getLayerOrderKey(name) {
+    if (name.startsWith(ROUTE_INFO_MARKER_LAYER_PREFIX)) return 15;
+    if (name.startsWith(ROUTE_INFO_LAYER_PREFIX)) return 14;
     const order = {
         'Raw GNSS': 1,
         'Filtered GNSS': 2,
@@ -3627,8 +4007,9 @@ function getLayerOrderKey(name) {
         'Road Link': 12,
         'Road Node': 13,
         'Route Info': 14,
-        'Tmap Waypoints': 15,
-        'Tmap Route': 16
+        'Route Info Markers': 15,
+        'Tmap Waypoints': 16,
+        'Tmap Route': 17
     };
     return order[name] ?? 999;
 }
@@ -4000,6 +4381,12 @@ function appendRoadRuleControls(parent, layerName) {
 }
 
 function getLayerSwatchColor(name) {
+    if (name.startsWith(ROUTE_INFO_MARKER_LAYER_PREFIX)) {
+        return '#16a34a';
+    }
+    if (name.startsWith(ROUTE_INFO_LAYER_PREFIX)) {
+        return '#f97316';
+    }
     if (name === ROAD_LINK_LAYER) {
         const style = ensureRoadLinkBaseStyle('default');
         return normalizeRoadColor(style.color, '#45c976');
@@ -4018,6 +4405,7 @@ function getLayerSwatchColor(name) {
         'Deviation': '#ef4444',
         'Road Node': '#22c3d6',
         'Route Info': '#f97316',
+        'Route Info Markers': '#16a34a',
         'Tmap Waypoints': '#f59e0b',
         'Tmap Route': '#ef4444'
     };

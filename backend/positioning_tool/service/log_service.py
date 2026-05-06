@@ -3,6 +3,7 @@ import os
 from backend.positioning_tool.service.paths import PATHS
 from backend.positioning_tool.model.parse_models import ParseResult
 from backend.positioning_tool.service import log_parser_service as log_parser
+from backend.positioning_tool.service.export_csv_service import write_simple_export_csv
 from backend.positioning_tool.service.export_html_service import write_simple_export_html
 from backend.positioning_tool.service.html_renderer_service import write_html_file
 
@@ -52,6 +53,18 @@ class LogService:
         return write_simple_export_html(
             markers_data=payload.get("coords", []),
             lines_data=payload.get("lines", []),
+            result_name=cls._last_result_name,
+            issue_id=issue_id,
+            out_dir=PATHS.project_root,
+        )
+
+    @classmethod
+    def export_last_result_csv(cls, issue_id: str | None = None) -> str | None:
+        if cls._last_result is None:
+            return None
+        payload = cls._last_result.to_payload()
+        return write_simple_export_csv(
+            markers_data=payload.get("coords", []),
             result_name=cls._last_result_name,
             issue_id=issue_id,
             out_dir=PATHS.project_root,

@@ -442,6 +442,9 @@ def add_export_panel():
             <button id="exportHtmlMenuButton" class="menu-action-btn" disabled>
                 <i class="fa fa-file-text-o"></i><span>HTML 내보내기</span>
             </button>
+            <button id="exportCsvMenuButton" class="menu-action-btn" disabled>
+                <i class="fa fa-file-excel-o"></i><span>CSV 내보내기</span>
+            </button>
         </div>
     </div>
     """
@@ -550,6 +553,12 @@ def add_legend():
             <button class="panel-close-btn" data-close-panel="legendPanel">닫기</button>
         </div>
         <div class="tool-panel-body legend-list">
+            <div class="legend-toggle-card">
+                <label class="legend-toggle-label" for="drHeadingToggle">
+                    <input id="drHeadingToggle" type="checkbox">
+                    <span>DR Heading 화살표 표시</span>
+                </label>
+            </div>
             <div><i style="background:purple; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> Raw GNSS</div>
             <div><i style="background:yellow; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> Filtered GNSS</div>
             <div><i style="background:orange; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> GNSS-based</div>

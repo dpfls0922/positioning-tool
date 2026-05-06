@@ -52,6 +52,14 @@ class CoordType(Enum):
         self.pattern = pattern
 
     def get_color(self, coord):
+        if self == CoordType.GNSS1:
+            if coord.extra.get("gnss_transition_highlight"):
+                return "#22c55e"
+            gnss_mode = str(coord.extra.get("gnss_mode", "")).strip()
+            if gnss_mode == "BusSleep":
+                return "#f97316"
+            if gnss_mode == "Normal":
+                return "#facc15"
         if self == CoordType.DR and coord.extra.get("isDRGps") == 0:
             return "orange"
         return self.color
