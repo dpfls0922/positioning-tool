@@ -2948,8 +2948,10 @@ function ensureRoadInteractionPanes() {
         return pane;
     };
 
-    ensurePane('roadLinkPane', 451);
-    ensurePane('roadNodePane', 452);
+    // Keep road-shape click targets above parsed markers so popups remain usable
+    // after log overlays are rendered.
+    ensurePane('roadLinkPane', 649);
+    ensurePane('roadNodePane', 650);
 
     if (!roadLinkSvgRenderer) {
         roadLinkSvgRenderer = L.svg({ pane: 'roadLinkPane' });
