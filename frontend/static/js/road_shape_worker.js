@@ -17,9 +17,17 @@ const WGS84_E2 = (() => {
     const f = 1 / 298.257223563;
     return 2 * f - (f * f);
 })();
-const DX = -147.0;
-const DY = 506.0;
-const DZ = 687.5;
+const BESSEL_B = BESSEL_A * Math.sqrt(1.0 - BESSEL_E2);
+const WGS84_B = WGS84_A * Math.sqrt(1.0 - WGS84_E2);
+const TMAP_TOWGS84 = {
+    dx: -115.80,
+    dy: 474.99,
+    dz: 674.11,
+    rxArcSec: 1.16,
+    ryArcSec: -2.31,
+    rzArcSec: -1.63,
+    dsPpm: 6.43
+};
 
 const linkState = createDatasetState('link');
 const nodeState = createDatasetState('node');
@@ -115,23 +123,54 @@ function toText(value) {
     }
 }
 
+function geodeticToCartesian(lonDeg, latDeg, a, b) {
+    const lon = lonDeg * Math.PI / 180.0;
+    const lat = latDeg * Math.PI / 180.0;
+    const e2 = 1.0 - ((b * b) / (a * a));
+    const sinLat = Math.sin(lat);
+    const cosLat = Math.cos(lat);
+    const sinLon = Math.sin(lon);
+    const cosLon = Math.cos(lon);
+    const n = a / Math.sqrt(1.0 - (e2 * sinLat * sinLat));
+    return {
+        x: n * cosLat * cosLon,
+        y: n * cosLat * sinLon,
+        z: (n * (1.0 - e2)) * sinLat
+    };
+}
+
+function cartesianToGeodetic(x, y, z, a, b) {
+    const e2 = 1.0 - ((b * b) / (a * a));
+    const ep2 = ((a * a) - (b * b)) / (b * b);
+    const p = Math.sqrt((x * x) + (y * y));
+    const theta = Math.atan2(z * a, p * b);
+    const sinTheta = Math.sin(theta);
+    const cosTheta = Math.cos(theta);
+    const lon = Math.atan2(y, x);
+    const lat = Math.atan2(
+        z + (ep2 * b * sinTheta * sinTheta * sinTheta),
+        p - (e2 * a * cosTheta * cosTheta * cosTheta)
+    );
+    return [lon * 180.0 / Math.PI, lat * 180.0 / Math.PI];
+}
+
+function applyTowgs84Helmert(x, y, z, params) {
+    const arcSecToRad = Math.PI / (180.0 * 3600.0);
+    const rx = params.rxArcSec * arcSecToRad;
+    const ry = params.ryArcSec * arcSecToRad;
+    const rz = params.rzArcSec * arcSecToRad;
+    const scale = 1.0 + (params.dsPpm * 1e-6);
+    return {
+        x: params.dx + scale * x - rz * y + ry * z,
+        y: params.dy + rz * x + scale * y - rx * z,
+        z: params.dz - ry * x + rx * y + scale * z
+    };
+}
+
 function besselToWgs84(lon, lat) {
-    const phi = lat * Math.PI / 180.0;
-    const lam = lon * Math.PI / 180.0;
-    const sinPhi = Math.sin(phi);
-    const cosPhi = Math.cos(phi);
-    const n = BESSEL_A / Math.sqrt(1.0 - (BESSEL_E2 * sinPhi * sinPhi));
-    const x2 = (n * cosPhi * Math.cos(lam)) + DX;
-    const y2 = (n * cosPhi * Math.sin(lam)) + DY;
-    const z2 = (n * (1.0 - BESSEL_E2) * sinPhi) + DZ;
-    const lam2 = Math.atan2(y2, x2);
-    const p = Math.sqrt((x2 * x2) + (y2 * y2));
-    let phi2 = Math.atan2(z2, p * (1.0 - WGS84_E2));
-    for (let i = 0; i < 10; i += 1) {
-        const nw = WGS84_A / Math.sqrt(1.0 - (WGS84_E2 * Math.sin(phi2) ** 2));
-        phi2 = Math.atan2(z2 + (WGS84_E2 * nw * Math.sin(phi2)), p);
-    }
-    return [lam2 * 180.0 / Math.PI, phi2 * 180.0 / Math.PI];
+    const cart = geodeticToCartesian(lon, lat, BESSEL_A, BESSEL_B);
+    const shifted = applyTowgs84Helmert(cart.x, cart.y, cart.z, TMAP_TOWGS84);
+    return cartesianToGeodetic(shifted.x, shifted.y, shifted.z, WGS84_A, WGS84_B);
 }
 
 function inferCoordModeBySample(sampleCoord, hasPrj) {
@@ -148,7 +187,7 @@ function inferCoordModeBySample(sampleCoord, hasPrj) {
     // Known road-link sets without PRJ in this project are mostly
     // Bessel-degree lon/lat around KR.
     if (Math.abs(x) <= 180 && Math.abs(y) <= 90 && x >= 120 && x <= 135 && y >= 30 && y <= 45) {
-        return 'bessel';
+        return 'bessel_tmap';
     }
 
     return 'none';
@@ -158,7 +197,7 @@ function transformCoord(coord, mode) {
     const x = Number(coord?.[0]);
     const y = Number(coord?.[1]);
     if (!Number.isFinite(x) || !Number.isFinite(y)) return coord;
-    if (mode === 'bessel') {
+    if (mode === 'bessel_tmap') {
         return besselToWgs84(x, y);
     }
     return [x, y];
