@@ -127,6 +127,7 @@ let routeInfoLinkIds = new Set();
 let selectedRouteInfoLineId = null;
 let selectedRouteInfoNextLineId = null;
 let selectedDrCoordinate = null;
+let selectedCandidateLinkIds = new Set();
 let tmapRouteResult = null;
 let tmapRouteRequesting = false;
 let tmapRouteWaypoints = {
@@ -206,6 +207,13 @@ function init() {
     map.on('click', (e) => {
         highlightLayer.clearLayers();
         clearRouteInfoSelection();
+        selectedCandidateLinkIds = new Set();
+        if (roadLinkGeoLayer) {
+            roadLinkGeoLayer.setStyle((feature) => getRoadLinkStyle({
+                ...(feature?.properties || {}),
+                __featureRef: feature
+            }));
+        }
         if (distancePickMode && distanceSelectionMode === 'map') {
             handleMapDistancePick(e.latlng);
         }
@@ -2987,11 +2995,10 @@ function ensureRoadInteractionPanes() {
         return pane;
     };
 
-    // Keep road-shape click targets above parsed markers so popups remain usable
-    // after log overlays are rendered.
-    ensurePane('roadLinkPane', 649);
-    ensurePane('roadLinkVertexPane', 650);
-    ensurePane('roadNodePane', 651);
+    // Keep road-shape layers below markerPane so parsed marker popups remain clickable.
+    ensurePane('roadLinkPane', 560);
+    ensurePane('roadLinkVertexPane', 570);
+    ensurePane('roadNodePane', 580);
 
     if (!roadLinkSvgRenderer) {
         roadLinkSvgRenderer = L.svg({ pane: 'roadLinkPane' });
@@ -3137,23 +3144,6 @@ function ensureRoadShapeLayers() {
                     maxWidth: 420,
                     autoPan: false,
                     keepInView: false
-                });
-                layer.on('click', (event) => {
-                    if (event?.originalEvent) {
-                        L.DomEvent.stop(event.originalEvent);
-                    }
-                    const parentFeature = props.__parentFeatureRef;
-                    if (parentFeature) {
-                        setSelectedRoadFeature('link', parentFeature);
-                        if (roadLinkGeoLayer) {
-                            roadLinkGeoLayer.eachLayer((roadLayer) => {
-                                roadLayer.setStyle(getRoadLinkStyle({
-                                    ...(roadLayer.feature?.properties || {}),
-                                    __featureRef: roadLayer.feature
-                                }));
-                            });
-                        }
-                    }
                 });
             }
         });
@@ -3420,6 +3410,13 @@ function getRoadLinkStyle(props) {
             opacity: 0.98
         };
     }
+    if (Number.isFinite(linkIdCandidate) && selectedCandidateLinkIds.has(linkIdCandidate)) {
+        return {
+            color: '#a855f7',
+            weight: Math.max((Number(resolvedRule.weight) || 2.1) + 1.8, 3.8),
+            opacity: 1
+        };
+    }
     return {
         color: resolvedRule.color || '#45c976',
         weight: Number(resolvedRule.weight) || 2.1,
@@ -3630,6 +3627,7 @@ function resetVisualization() {
     markers = [];
     polylines = [];
     requestGroups = {};
+    selectedCandidateLinkIds = new Set();
     activeGroups = new Set([...activeGroups].filter((name) => name === ROAD_LINK_LAYER || name === ROAD_NODE_LAYER || name === ROAD_LINK_VERTEX_LAYER));
     layerOrder = layerOrder.filter((name) => name === ROAD_LINK_LAYER || name === ROAD_NODE_LAYER || name === ROAD_LINK_VERTEX_LAYER);
     isLayerTreeExpanded = true;
@@ -3722,7 +3720,14 @@ function drawMarkers(coordinates) {
             marker.on('click', () => {
                 if (coordtype === 'DR-based') {
                     selectedDrCoordinate = coord;
+                    selectedCandidateLinkIds = extractCandidateLinkIdSet(coord?.extra);
                     refreshDrSelectionStyles();
+                    if (roadLinkGeoLayer) {
+                        roadLinkGeoLayer.setStyle((feature) => getRoadLinkStyle({
+                            ...(feature?.properties || {}),
+                            __featureRef: feature
+                        }));
+                    }
                 }
             });
 
@@ -3855,6 +3860,7 @@ function makePopupText(coordinate, coordtype) {
 
     if (coordtype === "DR-based") {
         text += `<br>isDRGps: ${coordinate.extra?.isDRGps ?? ""}`;
+        text += buildCandidateLinkPopupHtml(coordinate?.extra);
     }
     if (coordtype === "Request") {
         text += `<br>${coordinate.extra?.group_1 ?? ""} ${coordinate.extra?.group_2_text ?? ""}`;
@@ -3866,6 +3872,99 @@ function makePopupText(coordinate, coordtype) {
         }
     }
     return text;
+}
+
+function normalizeCandidateLinkEntries(extra) {
+    if (!extra || typeof extra !== 'object') return [];
+    const direct = extra.candidate_link_scores ?? extra.candidate_links ?? extra.candidateLinkScores;
+    if (Array.isArray(direct)) return direct;
+    if (typeof direct === 'string') {
+        try {
+            const parsed = JSON.parse(direct);
+            return Array.isArray(parsed) ? parsed : [];
+        } catch (_) {
+            return [];
+        }
+    }
+    return [];
+}
+
+function extractCandidateLinkIdSet(extra) {
+    const entries = normalizeCandidateLinkEntries(extra);
+    const nextIds = new Set();
+    entries.forEach((entry) => {
+        const raw = pickCandidateField(entry, ['link_id', 'linkId', 'rid', 'RID', 'candidate_link_id']);
+        const parsed = Number(raw);
+        if (Number.isFinite(parsed)) {
+            nextIds.add(parsed);
+        }
+    });
+    return nextIds;
+}
+
+function pickCandidateField(entry, keys) {
+    if (!entry || typeof entry !== 'object' || !Array.isArray(keys)) return '';
+    for (let i = 0; i < keys.length; i += 1) {
+        const key = keys[i];
+        if (entry[key] !== undefined && entry[key] !== null && entry[key] !== '') {
+            return entry[key];
+        }
+    }
+    return '';
+}
+
+function formatCandidateCell(value) {
+    if (value === undefined || value === null || value === '') return '-';
+    const num = Number(value);
+    if (Number.isFinite(num)) {
+        return Math.abs(num) >= 1000 ? String(num) : num.toFixed(3).replace(/\.?0+$/, '');
+    }
+    return escapeHtml(value);
+}
+
+function buildCandidateLinkPopupHtml(extra) {
+    const entries = normalizeCandidateLinkEntries(extra).slice(0, 12);
+    if (entries.length === 0) return '';
+
+    const rows = entries.map((entry, index) => {
+        const linkId = pickCandidateField(entry, ['link_id', 'linkId', 'rid', 'RID', 'candidate_link_id']);
+        const base = pickCandidateField(entry, ['base', 'baseScore', 'base_score']);
+        const distanceScore = pickCandidateField(entry, ['distanceScore', 'distance_score']);
+        const anglePenalty = pickCandidateField(entry, ['anglePenalty', 'angle_penalty']);
+        const laneBonus = pickCandidateField(entry, ['laneBonus', 'lane_bonus']);
+        const total = pickCandidateField(entry, ['total', 'totalScore', 'score']);
+        return `
+            <tr>
+                <td>${index + 1}</td>
+                <td>${formatCandidateCell(linkId)}</td>
+                <td>${formatCandidateCell(base)}</td>
+                <td>${formatCandidateCell(distanceScore)}</td>
+                <td>${formatCandidateCell(anglePenalty)}</td>
+                <td>${formatCandidateCell(laneBonus)}</td>
+                <td>${formatCandidateCell(total)}</td>
+            </tr>
+        `;
+    }).join('');
+
+    return `
+        <div class="road-popup-subtitle" style="margin-top:8px;">Candidate Link</div>
+        <div class="road-popup-summary">
+            <table class="road-popup-table">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>LINK_ID</th>
+                        <th>BASE</th>
+                        <th>DIST</th>
+                        <th>ANGLE</th>
+                        <th>LANE</th>
+                        <th>TOTAL</th>
+                    </tr>
+                </thead>
+                <tbody>${rows}</tbody>
+            </table>
+        </div>
+    `;
 }
 
 function getMarkerTableCoreColumns() {
@@ -4784,7 +4883,7 @@ function applyLayerOrderZIndex() {
         if (paneName) {
             const pane = map.getPane(paneName);
             if (pane) {
-                pane.style.zIndex = String(640 + idx * 10);
+                pane.style.zIndex = String(560 + idx * 5);
             }
         }
         const zBase = 1000 + idx * 10;

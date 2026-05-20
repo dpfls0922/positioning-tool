@@ -38,6 +38,7 @@ DLT_RELEVANT_BYTE_KEYWORDS = [
     b"[MM_RESULT]",
     b"requestRouting",
     b"NaviARSupportServer::setRouteInformation",
+    b"Candidate Link[",
     b"shouldStayRoute distance:",
     b"[[MM] : 4] State =",
 ]
@@ -59,6 +60,15 @@ GNSS_MODE_EVENT_PATTERN = re.compile(
     r"GNSS mode:\s*event=([A-Za-z_]+)\s+from=([A-Za-z_]+)\s+to=([A-Za-z_]+)"
 )
 GNSS_MODE_INLINE_PATTERN = re.compile(r"mode=([A-Za-z_]+)")
+CANDIDATE_LINK_PATTERN = re.compile(
+    r"Candidate Link\[\s*(\-?\d+)\]\s*"
+    r"([+\-]?\d+(?:\.\d+)?)\s*\|\s*"
+    r"Base:\s*([+\-]?\d+(?:\.\d+)?)\s*=\s*([+\-]?\d+(?:\.\d+)?)\s*-\s*([+\-]?\d+(?:\.\d+)?)\s*\+\s*([+\-]?\d+(?:\.\d+)?)\s*\|\s*"
+    r"Adj:\s*([+\-]?\d+(?:\.\d+)?)\s*\|\s*"
+    r"Dist\(p:\s*([+\-]?\d+(?:\.\d+)?)\s*d:\s*([+\-]?\d+(?:\.\d+)?)\s*laneW:\s*([+\-]?\d+(?:\.\d+)?)\s*fB:\s*([+\-]?\d+(?:\.\d+)?)\)\s*\|\s*"
+    r"Angle\(g:\s*([+\-]?\d+(?:\.\d+)?)\s*v:\s*([+\-]?\d+(?:\.\d+)?)\)\s*\|\s*"
+    r"Lane:\s*(\-?\d+)"
+)
 
 
 def lat_lon_dist(lat1, lon1, lat2, lon2):
@@ -104,6 +114,7 @@ def parse_log(log_file_path=None):
     last_vpm_coordinate = None
     last_road_match_coord = None
     last_route_match_coord = None
+    pending_candidate_link_scores = []
     source_path = log_file_path or PATHS.log_file_path
     log_base_timestamp = infer_initial_timestamp(source_path)
     current_timestamp = log_base_timestamp
@@ -160,6 +171,14 @@ def parse_log(log_file_path=None):
             tvas_header_info = parse_tvas_header_info(line, last_tvas_header_info)
             if tvas_header_info is not None:
                 last_tvas_header_info = tvas_header_info
+
+            candidate_link_info = parse_candidate_link_score(line)
+            if candidate_link_info:
+                if last_dr_coordinate is not None:
+                    bucket = last_dr_coordinate.extra.setdefault("candidate_link_scores", [])
+                    bucket.append(candidate_link_info)
+                else:
+                    pending_candidate_link_scores.append(candidate_link_info)
 
             route_info = parse_set_route_information(line)
             if route_info:
@@ -310,6 +329,9 @@ def parse_log(log_file_path=None):
                         extra={"isDRGps": is_dr, "Speed": speed},
                         timestamp=timestamp,
                     )
+                    if pending_candidate_link_scores:
+                        dr_coordinate.extra["candidate_link_scores"] = pending_candidate_link_scores
+                        pending_candidate_link_scores = []
 
                     COORDINATES[coord_type].append(dr_coordinate)
                     last_dr_coordinate = dr_coordinate
@@ -865,6 +887,29 @@ def parse_gnss_mode_info(line):
         }
 
     return None
+
+
+def parse_candidate_link_score(line):
+    match = CANDIDATE_LINK_PATTERN.search(line or "")
+    if not match:
+        return None
+
+    return {
+        "link_id": int(match.group(1)),
+        "score": float(match.group(2)),
+        "base": float(match.group(3)),
+        "distancePenalty": float(match.group(4)),
+        "anglePenalty": float(match.group(5)),
+        "laneBonus": float(match.group(6)),
+        "adjustment": float(match.group(7)),
+        "distanceProjection": float(match.group(8)),
+        "distanceScore": float(match.group(9)),
+        "laneWeight": float(match.group(10)),
+        "facilityBonus": float(match.group(11)),
+        "gyroAngle": float(match.group(12)),
+        "vehicleAngle": float(match.group(13)),
+        "lane": int(match.group(14)),
+    }
     return previous_info
 
 
