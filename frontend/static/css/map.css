@@ -445,6 +445,88 @@ html, body {
     gap: 10px;
 }
 
+#markerTablePanel {
+    width: min(1200px, calc(100vw - 120px));
+    height: min(720px, calc(100vh - 120px));
+}
+
+.marker-table-panel-body {
+    height: calc(100% - 48px);
+    min-height: 0;
+}
+
+.marker-table-toolbar {
+    display: grid;
+    grid-template-columns: 220px 1fr;
+    gap: 8px;
+}
+
+.marker-table-toolbar select,
+.marker-table-toolbar input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px 10px;
+    font-size: 12px;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    background: #fff;
+    color: #1f2937;
+}
+
+.marker-table-summary {
+    font-size: 11px;
+    color: #475569;
+}
+
+.marker-table-wrap {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+    border: 1px solid #dbe3ef;
+    border-radius: 8px;
+    background: #fff;
+}
+
+.marker-table {
+    width: max-content;
+    min-width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+
+.marker-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: #64748b;
+    color: #fff;
+    text-align: left;
+    padding: 8px 10px;
+    border-bottom: 1px solid #cbd5e1;
+    white-space: nowrap;
+}
+
+.marker-table tbody td {
+    padding: 7px 10px;
+    border-bottom: 1px solid #e5e7eb;
+    color: #1f2937;
+    white-space: nowrap;
+}
+
+.marker-table tbody tr {
+    cursor: pointer;
+}
+
+.marker-table tbody tr:hover {
+    background: #eff6ff;
+}
+
+.marker-table-empty td {
+    color: #64748b;
+    text-align: center;
+    padding: 24px 10px;
+}
+
 #playbackPanel {
     width: 420px;
 }

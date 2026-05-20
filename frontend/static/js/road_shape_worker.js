@@ -658,6 +658,66 @@ function queryState(state, bounds, maxCount, selectedKeys = null) {
     return { out, matched };
 }
 
+function pickFirstAttrValue(attrs, keys) {
+    if (!attrs || !Array.isArray(keys)) return undefined;
+    for (let i = 0; i < keys.length; i += 1) {
+        const rawKey = String(keys[i] || '').trim();
+        if (!rawKey) continue;
+        const variants = [rawKey, rawKey.toUpperCase(), rawKey.toLowerCase()];
+        for (let j = 0; j < variants.length; j += 1) {
+            const key = variants[j];
+            if (Object.prototype.hasOwnProperty.call(attrs, key)) {
+                const value = attrs[key];
+                if (value !== undefined && value !== null && value !== '') {
+                    return value;
+                }
+            }
+        }
+    }
+    return undefined;
+}
+
+function findFeatureByProperty(state, keys, needle) {
+    const targetNeedle = String(needle ?? '').trim().toLowerCase();
+    if (!targetNeedle) return null;
+
+    for (let index = 0; index < state.geometries.length; index += 1) {
+        const props = readAttributes(state, index);
+        let matched = false;
+
+        const candidate = pickFirstAttrValue(props, keys);
+        if (candidate !== undefined && candidate !== null && candidate !== '') {
+            const normalizedCandidate = String(candidate).trim().toLowerCase();
+            if (normalizedCandidate === targetNeedle || normalizedCandidate.includes(targetNeedle)) {
+                matched = true;
+            }
+        }
+
+        if (!matched) {
+            const entries = Object.entries(props || {});
+            for (let i = 0; i < entries.length; i += 1) {
+                const [, value] = entries[i];
+                if (value === undefined || value === null || value === '') continue;
+                const normalizedValue = String(value).trim().toLowerCase();
+                if (normalizedValue === targetNeedle || normalizedValue.includes(targetNeedle)) {
+                    matched = true;
+                    break;
+                }
+            }
+        }
+
+        if (!matched) continue;
+
+        return {
+            type: 'Feature',
+            geometry: transformGeometry(state.geometries[index], state.coordMode),
+            properties: props,
+            _shpIndex: index
+        };
+    }
+    return null;
+}
+
 self.onmessage = async (event) => {
     const data = event.data || {};
 
@@ -837,6 +897,18 @@ self.onmessage = async (event) => {
             kind,
             index,
             props
+        });
+        return;
+    }
+
+    if (data.type === 'findLinkByRid') {
+        const requestId = Number(data.requestId || 0);
+        const keys = sanitizePropKeyList(data.keys);
+        const feature = findFeatureByProperty(linkState, keys, data.value);
+        postMessage({
+            type: 'findLinkByRidResult',
+            requestId,
+            feature
         });
         return;
     }

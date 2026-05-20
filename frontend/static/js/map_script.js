@@ -41,6 +41,7 @@ const layerCountOverride = {};
 
 const ROAD_LINK_LAYER = 'Road Link';
 const ROAD_NODE_LAYER = 'Road Node';
+const ROAD_LINK_VERTEX_LAYER = 'Road Link Vertex';
 const ROUTE_INFO_MARKER_LAYER = 'Route Info Markers';
 const TMAP_ROUTE_LAYER = 'Tmap Route';
 const TMAP_WAYPOINT_LAYER = 'Tmap Waypoints';
@@ -48,6 +49,7 @@ const ROUTE_INFO_LAYER_PREFIX = 'Route Info ';
 const ROUTE_INFO_MARKER_LAYER_PREFIX = 'Route Info Markers ';
 let roadLinkGeoLayer = null;
 let roadNodeGeoLayer = null;
+let roadLinkVertexGeoLayer = null;
 let roadLinkFeatureCount = 0;
 let roadNodeFeatureCount = 0;
 const ROAD_RENDER_MIN_ZOOM = 16;
@@ -107,16 +109,18 @@ let roadLinkIdLabelEnabled = true;
 const ROAD_WORKER_VERSION = Date.now();
 let roadShapeAttrRequestSeq = 0;
 const roadShapeAttrRequests = new Map();
+let roadShapeFindRequestSeq = 0;
+const roadShapeFindRequests = new Map();
 let roadCustomLinkRuleSeq = 1;
 let roadCustomLinkRules = [];
 let roadLinkFieldNames = DEFAULT_ROAD_LINK_STYLE_FIELDS.slice();
 let roadShapeLocalGroupsByKind = { link: [], node: [] };
 let roadLinkBaseStyles = createDefaultRoadLinkBaseStyles();
 let roadNodeStyleConfig = {
-    radius: 3.2,
-    color: '#22c3d6',
-    stroke: '#0f8aa6',
-    weight: 1
+    radius: 4.2,
+    color: '#38bdf8',
+    stroke: '#075985',
+    weight: 1.4
 };
 let selectedRoadFeatureRef = { kind: null, shpIndex: null };
 let routeInfoLinkIds = new Set();
@@ -153,6 +157,7 @@ let radiusDeleteMarker = null;
 let parsingProgressTimer = null;
 let parsingProgressValue = 0;
 let drHeadingArrowEnabled = false;
+let markerTableSelectedType = 'all';
 
 const ROAD_SHAPE_CACHE_DIR = 'road_shape_cache_v1';
 const ROAD_SHAPE_MANIFEST_SUFFIX = '.manifest.json';
@@ -169,9 +174,8 @@ function init() {
     initUploadPanel();
     initToolPanels();
     initRoutePanel();
-
-    bind('searchButton', 'click', handleDltSearch);
-    bind('idSearchButton', 'click', handleIdSearch);
+    initMarkerTablePanel();
+    bindSearchControls();
     bind('toolZoomInBtn', 'click', () => map.zoomIn());
     bind('toolZoomOutBtn', 'click', () => map.zoomOut());
     bind('distancePickToggle', 'click', toggleDistancePickMode);
@@ -182,13 +186,6 @@ function init() {
     bind('radiusPickToggle', 'click', toggleRadiusPickMode);
     bind('radiusApplyButton', 'click', handleRadiusApplyInput);
     bind('drHeadingToggle', 'change', handleDrHeadingToggleChange);
-
-    document.getElementById('searchBox')?.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") handleDltSearch();
-    });
-    document.getElementById('idSearchBox')?.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") handleIdSearch();
-    });
 
     ['lat1Input', 'lon1Input', 'lat2Input', 'lon2Input'].forEach(id => {
         document.getElementById(id)?.addEventListener("keydown", (e) => {
@@ -271,6 +268,14 @@ function init() {
     updateMap();
 }
 
+function initMarkerTablePanel() {
+    bind('markerTableTypeSelect', 'change', (event) => {
+        markerTableSelectedType = String(event?.target?.value || 'all');
+        renderMarkerTable();
+    });
+    bind('markerTableSearchInput', 'input', renderMarkerTable);
+}
+
 function handleDrHeadingToggleChange(event) {
     drHeadingArrowEnabled = !!event?.target?.checked;
     renderFromCurrentData();
@@ -301,6 +306,7 @@ function renderFromCurrentData() {
     drawPolylines(linesData);
     addControlLayers();
     renderLayerControls();
+    renderMarkerTable();
     focusOnInitialView();
     updateMap();
 }
@@ -955,6 +961,26 @@ function attachMarkerDistancePick(marker) {
 function bind(id, event, handler) {
     const el = document.getElementById(id);
     if (el) el.addEventListener(event, handler);
+}
+
+function bindSearchControls() {
+    bind('searchButton', 'click', handleDltSearch);
+    bind('idSearchButton', 'click', handleIdSearch);
+    bind('latLonSearchButton', 'click', handleLatLonSearch);
+    bind('ridSearchButton', 'click', handleRidSearch);
+
+    document.getElementById('searchBox')?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') handleDltSearch();
+    });
+    document.getElementById('idSearchBox')?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') handleIdSearch();
+    });
+    document.getElementById('latLonSearchBox')?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') handleLatLonSearch();
+    });
+    document.getElementById('ridSearchBox')?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') handleRidSearch();
+    });
 }
 
 function initRoutePanel() {
@@ -2150,6 +2176,7 @@ function initToolPanels() {
     const panelMap = {
         toolUploadBtn: 'uploadPanel',
         toolExportBtn: 'exportPanel',
+        toolMarkerTableBtn: 'markerTablePanel',
         toolRouteBtn: 'routePanel',
         toolDistanceBtn: 'distancePanel',
         toolRadiusBtn: 'radiusPanel',
@@ -2191,7 +2218,7 @@ function closeToolPanel(panelId) {
 }
 
 function closeAllToolPanels() {
-    ['uploadPanel', 'exportPanel', 'routePanel', 'distancePanel', 'radiusPanel', 'playbackPanel', 'legendPanel']
+    ['uploadPanel', 'exportPanel', 'markerTablePanel', 'routePanel', 'distancePanel', 'radiusPanel', 'playbackPanel', 'legendPanel']
         .forEach((panelId) => document.getElementById(panelId)?.classList.add('hidden'));
     syncToolButtonState();
 }
@@ -2200,6 +2227,7 @@ function syncToolButtonState() {
     const mapping = {
         toolUploadBtn: 'uploadPanel',
         toolExportBtn: 'exportPanel',
+        toolMarkerTableBtn: 'markerTablePanel',
         toolRouteBtn: 'routePanel',
         toolDistanceBtn: 'distancePanel',
         toolRadiusBtn: 'radiusPanel',
@@ -2729,6 +2757,16 @@ function handleRoadShapeWorkerMessage(event) {
             roadShapeAttrRequests.delete(reqId);
             resolver(data.props || {});
         }
+        return;
+    }
+
+    if (data.type === 'findLinkByRidResult') {
+        const reqId = Number(data.requestId || 0);
+        const resolver = roadShapeFindRequests.get(reqId);
+        if (resolver) {
+            roadShapeFindRequests.delete(reqId);
+            resolver(data.feature ? { feature: data.feature } : null);
+        }
     }
 }
 
@@ -2738,6 +2776,7 @@ function terminateRoadShapeWorker() {
         roadShapeWorker = null;
     }
     roadShapeAttrRequests.clear();
+    roadShapeFindRequests.clear();
     roadShapeQueryRequestId = 0;
     roadShapeLastRenderedRequestId = 0;
     if (roadQueryDebounceTimer) {
@@ -2951,7 +2990,8 @@ function ensureRoadInteractionPanes() {
     // Keep road-shape click targets above parsed markers so popups remain usable
     // after log overlays are rendered.
     ensurePane('roadLinkPane', 649);
-    ensurePane('roadNodePane', 650);
+    ensurePane('roadLinkVertexPane', 650);
+    ensurePane('roadNodePane', 651);
 
     if (!roadLinkSvgRenderer) {
         roadLinkSvgRenderer = L.svg({ pane: 'roadLinkPane' });
@@ -2959,6 +2999,75 @@ function ensureRoadInteractionPanes() {
     if (!roadNodeSvgRenderer) {
         roadNodeSvgRenderer = L.svg({ pane: 'roadNodePane' });
     }
+}
+
+function getRoadPaneName(layerName) {
+    if (layerName === ROAD_LINK_LAYER) return 'roadLinkPane';
+    if (layerName === ROAD_LINK_VERTEX_LAYER) return 'roadLinkVertexPane';
+    if (layerName === ROAD_NODE_LAYER) return 'roadNodePane';
+    return null;
+}
+
+function getRoadLinkVertexStyle() {
+    return {
+        radius: 2.8,
+        color: '#0f172a',
+        fillColor: '#f8fafc',
+        fillOpacity: 0.95,
+        weight: 1.2
+    };
+}
+
+function makeRoadLinkVertexFeatures(linkFeatures) {
+    const out = [];
+    const sourceLinks = Array.isArray(linkFeatures) ? linkFeatures : [];
+
+    sourceLinks.forEach((feature) => {
+        const geometry = feature?.geometry;
+        const props = feature?.properties || {};
+        const shpIndex = getRoadFeatureIndex(feature);
+        const linkId = pickRoadLinkId(props);
+        if (!geometry) return;
+
+        const pushVertex = (coord, vertexIndex, partIndex = 0) => {
+            const lon = Number(coord?.[0]);
+            const lat = Number(coord?.[1]);
+            if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+            out.push({
+                type: 'Feature',
+                geometry: {
+                    type: 'Point',
+                    coordinates: [lon, lat]
+                },
+                properties: {
+                    LINK_ID: linkId,
+                    LINK_VERTEX_INDEX: vertexIndex,
+                    LINK_VERTEX_PART: partIndex,
+                    CLICK_LAT: lat,
+                    CLICK_LON: lon,
+                    __parentFeatureRef: feature,
+                    __featureRef: {
+                        kind: 'link-vertex',
+                        shpIndex,
+                        vertexIndex,
+                        partIndex
+                    }
+                }
+            });
+        };
+
+        if (geometry.type === 'LineString') {
+            (geometry.coordinates || []).forEach((coord, index) => pushVertex(coord, index, 0));
+            return;
+        }
+        if (geometry.type === 'MultiLineString') {
+            (geometry.coordinates || []).forEach((lineCoords, partIndex) => {
+                (lineCoords || []).forEach((coord, index) => pushVertex(coord, index, partIndex));
+            });
+        }
+    });
+
+    return out;
 }
 
 function ensureRoadShapeLayers() {
@@ -3011,10 +3120,52 @@ function ensureRoadShapeLayers() {
         addLayerToGroup(ROAD_NODE_LAYER, roadNodeGeoLayer);
     }
 
+    if (!roadLinkVertexGeoLayer) {
+        roadLinkVertexGeoLayer = L.geoJSON(null, {
+            pane: 'roadLinkVertexPane',
+            interactive: true,
+            bubblingMouseEvents: false,
+            pointToLayer: (_feature, latlng) => L.circleMarker(latlng, {
+                pane: 'roadLinkVertexPane',
+                interactive: true,
+                bubblingMouseEvents: false,
+                ...getRoadLinkVertexStyle()
+            }),
+            onEachFeature: (feature, layer) => {
+                const props = feature?.properties || {};
+                layer.bindPopup(makeRoadPopupContent(props, 'Road Link Vertex'), {
+                    maxWidth: 420,
+                    autoPan: false,
+                    keepInView: false
+                });
+                layer.on('click', (event) => {
+                    if (event?.originalEvent) {
+                        L.DomEvent.stop(event.originalEvent);
+                    }
+                    const parentFeature = props.__parentFeatureRef;
+                    if (parentFeature) {
+                        setSelectedRoadFeature('link', parentFeature);
+                        if (roadLinkGeoLayer) {
+                            roadLinkGeoLayer.eachLayer((roadLayer) => {
+                                roadLayer.setStyle(getRoadLinkStyle({
+                                    ...(roadLayer.feature?.properties || {}),
+                                    __featureRef: roadLayer.feature
+                                }));
+                            });
+                        }
+                    }
+                });
+            }
+        });
+        addLayerToGroup(ROAD_LINK_VERTEX_LAYER, roadLinkVertexGeoLayer);
+    }
+
     if (!layerOrder.includes(ROAD_LINK_LAYER)) layerOrder.push(ROAD_LINK_LAYER);
     if (!layerOrder.includes(ROAD_NODE_LAYER)) layerOrder.push(ROAD_NODE_LAYER);
+    if (!layerOrder.includes(ROAD_LINK_VERTEX_LAYER)) layerOrder.push(ROAD_LINK_VERTEX_LAYER);
     activeGroups.add(ROAD_LINK_LAYER);
     activeGroups.add(ROAD_NODE_LAYER);
+    activeGroups.add(ROAD_LINK_VERTEX_LAYER);
 }
 
 function queryRoadViewport() {
@@ -3024,6 +3175,7 @@ function queryRoadViewport() {
     if (zoom < roadMinZoom) {
         if (roadLinkGeoLayer) roadLinkGeoLayer.clearLayers();
         if (roadNodeGeoLayer) roadNodeGeoLayer.clearLayers();
+        if (roadLinkVertexGeoLayer) roadLinkVertexGeoLayer.clearLayers();
         roadLinkRenderCount = 0;
         roadNodeRenderCount = 0;
         return;
@@ -3076,6 +3228,7 @@ function renderRoadViewportFeatures(linkFeatures, nodeFeatures) {
     if (map.getZoom() < roadMinZoom) {
         if (roadLinkGeoLayer) roadLinkGeoLayer.clearLayers();
         if (roadNodeGeoLayer) roadNodeGeoLayer.clearLayers();
+        if (roadLinkVertexGeoLayer) roadLinkVertexGeoLayer.clearLayers();
         roadLinkRenderCount = 0;
         roadNodeRenderCount = 0;
         return;
@@ -3131,6 +3284,16 @@ function renderRoadViewportFeatures(linkFeatures, nodeFeatures) {
         }
     }
 
+    if (roadLinkVertexGeoLayer) {
+        roadLinkVertexGeoLayer.clearLayers();
+        if (activeGroups.has(ROAD_LINK_VERTEX_LAYER) && visibleLinks.length > 0) {
+            roadLinkVertexGeoLayer.addData({
+                type: 'FeatureCollection',
+                features: makeRoadLinkVertexFeatures(visibleLinks)
+            });
+        }
+    }
+
     roadLinkRenderCount = visibleLinks.length;
     roadNodeRenderCount = visibleNodes.length;
 }
@@ -3170,16 +3333,24 @@ function removeRoadShapeLayers() {
         map.removeLayer(featureGroups[ROAD_NODE_LAYER]);
         delete featureGroups[ROAD_NODE_LAYER];
     }
+    if (featureGroups[ROAD_LINK_VERTEX_LAYER]) {
+        map.removeLayer(featureGroups[ROAD_LINK_VERTEX_LAYER]);
+        delete featureGroups[ROAD_LINK_VERTEX_LAYER];
+    }
     delete overlays[ROAD_LINK_LAYER];
     delete overlays[ROAD_NODE_LAYER];
+    delete overlays[ROAD_LINK_VERTEX_LAYER];
     delete layerCountOverride[ROAD_LINK_LAYER];
     delete layerCountOverride[ROAD_NODE_LAYER];
+    delete layerCountOverride[ROAD_LINK_VERTEX_LAYER];
     activeGroups.delete(ROAD_LINK_LAYER);
     activeGroups.delete(ROAD_NODE_LAYER);
-    layerOrder = layerOrder.filter((name) => name !== ROAD_LINK_LAYER && name !== ROAD_NODE_LAYER);
+    activeGroups.delete(ROAD_LINK_VERTEX_LAYER);
+    layerOrder = layerOrder.filter((name) => name !== ROAD_LINK_LAYER && name !== ROAD_NODE_LAYER && name !== ROAD_LINK_VERTEX_LAYER);
 
     roadLinkGeoLayer = null;
     roadNodeGeoLayer = null;
+    roadLinkVertexGeoLayer = null;
     roadLinkFeatureCount = 0;
     roadNodeFeatureCount = 0;
     roadLinkRenderCount = 0;
@@ -3209,6 +3380,7 @@ function handleRoadZoomChanged() {
         }
         if (roadLinkGeoLayer) roadLinkGeoLayer.clearLayers();
         if (roadNodeGeoLayer) roadNodeGeoLayer.clearLayers();
+        if (roadLinkVertexGeoLayer) roadLinkVertexGeoLayer.clearLayers();
         roadLinkRenderCount = 0;
         roadNodeRenderCount = 0;
         updateRoadShapeStateText(roadShapeMetaByKind, `zoom ${roadMinZoom}+에서만 표시`);
@@ -3290,6 +3462,16 @@ function getRoadPopupFieldSpecs(title) {
             { label: 'LINK_FACIL', keys: ['LINK_FACIL', 'LINKFACIL'] },
             { label: 'ST_ND_ID', keys: ['ST_ND_ID', 'ST_NODE_ID'] },
             { label: 'ED_ND_ID', keys: ['ED_ND_ID', 'ED_NODE_ID'] },
+            { label: 'CLICK_LAT', keys: ['CLICK_LAT'] },
+            { label: 'CLICK_LON', keys: ['CLICK_LON'] }
+        ];
+    }
+
+    if (title === 'Road Link Vertex') {
+        return [
+            { label: 'LINK_ID', keys: ['LINK_ID', 'LINBK_ID', 'LINBKID'] },
+            { label: 'VERTEX_INDEX', keys: ['LINK_VERTEX_INDEX'] },
+            { label: 'PART_INDEX', keys: ['LINK_VERTEX_PART'] },
             { label: 'CLICK_LAT', keys: ['CLICK_LAT'] },
             { label: 'CLICK_LON', keys: ['CLICK_LON'] }
         ];
@@ -3436,20 +3618,20 @@ function resetVisualization() {
     resetRadiusSelection(false);
 
     Object.keys(featureGroups).forEach((key) => {
-        if (key === ROAD_LINK_LAYER || key === ROAD_NODE_LAYER) return;
+        if (key === ROAD_LINK_LAYER || key === ROAD_NODE_LAYER || key === ROAD_LINK_VERTEX_LAYER) return;
         map.removeLayer(featureGroups[key]);
         delete featureGroups[key];
     });
     Object.keys(overlays).forEach((key) => {
-        if (key === ROAD_LINK_LAYER || key === ROAD_NODE_LAYER) return;
+        if (key === ROAD_LINK_LAYER || key === ROAD_NODE_LAYER || key === ROAD_LINK_VERTEX_LAYER) return;
         delete overlays[key];
     });
 
     markers = [];
     polylines = [];
     requestGroups = {};
-    activeGroups = new Set([...activeGroups].filter((name) => name === ROAD_LINK_LAYER || name === ROAD_NODE_LAYER));
-    layerOrder = layerOrder.filter((name) => name === ROAD_LINK_LAYER || name === ROAD_NODE_LAYER);
+    activeGroups = new Set([...activeGroups].filter((name) => name === ROAD_LINK_LAYER || name === ROAD_NODE_LAYER || name === ROAD_LINK_VERTEX_LAYER));
+    layerOrder = layerOrder.filter((name) => name === ROAD_LINK_LAYER || name === ROAD_NODE_LAYER || name === ROAD_LINK_VERTEX_LAYER);
     isLayerTreeExpanded = true;
     renderLayerControls();
     handleRoadZoomChanged();
@@ -3684,6 +3866,155 @@ function makePopupText(coordinate, coordtype) {
         }
     }
     return text;
+}
+
+function getMarkerTableCoreColumns() {
+    return [
+        { key: 'type', label: '분류' },
+        { key: 'id', label: 'ID' },
+        { key: 'dlt_id', label: 'DLT ID' },
+        { key: 'timestamp_str', label: '시간' },
+        { key: 'latitude', label: 'Lat' },
+        { key: 'longitude', label: 'Lon' },
+        { key: 'heading', label: 'Heading' },
+        { key: 'color', label: 'Color' }
+    ];
+}
+
+function getMarkerTableRows() {
+    const rows = Array.isArray(markersData) ? markersData.slice() : [];
+    rows.sort((a, b) => {
+        const idA = Number.isFinite(a?.id) ? a.id : Number.MAX_SAFE_INTEGER;
+        const idB = Number.isFinite(b?.id) ? b.id : Number.MAX_SAFE_INTEGER;
+        if (idA !== idB) return idA - idB;
+        return String(a?.timestamp_str || '').localeCompare(String(b?.timestamp_str || ''));
+    });
+    return rows;
+}
+
+function getMarkerTableFilteredRows() {
+    const searchText = String(document.getElementById('markerTableSearchInput')?.value || '').trim().toLowerCase();
+    return getMarkerTableRows().filter((row) => {
+        if (markerTableSelectedType !== 'all' && row?.type !== markerTableSelectedType) {
+            return false;
+        }
+        if (!searchText) return true;
+        const extraValues = Object.values(row?.extra || {}).map((value) => String(value ?? ''));
+        const corpus = [
+            row?.type, row?.id, row?.dlt_id, row?.timestamp_str, row?.latitude, row?.longitude, row?.heading,
+            ...extraValues
+        ].map((value) => String(value ?? '').toLowerCase()).join(' | ');
+        return corpus.includes(searchText);
+    });
+}
+
+function getMarkerTableColumns(rows) {
+    const baseColumns = getMarkerTableCoreColumns();
+    const extraKeys = [];
+    const seen = new Set();
+    rows.forEach((row) => {
+        Object.keys(row?.extra || {}).forEach((key) => {
+            if (seen.has(key)) return;
+            seen.add(key);
+            extraKeys.push(key);
+        });
+    });
+    extraKeys.sort((a, b) => a.localeCompare(b));
+    return baseColumns.concat(extraKeys.map((key) => ({ key: `extra.${key}`, label: key })));
+}
+
+function formatMarkerTableCellValue(row, columnKey) {
+    let value;
+    if (columnKey.startsWith('extra.')) {
+        value = row?.extra?.[columnKey.slice(6)];
+    } else {
+        value = row?.[columnKey];
+    }
+    if (value === null || value === undefined || value === '') return '-';
+    if (typeof value === 'number') {
+        if (columnKey === 'latitude' || columnKey === 'longitude') return value.toFixed(6);
+        if (columnKey === 'heading') return value.toFixed(2);
+        return Number.isInteger(value) ? String(value) : value.toFixed(3);
+    }
+    if (typeof value === 'boolean') return value ? 'true' : 'false';
+    if (typeof value === 'object') return JSON.stringify(value);
+    return String(value);
+}
+
+function updateMarkerTableTypeOptions(rows) {
+    const select = document.getElementById('markerTableTypeSelect');
+    if (!select) return;
+    const counts = new Map();
+    rows.forEach((row) => {
+        const type = String(row?.type || 'Unknown');
+        counts.set(type, (counts.get(type) || 0) + 1);
+    });
+    const sortedTypes = Array.from(counts.keys()).sort((a, b) => a.localeCompare(b));
+    const options = [{ value: 'all', label: `전체 (${rows.length})` }]
+        .concat(sortedTypes.map((type) => ({ value: type, label: `${type} (${counts.get(type)})` })));
+
+    const previous = markerTableSelectedType;
+    select.innerHTML = options
+        .map((option) => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`)
+        .join('');
+    markerTableSelectedType = options.some((option) => option.value === previous) ? previous : 'all';
+    select.value = markerTableSelectedType;
+}
+
+function focusMarkerFromTableRow(row) {
+    if (!row) return;
+    const lat = Number(row.latitude);
+    const lon = Number(row.longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+    map.setView([lat, lon], Math.max(map.getZoom(), 18), { animate: true });
+    const marker = markers.find((candidate) => candidate?.data?.type === row.type && candidate?.data?.id === row.id);
+    if (marker && typeof marker.openPopup === 'function') {
+        marker.openPopup();
+    }
+    highlightLayer.clearLayers();
+    L.circleMarker([lat, lon], {
+        radius: 9,
+        color: '#2563eb',
+        weight: 2,
+        fillColor: '#60a5fa',
+        fillOpacity: 0.25,
+        interactive: false
+    }).addTo(highlightLayer);
+}
+
+function renderMarkerTable() {
+    const summary = document.getElementById('markerTableSummary');
+    const head = document.getElementById('markerTableHead');
+    const body = document.getElementById('markerTableBody');
+    if (!summary || !head || !body) return;
+
+    const allRows = getMarkerTableRows();
+    updateMarkerTableTypeOptions(allRows);
+    const rows = getMarkerTableFilteredRows();
+    const columns = getMarkerTableColumns(rows.length > 0 ? rows : allRows);
+
+    summary.textContent = rows.length > 0
+        ? `${markerTableSelectedType === 'all' ? '전체' : markerTableSelectedType} ${rows.length.toLocaleString()}건`
+        : '표시할 데이터 없음';
+
+    head.innerHTML = `<tr>${columns.map((column) => `<th>${escapeHtml(column.label)}</th>`).join('')}</tr>`;
+
+    if (rows.length === 0) {
+        body.innerHTML = `<tr class="marker-table-empty"><td colspan="${columns.length}">조건에 맞는 마커가 없습니다.</td></tr>`;
+        return;
+    }
+
+    body.innerHTML = rows.map((row) => `
+        <tr data-row-id="${escapeHtml(String(row.id ?? ''))}" data-row-type="${escapeHtml(String(row.type || ''))}">
+            ${columns.map((column) => `<td>${escapeHtml(formatMarkerTableCellValue(row, column.key))}</td>`).join('')}
+        </tr>
+    `).join('');
+
+    Array.from(body.querySelectorAll('tr[data-row-id]')).forEach((tr, index) => {
+        tr.addEventListener('click', () => {
+            focusMarkerFromTableRow(rows[index]);
+        });
+    });
 }
 
 function buildDrHeadingIcon(heading, color = '#ef4444') {
@@ -4394,6 +4725,7 @@ function getLayerSwatchColor(name) {
         return normalizeRoadColor(style.color, '#45c976');
     }
     const swatches = {
+        'Road Link Vertex': '#f8fafc',
         'Raw GNSS': '#a855f7',
         'Filtered GNSS': '#facc15',
         'DR-based': '#ef4444',
@@ -4448,6 +4780,13 @@ function applyLayerOrderZIndex() {
     layerOrder.forEach((name, idx) => {
         const group = featureGroups[name];
         if (!group) return;
+        const paneName = getRoadPaneName(name);
+        if (paneName) {
+            const pane = map.getPane(paneName);
+            if (pane) {
+                pane.style.zIndex = String(640 + idx * 10);
+            }
+        }
         const zBase = 1000 + idx * 10;
         group.eachLayer((layer) => {
             if (typeof layer.setZIndexOffset === 'function') {
@@ -4739,6 +5078,195 @@ function handleIdSearch() {
         if (first.type === 'marker') map.setView(first.obj.getLatLng(), 17);
         else map.fitBounds(first.obj.getBounds());
     }
+}
+
+function showInfoMessage(title, message) {
+    const infoPanel = document.getElementById('infoPanel');
+    if (!infoPanel) return;
+    openSidebar(title);
+    infoPanel.innerHTML = `<div style="padding:16px; color:#cbd5e1;">${message}</div>`;
+}
+
+function highlightLatLon(lat, lon) {
+    highlightLayer.clearLayers();
+    const latlng = L.latLng(lat, lon);
+    L.circleMarker(latlng, {
+        radius: 12,
+        color: '#ef4444',
+        fillColor: '#fde68a',
+        fillOpacity: 0.95,
+        weight: 3,
+        interactive: false
+    }).addTo(highlightLayer);
+    L.circle(latlng, {
+        radius: 8,
+        color: '#ef4444',
+        opacity: 0.85,
+        weight: 2,
+        fillOpacity: 0,
+        interactive: false
+    }).addTo(highlightLayer);
+}
+
+function parseLatLonSearchInput(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return null;
+    const matches = raw.match(/-?\d+(?:\.\d+)?/g);
+    if (!matches || matches.length < 2) return null;
+    const lat = Number(matches[0]);
+    const lon = Number(matches[1]);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+    if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+    return { lat, lon };
+}
+
+function handleLatLonSearch() {
+    const input = document.getElementById('latLonSearchBox');
+    const parsed = parseLatLonSearchInput(input?.value);
+    if (!parsed) {
+        showInfoMessage('좌표 검색', '예: 37.5440568, 126.9516774 형식으로 입력하세요.');
+        return;
+    }
+
+    highlightLatLon(parsed.lat, parsed.lon);
+    map.setView([parsed.lat, parsed.lon], Math.max(map.getZoom(), 18));
+
+    const infoPanel = document.getElementById('infoPanel');
+    if (!infoPanel) return;
+    openSidebar('좌표 검색 결과');
+    infoPanel.innerHTML = `
+        <div class="info-item marker">
+            <div class="info-title">[COORD] 지정 좌표</div>
+            <div class="info-detail">
+                <div class="info-row"><span class="info-key">Lat</span><span>${parsed.lat.toFixed(7)}</span></div>
+                <div class="info-row"><span class="info-key">Lon</span><span>${parsed.lon.toFixed(7)}</span></div>
+            </div>
+        </div>
+    `;
+}
+
+function pickRoadLinkId(props) {
+    const candidate = findRoadPropValue(props, 'LINK_ID')
+        ?? findRoadPropValue(props, 'LINBK_ID')
+        ?? findRoadPropValue(props, 'LINBKID')
+        ?? findRoadPropValue(props, 'RID')
+        ?? findRoadPropValue(props, 'R_ID');
+    if (candidate === undefined || candidate === null || candidate === '') return null;
+    return String(candidate).trim();
+}
+
+function findRenderedRoadLinkByRid(searchValue) {
+    if (!roadLinkGeoLayer) return null;
+    const normalized = String(searchValue || '').trim().toLowerCase();
+    if (!normalized) return null;
+
+    let matched = null;
+    roadLinkGeoLayer.eachLayer((layer) => {
+        if (matched) return;
+        const feature = layer.feature;
+        const props = feature?.properties || {};
+        const linkId = pickRoadLinkId(props);
+        if (!linkId || linkId.toLowerCase() !== normalized) return;
+        matched = { layer, feature };
+    });
+    return matched;
+}
+
+function getFeatureBounds(feature) {
+    if (!feature?.geometry) return null;
+    try {
+        return L.geoJSON(feature).getBounds();
+    } catch (_) {
+        return null;
+    }
+}
+
+function focusRoadLinkFeature(feature, titlePrefix = 'RID 검색 결과') {
+    if (!feature?.geometry) return false;
+
+    const props = feature.properties || {};
+    const linkId = pickRoadLinkId(props) || '-';
+    const bounds = getFeatureBounds(feature);
+
+    highlightLayer.clearLayers();
+    const previewLayer = L.geoJSON(feature);
+    previewLayer.eachLayer((layer) => {
+        if (typeof layer.getLatLngs === 'function') {
+            highlightLine(layer);
+        }
+    });
+
+    if (bounds && bounds.isValid()) {
+        map.fitBounds(bounds.pad(0.35));
+    }
+
+    setSelectedRoadFeature('link', feature);
+    if (roadLinkGeoLayer) {
+        roadLinkGeoLayer.eachLayer((layer) => {
+            if (getRoadFeatureIndex(layer.feature) === getRoadFeatureIndex(feature)) {
+                layer.openPopup();
+            }
+        });
+    }
+
+    const infoPanel = document.getElementById('infoPanel');
+    if (infoPanel) {
+        openSidebar(`${titlePrefix}: ${linkId}`);
+        infoPanel.innerHTML = `
+            <div class="info-item line">
+                <div class="info-title">[ROAD LINK] ${escapeHtml(linkId)}</div>
+                <div class="info-detail">${makeRoadPopupContent(props, 'Road Link')}</div>
+            </div>
+        `;
+    }
+    return true;
+}
+
+function requestRoadLinkByRid(searchValue) {
+    return new Promise((resolve) => {
+        if (!roadShapeWorker) {
+            resolve(null);
+            return;
+        }
+
+        const requestId = ++roadShapeFindRequestSeq;
+        roadShapeFindRequests.set(requestId, resolve);
+        roadShapeWorker.postMessage({
+            type: 'findLinkByRid',
+            requestId,
+            value: String(searchValue || '').trim(),
+            keys: ['RID', 'R_ID', 'LINK_ID', 'LINBK_ID', 'LINBKID']
+        });
+
+        setTimeout(() => {
+            if (!roadShapeFindRequests.has(requestId)) return;
+            roadShapeFindRequests.delete(requestId);
+            resolve(null);
+        }, 3000);
+    });
+}
+
+async function handleRidSearch() {
+    const input = document.getElementById('ridSearchBox');
+    const searchValue = String(input?.value || '').trim();
+    if (!searchValue) {
+        showInfoMessage('RID 검색', 'RID 또는 LINK_ID 값을 입력하세요.');
+        return;
+    }
+
+    const visibleMatch = findRenderedRoadLinkByRid(searchValue);
+    if (visibleMatch?.feature) {
+        focusRoadLinkFeature(visibleMatch.feature, 'RID 검색 결과');
+        return;
+    }
+
+    const workerMatch = await requestRoadLinkByRid(searchValue);
+    if (workerMatch?.feature) {
+        focusRoadLinkFeature(workerMatch.feature, 'RID 검색 결과');
+        return;
+    }
+
+    showInfoMessage('RID 검색 결과', `RID/LINK_ID ${escapeHtml(searchValue)} 에 해당하는 Road Link를 찾지 못했습니다.`);
 }
 
 function highlightMarker(marker) {

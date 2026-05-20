@@ -35,6 +35,14 @@ def render_html(markers_data=None, lines_data=None):
                         <input id="idSearchBox" type="text" placeholder="Marker/Line ID 검색">
                         <button id="idSearchButton">ID 검색</button>
                     </div>
+                    <div class="search-group search-group-full">
+                        <input id="latLonSearchBox" type="text" placeholder="Lat, Lon 검색">
+                        <button id="latLonSearchButton">좌표 검색</button>
+                    </div>
+                    <div class="search-group search-group-full">
+                        <input id="ridSearchBox" type="text" placeholder="RID / LINK_ID 검색">
+                        <button id="ridSearchButton">RID 검색</button>
+                    </div>
                 </div>
                 <div id="sidebar-result-header">
                     <span id="sidebar-title">검색 결과</span>
@@ -284,6 +292,7 @@ def build_html_body():
         {add_route_tool()}
         {add_distance_tool()}
         {add_radius_tool()}
+        {add_marker_table_panel()}
         {add_playback_tool()}
         {add_legend()}
         <div id="toolBackdrop"></div>
@@ -545,6 +554,30 @@ def add_radius_tool():
     """
 
 
+def add_marker_table_panel():
+    return """
+    <div id="markerTablePanel" class="tool-panel hidden">
+        <div class="tool-panel-header">
+            <span>마커 테이블</span>
+            <button class="panel-close-btn" data-close-panel="markerTablePanel">닫기</button>
+        </div>
+        <div class="tool-panel-body marker-table-panel-body">
+            <div class="marker-table-toolbar">
+                <select id="markerTableTypeSelect"></select>
+                <input id="markerTableSearchInput" type="text" placeholder="ID, DLT, 시간, 값 검색">
+            </div>
+            <div id="markerTableSummary" class="marker-table-summary">데이터 없음</div>
+            <div class="marker-table-wrap">
+                <table class="marker-table">
+                    <thead id="markerTableHead"></thead>
+                    <tbody id="markerTableBody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    """
+
+
 def add_legend():
     return """
     <div id="legendPanel" class="tool-panel hidden">
@@ -587,6 +620,7 @@ def add_right_toolbar():
         <div class="tool-stack" id="utilityGroup">
             <button class="tool-btn" id="toolUploadBtn" title="업로드/파싱"><i class="fa fa-upload"></i></button>
             <button class="tool-btn" id="toolExportBtn" title="내보내기"><i class="fa fa-share-square-o"></i></button>
+            <button class="tool-btn" id="toolMarkerTableBtn" title="마커 테이블"><i class="fa fa-table"></i></button>
             <button class="tool-btn" id="toolPlaybackBtn" title="타임라인"><i class="fa fa-clock-o"></i></button>
             <button class="tool-btn" id="toolLegendBtn" title="범례"><i class="fa fa-list"></i></button>
         </div>

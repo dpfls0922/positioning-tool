@@ -113,6 +113,15 @@ def parse_log(log_file_path=None):
         print(f"오류: 로그 파일 '{source_path}'을 찾을 수 없습니다.")
         return False
 
+    def flush_pending_raw_gnss(assign_id=None):
+        nonlocal temp_gnss2_coord
+        if temp_gnss2_coord is None:
+            return
+        candidate_id = assign_id if isinstance(assign_id, int) and assign_id > 0 else (current_id - 1 if current_id > 1 else current_id)
+        temp_gnss2_coord.id = candidate_id
+        COORDINATES[CoordType.GNSS2].append(temp_gnss2_coord)
+        temp_gnss2_coord = None
+
     for dlt_id, line, reception_timestamp in iterate_log_records(source_path):
             line_number += 1
 
@@ -197,8 +206,6 @@ def parse_log(log_file_path=None):
                     gnss_lon = float(match.group(2))
                     heading = float(match.group(3))
                     speed = float(match.group(4))
-                    raw_lat = float(match.group(5))
-                    raw_lon = float(match.group(6))
 
                     if gnss_lat == 0.0 and gnss_lon == 0.0:
                         break
@@ -219,19 +226,6 @@ def parse_log(log_file_path=None):
                         temp_gnss1_coord.extra["gnss_transition_highlight"] = True
                         pending_gnss_mode_transition = None
 
-                    # Some logs do not include separate [GNSS] lines.
-                    # In those cases, use the DR tuple in [GPS] as Raw GNSS.
-                    if raw_lat != 0.0 or raw_lon != 0.0:
-                        temp_gnss2_coord = Coordinate(
-                            dlt_id=dlt_id,
-                            type=CoordType.GNSS2,
-                            latitude=raw_lat,
-                            longitude=raw_lon,
-                            heading=heading,
-                            extra={"Speed": speed},
-                            timestamp=timestamp,
-                        )
-
                 elif coord_type == CoordType.GNSS2:
                     latitude = float(match.group(1)) / 10000000
                     longitude = float(match.group(2)) / 10000000
@@ -241,13 +235,15 @@ def parse_log(log_file_path=None):
                     if latitude == 0.0 and longitude == 0.0:
                         break
 
+                    flush_pending_raw_gnss()
+
                     temp_gnss2_coord = Coordinate(
                         dlt_id=dlt_id,
                         type=coord_type,
                         latitude=latitude,
                         longitude=longitude,
                         heading=heading,
-                        extra={"Speed": speed},
+                        extra={"Speed": speed, "source": "gnss_line"},
                         timestamp=timestamp,
                     )
 
@@ -302,9 +298,7 @@ def parse_log(log_file_path=None):
                         temp_gnss1_coord = None
 
                     if temp_gnss2_coord:
-                        temp_gnss2_coord.id = current_id
-                        COORDINATES[CoordType.GNSS2].append(temp_gnss2_coord)
-                        temp_gnss2_coord = None
+                        flush_pending_raw_gnss(current_id)
 
                     dr_coordinate = Coordinate(
                         id=current_id,
@@ -456,6 +450,7 @@ def parse_log(log_file_path=None):
                 # multiple embedded DLT records in this log format.
                 continue
 
+    flush_pending_raw_gnss()
     normalize_sequential_ids()
     fill_missing_timestamps()
     recompute_timestamp_range_from_coords()

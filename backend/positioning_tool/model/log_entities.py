@@ -15,7 +15,7 @@ class CoordType(Enum):
     GNSS2 = (
         "Raw GNSS",
         "purple",
-        re.compile(r"\[GNSS\]\s*,\d+,\d+,(\d+),(\d+),([\d\.-]+).*?,([\d\.-]+)$")
+        re.compile(r"\[GNSS\]\s*,\d+,\d+,(\d+),(\d+),([\d\.-]+).*?,([\d\.-]+)")
     )
     DR = (
         "DR-based",
