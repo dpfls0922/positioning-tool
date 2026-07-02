@@ -5956,16 +5956,36 @@ const EVENT_ICON_MAP = {
 };
 
 const SDI_TYPE_MAP = {
-    0: { name: '신호위반 단속', color: '#ef4444', text: '신', desc: '신호 위반 단속카메라' },
-    1: { name: '구간단속 시작', color: '#f59e0b', text: '구', desc: '구간속도 단속 지점' },
-    2: { name: '과속방지턱', color: '#06b6d4', text: '턱', desc: '속도 저감용 과속방지턱' },
-    3: { name: '버스전용차로', color: '#a855f7', text: '버', desc: '버스 전용 운행 차로' },
-    4: { name: '어린이보호', color: '#ec4899', text: '아', desc: '어린이 보호 구역' },
-    5: { name: '공사구간', color: '#f97316', text: '공', desc: '도로 공사 진행 중' },
-    6: { name: '안전지대', color: '#3b82f6', text: '안', desc: '안전지대 통과 필요' },
-    7: { name: '갓길주차', color: '#8b5cf6', text: '주', desc: '갓길 주차 금지' },
-    8: { name: '감시카메라', color: '#14b8a6', text: '감', desc: '구간 감시 카메라' },
-    15: { name: '고정식카메라', color: '#22c55e', text: '📷', desc: '고정식 속도 단속카메라' },
+    0: { name: '속도 사고', color: '#ef4444', text: '⚡', desc: '속도 관련 사고 지점' },
+    1: { name: '속도제한', color: '#f59e0b', text: '⛔', desc: '속도 제한 구간' },
+    2: { name: '구간단속 시작', color: '#f59e0b', text: '구', desc: '구간속도 단속 시작' },
+    3: { name: '구간단속 끝', color: '#fbbf24', text: '끝', desc: '구간속도 단속 종료' },
+    4: { name: '신호 사고', color: '#dc2626', text: '🚥', desc: '신호 위반 사고' },
+    5: { name: '위험지역', color: '#f97316', text: '🔴', desc: '위험지역 속도제한' },
+    6: { name: '박스 제한', color: '#d946ef', text: '📦', desc: '박스형 속도제한' },
+    7: { name: '후면 사고', color: '#be123c', text: '←', desc: '후면 속도 사고' },
+    8: { name: '후면 제한', color: '#f97316', text: '←', desc: '후면 속도 제한' },
+    9: { name: '버스전용', color: '#a855f7', text: '🚌', desc: '버스 전용 차로' },
+    10: { name: '도로통제', color: '#dc2626', text: '🚫', desc: '도로 통제 구간' },
+    11: { name: '침입구역', color: '#7c3aed', text: '⛔', desc: '침입 금지 구역' },
+    12: { name: '정보수집', color: '#06b6d4', text: '📊', desc: '교통정보 수집' },
+    13: { name: '주차통제', color: '#8b5cf6', text: '🚗', desc: '주차 통제 구간' },
+    14: { name: '철도건널목', color: '#ea580c', text: '🚂', desc: '철도 건널목' },
+    15: { name: '스쿨존', color: '#ec4899', text: '🏫', desc: '어린이 보호 구역' },
+    16: { name: '과속방지턱', color: '#06b6d4', text: '⌣', desc: '속도 저감용 턱' },
+    17: { name: '안개지역', color: '#9ca3af', text: '☁️', desc: '안개 발생 지역' },
+    18: { name: '사고지역', color: '#ef4444', text: '⚠️', desc: '사고 발생 지역' },
+    19: { name: '급커브', color: '#f59e0b', text: '↪', desc: '급한 커브 구간' },
+    20: { name: '신규커브', color: '#fbbf24', text: '↪', desc: '신규 커브 구간' },
+    21: { name: '사고위치', color: '#ef4444', text: '📍', desc: '사고 발생 위치' },
+    22: { name: '보행자사고', color: '#dc2626', text: '🚶', desc: '보행자 사고 지점' },
+    23: { name: '결빙지역', color: '#3b82f6', text: '❄️', desc: '결빙 위험 지역' },
+    24: { name: 'HWA03', color: '#6b7280', text: 'H3', desc: '고속도로 위험' },
+    25: { name: 'HWA06', color: '#6b7280', text: 'H6', desc: '고속도로 위험' },
+    26: { name: 'HWA09', color: '#6b7280', text: 'H9', desc: '고속도로 위험' },
+    27: { name: '휴게소', color: '#22c55e', text: '🛑', desc: '휴게소 위치' },
+    28: { name: '실버존', color: '#8b5cf6', text: '👴', desc: '고령자 보호 구역' },
+    29: { name: '배출가스', color: '#10b981', text: '💨', desc: '배출가스 등급' },
 };
 
 function getEventIconConfig(typeCode) {
@@ -6011,15 +6031,15 @@ function createSdiMarkerIcon(sdiType) {
             background: linear-gradient(135deg, ${config.color} 0%, ${config.color}dd 100%);
             color: white;
             border-radius: 50%;
-            width: 48px;
-            height: 48px;
+            width: 32px;
+            height: 32px;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 24px;
+            font-size: 16px;
             font-weight: bold;
-            border: 3px solid white;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+            border: 2px solid white;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
         ">
             ${config.text}
         </div>
@@ -6027,9 +6047,9 @@ function createSdiMarkerIcon(sdiType) {
     return L.divIcon({
         html: iconHtml,
         className: 'sdi-marker',
-        iconSize: [48, 48],
-        iconAnchor: [24, 24],
-        popupAnchor: [0, -24]
+        iconSize: [32, 32],
+        iconAnchor: [16, 16],
+        popupAnchor: [0, -16]
     });
 }
 
