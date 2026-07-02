@@ -15,6 +15,7 @@ DEG2RAD = math.pi / 180.0
 COORDINATES = {coord_type: [] for coord_type in CoordType}
 LINES = {line_type: [] for line_type in LineType}
 GUIDE_EVENTS = []  # C2X events and accident events
+SDI_EVENTS = []  # SDI (Safety Drive Information) events
 min_timestamp = datetime.max
 max_timestamp = datetime.min
 last_road_match_state = None
@@ -45,6 +46,8 @@ DLT_RELEVANT_BYTE_KEYWORDS = [
     b"[MM_FEEDBACK]",
     b"createCar2XEvent",
     b"processContents",
+    b"GetSdiSelected select",
+    b"onDriveStatusChanged SDI",
 ]
 
 SET_ROUTE_INFORMATION_PATTERN = re.compile(
@@ -96,6 +99,17 @@ MFS_CONTENT_PATTERN = re.compile(
     r".*?name:([^\r\n\x00]+)"
 )
 
+# SDI (Safety Drive Information) events:
+#   GetSdiSelected select (0): 0, 15 nDist: 300, 500, wptPos: 37.545592, 126.978641
+#   MapGuidingInformationProvider::onDriveStatusChanged SDI[15] CurrentSDI Speed : 50 pt(126.978641,37.545592)
+SDI_SELECTED_PATTERN = re.compile(
+    r"GetSdiSelected select\s*\((\d+)\):\s*(\d+),\s*(\d+)\s+nDist:\s*(\d+),\s*(\d+),\s+wptPos:\s*"
+    r"(-?\d+\.\d+),\s*(-?\d+\.\d+)"
+)
+SDI_DRIVE_STATUS_PATTERN = re.compile(
+    r"onDriveStatusChanged\s+SDI\[(\d+)\].*?Speed\s*:\s*(\d+).*?pt\((-?\d+\.\d+),(-?\d+\.\d+)\)"
+)
+
 
 def lat_lon_dist(lat1, lon1, lat2, lon2):
     local_x = -(((lon2 - lon1) * DEG2RAD) * math.cos(DEG2RAD * lat1)) * EARTH_RADIUS
@@ -104,7 +118,7 @@ def lat_lon_dist(lat1, lon1, lat2, lon2):
 
 
 def reset_runtime_state():
-    global COORDINATES, LINES, GUIDE_EVENTS
+    global COORDINATES, LINES, GUIDE_EVENTS, SDI_EVENTS
     global min_timestamp, max_timestamp
     global last_road_match_state, last_route_match_state, last_threshold_info, log_base_timestamp, last_tvas_header_info
     global current_route_session_id, current_route_session_index, route_session_indices, route_session_sequence
@@ -113,6 +127,7 @@ def reset_runtime_state():
     COORDINATES = {coord_type: [] for coord_type in CoordType}
     LINES = {line_type: [] for line_type in LineType}
     GUIDE_EVENTS = []
+    SDI_EVENTS = []
     min_timestamp = datetime.max
     max_timestamp = datetime.min
     last_road_match_state = None
@@ -196,8 +211,9 @@ def parse_log(log_file_path=None):
                 route_session_sequence.setdefault(current_route_session_id, 0)
                 last_tvas_header_info = None
 
-            # Parse Guide Events (C2X, Accident)
+            # Parse Guide Events (C2X, Accident) and SDI Events
             parse_guide_event(line, timestamp)
+            parse_sdi_event(line, timestamp)
 
             tvas_header_info = parse_tvas_header_info(line, last_tvas_header_info)
             if tvas_header_info is not None:
@@ -871,6 +887,63 @@ def parse_set_route_information(line):
     }
 
 
+def parse_sdi_event(line, timestamp):
+    """Parse SDI (Safety Drive Information) events from navisdk logs.
+
+    GetSdiSelected select (0): 0, 15 nDist: 300, 500, wptPos: 37.545592, 126.978641
+    onDriveStatusChanged SDI[15] Speed : 50 pt(126.978641,37.545592)
+    """
+    global SDI_EVENTS
+
+    # Try onDriveStatusChanged pattern first (has both type and speed)
+    drive_match = SDI_DRIVE_STATUS_PATTERN.search(line)
+    if drive_match:
+        sdi_type = int(drive_match.group(1))
+        speed = int(drive_match.group(2))
+        # Note: onDriveStatusChanged has lon,lat order
+        longitude = float(drive_match.group(3))
+        latitude = float(drive_match.group(4))
+
+        if not (30.0 < latitude < 45.0 and 120.0 < longitude < 135.0):
+            return False
+
+        SDI_EVENTS.append({
+            "type": "SDI",
+            "sdi_type": sdi_type,
+            "speed": speed,
+            "latitude": latitude,
+            "longitude": longitude,
+            "source": "onDriveStatusChanged",
+            "timestamp": timestamp,
+        })
+        return True
+
+    # Try GetSdiSelected pattern (has position info)
+    select_match = SDI_SELECTED_PATTERN.search(line)
+    if select_match:
+        current_type = int(select_match.group(2))
+        candidate_type = int(select_match.group(3))
+        # GetSdiSelected has lat,lon order
+        latitude = float(select_match.group(6))
+        longitude = float(select_match.group(7))
+
+        if not (30.0 < latitude < 45.0 and 120.0 < longitude < 135.0):
+            return False
+
+        SDI_EVENTS.append({
+            "type": "SDI",
+            "sdi_type": current_type,
+            "candidate_type": candidate_type,
+            "latitude": latitude,
+            "longitude": longitude,
+            "source": "GetSdiSelected",
+            "timestamp": timestamp,
+        })
+        return True
+
+    return False
+
+
 def parse_guide_event(line, timestamp):
     """Parse C2X events and TMAP incident (MFS) events with actual coordinates.
 
@@ -1038,6 +1111,60 @@ def write_data_to_csv(out_path=None):
                 )
 
 
+def build_sdi_markers():
+    """Convert SDI_EVENTS to marker format."""
+    if not SDI_EVENTS:
+        return []
+
+    markers = []
+    event_id_counter = 20000  # Start from 20000 to avoid conflicts
+    seen = set()
+
+    # SDI type names
+    SDI_TYPE_NAMES = {
+        0: "신호위반 단속",
+        1: "구간단속 시작",
+        2: "과속방지턱",
+        3: "버스전용차로",
+        15: "고정식 카메라",
+    }
+
+    for event in SDI_EVENTS:
+        # Dedupe by type/position
+        dedupe_key = (event["sdi_type"], event["latitude"], event["longitude"])
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+
+        sdi_type = event["sdi_type"]
+        type_name = SDI_TYPE_NAMES.get(sdi_type, f"SDI Type {sdi_type}")
+
+        marker = {
+            "id": event_id_counter,
+            "dlt_id": None,
+            "type": "SDI Event",
+            "latitude": event["latitude"],
+            "longitude": event["longitude"],
+            "heading": None,
+            "extra": {
+                "event_type": "SDI",
+                "sdi_type": sdi_type,
+                "sdi_type_name": type_name,
+                "speed": event.get("speed"),
+                "source": event.get("source", ""),
+                "sdi_event": True,
+            },
+            "timestamp_ms": int(event["timestamp"].timestamp() * 1000) if event["timestamp"] else 0,
+            "timestamp_str": event["timestamp"].strftime("%Y/%m/%d %H:%M:%S.%f")[:-3] if event["timestamp"] else "",
+            "color": "#f39c12",  # Orange for SDI
+            "fill": True,
+        }
+        markers.append(marker)
+        event_id_counter += 1
+
+    return markers
+
+
 def build_guide_event_markers():
     """Convert GUIDE_EVENTS to marker format. Coordinates come directly from the log."""
     if not GUIDE_EVENTS:
@@ -1084,8 +1211,9 @@ def build_runtime_payload():
     all_coords = [coord.to_json() for coords in COORDINATES.values() for coord in coords]
     all_lines = [line.to_json() for lines in LINES.values() for line in lines]
 
-    # Convert guide events to marker coordinates
+    # Convert guide events and SDI events to marker coordinates
     all_coords.extend(build_guide_event_markers())
+    all_coords.extend(build_sdi_markers())
 
     all_coords.sort(key=lambda c: c.get("id") if c.get("id") is not None else 0)
     all_lines.sort(key=lambda l: l.get("id") if l.get("id") is not None else 0)
