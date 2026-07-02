@@ -643,18 +643,24 @@ function drawDistanceVisuals() {
         opacity: 0.9
     }).addTo(map);
 
-    // 거리선 중점에 삭제 버튼 추가
-    const midLat = (pickedDistancePoints[0].lat + pickedDistancePoints[pickedDistancePoints.length - 1].lat) / 2;
-    const midLon = (pickedDistancePoints[0].lon + pickedDistancePoints[pickedDistancePoints.length - 1].lon) / 2;
-    const deleteBtn = L.marker([midLat, midLon], {
+    // 거리선 끝점에 삭제 버튼 추가
+    const lastPoint = pickedDistancePoints[pickedDistancePoints.length - 1];
+    const deleteBtn = L.marker([lastPoint.lat, lastPoint.lon], {
         icon: L.divIcon({
             className: 'distance-delete-btn-wrapper',
             html: '<button class="distance-delete-btn" title="거리재기 삭제">✕</button>',
             iconSize: [24, 24],
             iconAnchor: [12, 12]
-        })
+        }),
+        interactive: false
     }).addTo(map);
-    deleteBtn.on('click', () => deleteCurrentDistance());
+
+    // 버튼에 직접 클릭 이벤트 바인드
+    setTimeout(() => {
+        const btn = document.querySelector('.distance-delete-btn');
+        if (btn) btn.onclick = () => deleteCurrentDistance();
+    }, 0);
+
     distanceMarkers.push(deleteBtn);
 
     let cumulative = 0;
@@ -987,13 +993,15 @@ function placeRadiusDeleteHandle() {
             iconSize: [22, 22],
             iconAnchor: [11, 11]
         }),
+        interactive: false,
         keyboard: false
     }).addTo(map);
 
-    radiusDeleteMarker.on('click', (e) => {
-        L.DomEvent.stopPropagation(e);
-        deleteCurrentRadius();
-    });
+    // 버튼에 직접 클릭 이벤트 바인드
+    setTimeout(() => {
+        const btn = document.querySelector('.radius-delete-icon');
+        if (btn) btn.onclick = () => deleteCurrentRadius();
+    }, 0);
 }
 
 function updateRadiusPreview(edgeLatLng, finalize) {
