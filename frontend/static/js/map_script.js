@@ -272,9 +272,18 @@ function init() {
             } else {
                 // 점 2개 이상이면 현재까지의 거리 확정
                 updateDistanceResultForPath('우클릭 완료');
+                // 확정된 거리는 지도에 남기고, 다음 측정을 위해 현재 점들만 초기화
+                pickedDistancePoints = [];
+                // distancePickMode는 true 유지하여 계속 거리재기 가능
+                setDistanceGuideMessage();
+                return;
             }
-            // 우클릭 후 다음 작업을 위해 초기화 (새로운 거리재기 시작 가능)
+            // 점 0개 또는 1개인 경우 전체 초기화
             pickedDistancePoints = [];
+            if (distanceLine) {
+                map.removeLayer(distanceLine);
+                distanceLine = null;
+            }
             distanceMarkers.forEach(m => {
                 try { map.removeLayer(m); } catch (e) {}
             });
@@ -283,11 +292,6 @@ function init() {
                 try { map.removeLayer(m); } catch (e) {}
             });
             distanceLabelMarkers = [];
-            if (distanceLine) {
-                map.removeLayer(distanceLine);
-                distanceLine = null;
-            }
-            // distancePickMode는 true 유지하여 계속 거리재기 가능
             setDistanceGuideMessage();
         }
 
@@ -596,15 +600,16 @@ function setDistancePreviewResult(previewMeters) {
 }
 
 function clearDistanceVisuals() {
-    distanceMarkers.forEach(marker => map.removeLayer(marker));
+    // 현재 측정 중인 마커와 라벨만 제거 (확정된 거리는 유지)
+    distanceMarkers.forEach(marker => {
+        try { map.removeLayer(marker); } catch (e) {}
+    });
     distanceMarkers = [];
-    distanceLabelMarkers.forEach(marker => map.removeLayer(marker));
+    distanceLabelMarkers.forEach(marker => {
+        try { map.removeLayer(marker); } catch (e) {}
+    });
     distanceLabelMarkers = [];
 
-    if (distanceLine) {
-        map.removeLayer(distanceLine);
-        distanceLine = null;
-    }
     if (distancePreviewLine) {
         map.removeLayer(distancePreviewLine);
         distancePreviewLine = null;
@@ -649,7 +654,7 @@ function drawDistanceVisuals() {
             iconAnchor: [12, 12]
         })
     }).addTo(map);
-    deleteBtn.on('click', () => resetDistanceSelection());
+    deleteBtn.on('click', () => deleteCurrentDistance());
     distanceMarkers.push(deleteBtn);
 
     let cumulative = 0;
@@ -685,11 +690,41 @@ function toggleDistancePickMode() {
     setDistanceGuideMessage();
 }
 
+function deleteCurrentDistance() {
+    // X 버튼으로 현재 거리만 삭제 (모드는 유지)
+    if (distanceLine) {
+        map.removeLayer(distanceLine);
+        distanceLine = null;
+    }
+    distanceMarkers.forEach(marker => {
+        try { map.removeLayer(marker); } catch (e) {}
+    });
+    distanceMarkers = [];
+    distanceLabelMarkers.forEach(marker => {
+        try { map.removeLayer(marker); } catch (e) {}
+    });
+    distanceLabelMarkers = [];
+    pickedDistancePoints = [];
+    setDistanceGuideMessage();
+}
+
 function resetDistanceSelection() {
+    // 거리재기 모드 완전히 종료
     pickedDistancePoints = [];
     distancePickMode = false;
     setDistancePickButtonState();
-    clearDistanceVisuals();
+    if (distanceLine) {
+        map.removeLayer(distanceLine);
+        distanceLine = null;
+    }
+    distanceMarkers.forEach(marker => {
+        try { map.removeLayer(marker); } catch (e) {}
+    });
+    distanceMarkers = [];
+    distanceLabelMarkers.forEach(marker => {
+        try { map.removeLayer(marker); } catch (e) {}
+    });
+    distanceLabelMarkers = [];
 
     const resultEl = document.getElementById('distanceResult');
     if (resultEl) {
@@ -834,7 +869,27 @@ function toggleRadiusPickMode() {
     }
 }
 
+function deleteCurrentRadius() {
+    // X 버튼으로 현재 반경만 삭제 (모드는 유지)
+    if (radiusCircle) {
+        map.removeLayer(radiusCircle);
+        radiusCircle = null;
+    }
+    if (radiusGuideLine) {
+        map.removeLayer(radiusGuideLine);
+        radiusGuideLine = null;
+    }
+    if (radiusDeleteMarker) {
+        map.removeLayer(radiusDeleteMarker);
+        radiusDeleteMarker = null;
+    }
+    radiusCenterPoint = null;
+    radiusDrawState = 'await_center';
+    setRadiusResultText('반경 결과: -');
+}
+
 function resetRadiusSelection(resetInputs = true) {
+    // 반경재기 모드 완전히 종료
     radiusPickMode = false;
     radiusDrawState = 'idle';
     setRadiusPickButtonState();
@@ -940,7 +995,7 @@ function placeRadiusDeleteHandle() {
 
     radiusDeleteMarker.on('click', (e) => {
         L.DomEvent.stopPropagation(e);
-        resetRadiusSelection(false);
+        deleteCurrentRadius();
     });
 }
 
