@@ -6042,14 +6042,14 @@ function createEventMarkerIcon(typeCode, iconText = null) {
             background-color: ${config.color};
             color: white;
             border-radius: 50%;
-            width: 40px;
-            height: 40px;
+            width: 32px;
+            height: 32px;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 20px;
+            font-size: 16px;
             border: 2px solid white;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
         ">
             ${iconText || config.icon}
         </div>
@@ -6057,9 +6057,9 @@ function createEventMarkerIcon(typeCode, iconText = null) {
     return L.divIcon({
         html: iconHtml,
         className: 'event-marker',
-        iconSize: [40, 40],
-        iconAnchor: [20, 20],
-        popupAnchor: [0, -20]
+        iconSize: [32, 32],
+        iconAnchor: [16, 16],
+        popupAnchor: [0, -16]
     });
 }
 
