@@ -5956,11 +5956,16 @@ const EVENT_ICON_MAP = {
 };
 
 const SDI_TYPE_MAP = {
-    0: { name: '신호위반', color: '#ef4444', text: '신' },
-    1: { name: '구간단속', color: '#f59e0b', text: '구' },
-    2: { name: '과속방지', color: '#06b6d4', text: '턱' },
-    3: { name: '버스차로', color: '#a855f7', text: '버' },
-    15: { name: '고정카메라', color: '#22c55e', text: '📷' },
+    0: { name: '신호위반 단속', color: '#ef4444', text: '신', desc: '신호 위반 단속카메라' },
+    1: { name: '구간단속 시작', color: '#f59e0b', text: '구', desc: '구간속도 단속 지점' },
+    2: { name: '과속방지턱', color: '#06b6d4', text: '턱', desc: '속도 저감용 과속방지턱' },
+    3: { name: '버스전용차로', color: '#a855f7', text: '버', desc: '버스 전용 운행 차로' },
+    4: { name: '어린이보호', color: '#ec4899', text: '아', desc: '어린이 보호 구역' },
+    5: { name: '공사구간', color: '#f97316', text: '공', desc: '도로 공사 진행 중' },
+    6: { name: '안전지대', color: '#3b82f6', text: '안', desc: '안전지대 통과 필요' },
+    7: { name: '갓길주차', color: '#8b5cf6', text: '주', desc: '갓길 주차 금지' },
+    8: { name: '감시카메라', color: '#14b8a6', text: '감', desc: '구간 감시 카메라' },
+    15: { name: '고정식카메라', color: '#22c55e', text: '📷', desc: '고정식 속도 단속카메라' },
 };
 
 function getEventIconConfig(typeCode) {
@@ -5968,7 +5973,7 @@ function getEventIconConfig(typeCode) {
 }
 
 function getSdiIconConfig(sdiType) {
-    return SDI_TYPE_MAP[sdiType] || { name: `SDI ${sdiType}`, color: '#f59e0b', text: '?' };
+    return SDI_TYPE_MAP[sdiType] || { name: `기타 안내`, color: '#64748b', text: '⚙️', desc: `SDI Type ${sdiType}` };
 }
 
 function createEventMarkerIcon(typeCode, iconText = null) {
@@ -6237,20 +6242,23 @@ function visualizeGuideEventsFromLog() {
 
         sdiMarkers.forEach((marker) => {
             const icon = createSdiMarkerIcon(marker.extra.sdi_type);
+            const config = getSdiIconConfig(marker.extra.sdi_type);
             const markerObj = L.marker([marker.latitude, marker.longitude], { icon });
 
             markerObj.bindPopup(`
-                <div style="min-width: 200px;">
-                    <div style="font-weight: bold; color: #f39c12; margin-bottom: 8px;">
-                        🛣️ SDI Event
+                <div style="min-width: 240px;">
+                    <div style="font-weight: bold; color: ${config.color}; margin-bottom: 8px; font-size: 14px;">
+                        🛣️ ${config.name}
                     </div>
-                    <div style="font-size: 12px;">
-                        <div><strong>Type:</strong> ${escapeHtml(marker.extra.sdi_type_name || 'SDI ' + marker.extra.sdi_type)}</div>
-                        <div><strong>SDI Type:</strong> ${marker.extra.sdi_type}</div>
-                        ${marker.extra.speed ? `<div><strong>Speed Limit:</strong> ${marker.extra.speed} km/h</div>` : ''}
-                        <div><strong>Source:</strong> ${marker.extra.source}</div>
+                    <div style="font-size: 12px; line-height: 1.6;">
+                        <div style="background-color: ${config.color}20; padding: 6px; border-radius: 4px; margin-bottom: 8px; color: ${config.color}; font-weight: bold;">
+                            ${config.desc}
+                        </div>
+                        <div><strong>타입 코드:</strong> ${marker.extra.sdi_type}</div>
+                        ${marker.extra.speed ? `<div><strong>제한속도:</strong> ${marker.extra.speed} km/h</div>` : ''}
+                        <div><strong>정보원:</strong> ${marker.extra.source}</div>
                         <div><strong>좌표:</strong> ${marker.latitude.toFixed(6)}, ${marker.longitude.toFixed(6)}</div>
-                        <div><strong>Log Time:</strong> ${marker.timestamp_str || '-'}</div>
+                        <div><strong>기록시간:</strong> ${marker.timestamp_str || '-'}</div>
                     </div>
                 </div>
             `);
