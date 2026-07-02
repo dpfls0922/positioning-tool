@@ -5955,8 +5955,20 @@ const EVENT_ICON_MAP = {
     'E': { name: '통제', color: '#059669', icon: '🛑' },
 };
 
+const SDI_TYPE_MAP = {
+    0: { name: '신호위반', color: '#ef4444', text: '신' },
+    1: { name: '구간단속', color: '#f59e0b', text: '구' },
+    2: { name: '과속방지', color: '#06b6d4', text: '턱' },
+    3: { name: '버스차로', color: '#a855f7', text: '버' },
+    15: { name: '고정카메라', color: '#22c55e', text: '📷' },
+};
+
 function getEventIconConfig(typeCode) {
     return EVENT_ICON_MAP[typeCode] || { name: '기타', color: '#6b7280', icon: '📍' };
+}
+
+function getSdiIconConfig(sdiType) {
+    return SDI_TYPE_MAP[sdiType] || { name: `SDI ${sdiType}`, color: '#f59e0b', text: '?' };
 }
 
 function createEventMarkerIcon(typeCode, iconText = null) {
@@ -5984,6 +5996,35 @@ function createEventMarkerIcon(typeCode, iconText = null) {
         iconSize: [40, 40],
         iconAnchor: [20, 20],
         popupAnchor: [0, -20]
+    });
+}
+
+function createSdiMarkerIcon(sdiType) {
+    const config = getSdiIconConfig(sdiType);
+    const iconHtml = `
+        <div style="
+            background: linear-gradient(135deg, ${config.color} 0%, ${config.color}dd 100%);
+            color: white;
+            border-radius: 50%;
+            width: 48px;
+            height: 48px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            font-weight: bold;
+            border: 3px solid white;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+        ">
+            ${config.text}
+        </div>
+    `;
+    return L.divIcon({
+        html: iconHtml,
+        className: 'sdi-marker',
+        iconSize: [48, 48],
+        iconAnchor: [24, 24],
+        popupAnchor: [0, -24]
     });
 }
 
@@ -6195,7 +6236,7 @@ function visualizeGuideEventsFromLog() {
         sdiGroup.clearLayers();
 
         sdiMarkers.forEach((marker) => {
-            const icon = createEventMarkerIcon(null, '🛣️');
+            const icon = createSdiMarkerIcon(marker.extra.sdi_type);
             const markerObj = L.marker([marker.latitude, marker.longitude], { icon });
 
             markerObj.bindPopup(`
