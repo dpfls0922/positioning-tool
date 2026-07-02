@@ -43,6 +43,10 @@ def render_html(markers_data=None, lines_data=None):
                         <input id="ridSearchBox" type="text" placeholder="RID / LINK_ID 검색">
                         <button id="ridSearchButton">RID 검색</button>
                     </div>
+                    <div class="interaction-mode-group">
+                        <button id="markerInspectModeButton" class="interaction-mode-btn active" type="button">마커 클릭</button>
+                        <button id="roadInspectModeButton" class="interaction-mode-btn" type="button">Road 클릭</button>
+                    </div>
                 </div>
                 <div id="sidebar-result-header">
                     <span id="sidebar-title">검색 결과</span>
@@ -547,6 +551,7 @@ def add_radius_tool():
                 <input id="radiusLonInput" type="text" placeholder="Center Lon">
                 <input id="radiusMeterInput" type="text" placeholder="Radius(m)">
                 <button id="radiusApplyButton">반경 적용</button>
+                <button id="radiusResetButton">초기화</button>
             </div>
             <div id="radiusResult">반경 결과: -</div>
         </div>

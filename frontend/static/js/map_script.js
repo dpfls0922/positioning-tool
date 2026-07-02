@@ -36,7 +36,6 @@ let activeGroups = new Set();
 let layerOrder = [];
 let draggedLayerName = null;
 let currentResultName = 'result';
-let isLayerTreeExpanded = true;
 const layerCountOverride = {};
 
 const ROAD_LINK_LAYER = 'Road Link';
@@ -117,17 +116,25 @@ let roadLinkFieldNames = DEFAULT_ROAD_LINK_STYLE_FIELDS.slice();
 let roadShapeLocalGroupsByKind = { link: [], node: [] };
 let roadLinkBaseStyles = createDefaultRoadLinkBaseStyles();
 let roadNodeStyleConfig = {
-    radius: 4.2,
+    radius: 3.4,
     color: '#38bdf8',
     stroke: '#075985',
-    weight: 1.4
+    weight: 1.1
 };
+let roadVertexStyleConfig = {
+    radius: 2.2,
+    color: '#f8fafc',
+    stroke: '#0f172a',
+    weight: 1.0
+};
+let roadStyleContextLayerName = ROAD_NODE_LAYER;
 let selectedRoadFeatureRef = { kind: null, shpIndex: null };
 let routeInfoLinkIds = new Set();
 let selectedRouteInfoLineId = null;
 let selectedRouteInfoNextLineId = null;
 let selectedDrCoordinate = null;
 let selectedCandidateLinkIds = new Set();
+let vertexWasActiveBeforeNodeDisabled = false;  // Road Node 끄기 전 Vertex 상태 기억
 let tmapRouteResult = null;
 let tmapRouteRequesting = false;
 let tmapRouteWaypoints = {
@@ -159,6 +166,10 @@ let parsingProgressTimer = null;
 let parsingProgressValue = 0;
 let drHeadingArrowEnabled = false;
 let markerTableSelectedType = 'all';
+let inspectMode = 'marker';
+let resultTreeExpanded = true;
+let roadTreeExpanded = true;
+let lastRoadLayerInteractionTs = 0;
 
 const ROAD_SHAPE_CACHE_DIR = 'road_shape_cache_v1';
 const ROAD_SHAPE_MANIFEST_SUFFIX = '.manifest.json';
@@ -177,6 +188,8 @@ function init() {
     initRoutePanel();
     initMarkerTablePanel();
     bindSearchControls();
+    bind('markerInspectModeButton', 'click', () => setInspectMode('marker'));
+    bind('roadInspectModeButton', 'click', () => setInspectMode('road'));
     bind('toolZoomInBtn', 'click', () => map.zoomIn());
     bind('toolZoomOutBtn', 'click', () => map.zoomOut());
     bind('distancePickToggle', 'click', toggleDistancePickMode);
@@ -186,6 +199,7 @@ function init() {
     bind('radiusMode', 'change', handleRadiusModeChange);
     bind('radiusPickToggle', 'click', toggleRadiusPickMode);
     bind('radiusApplyButton', 'click', handleRadiusApplyInput);
+    bind('radiusResetButton', 'click', () => resetRadiusSelection(true));
     bind('drHeadingToggle', 'change', handleDrHeadingToggleChange);
 
     ['lat1Input', 'lon1Input', 'lat2Input', 'lon2Input'].forEach(id => {
@@ -203,6 +217,9 @@ function init() {
     map.on('overlayremove', handleOverlayRemove);
     map.on('zoomend', handleRoadZoomChanged);
     map.on('moveend', handleRoadZoomChanged);
+    map.on('popupopen', (event) => {
+        makePopupDraggable(event?.popup);
+    });
 
     map.on('click', (e) => {
         highlightLayer.clearLayers();
@@ -220,6 +237,10 @@ function init() {
         if (radiusPickMode && radiusSelectionMode === 'map') {
             handleMapRadiusPick(e.latlng);
         }
+        const preferredKinds = isRoadLinkLabelTarget(e?.originalEvent?.target) ? ['link'] : getPreferredRoadKinds();
+        if (canInspectRoadShapes() && (Date.now() - lastRoadLayerInteractionTs) > 160 && openNearestRoadPopupAt(e.latlng, preferredKinds)) {
+            return;
+        }
     });
     map.on('mousemove', (e) => {
         if (distancePickMode && distanceSelectionMode === 'map') {
@@ -234,31 +255,74 @@ function init() {
 
         if (distancePickMode) {
             handled = true;
-            distancePickMode = false;
-            setDistancePickButtonState();
             if (distancePreviewLine) {
                 map.removeLayer(distancePreviewLine);
                 distancePreviewLine = null;
             }
-            if (pickedDistancePoints.length === 1) {
-                pickedDistancePoints = [];
+            // 우클릭하면 현재 거리재기 작업 완료 후 새 작업 준비
+            if (pickedDistancePoints.length === 0) {
+                // 작업 시작 전 우클릭
+                const resultEl = document.getElementById('distanceResult');
+                if (resultEl) resultEl.textContent = '거리 결과: 취소됨(우클릭).';
+            } else if (pickedDistancePoints.length === 1) {
+                // 점 1개만 선택했으면 취소
                 clearDistanceVisuals();
                 const resultEl = document.getElementById('distanceResult');
-                if (resultEl) resultEl.textContent = '거리 결과: 선택 종료(우클릭).';
+                if (resultEl) resultEl.textContent = '거리 결과: 취소됨(우클릭).';
+            } else {
+                // 점 2개 이상이면 현재까지의 거리 확정
+                updateDistanceResultForPath('우클릭 완료');
             }
+            // 우클릭 후 다음 작업을 위해 초기화 (새로운 거리재기 시작 가능)
+            pickedDistancePoints = [];
+            distanceMarkers.forEach(m => {
+                try { map.removeLayer(m); } catch (e) {}
+            });
+            distanceMarkers = [];
+            distanceLabelMarkers.forEach(m => {
+                try { map.removeLayer(m); } catch (e) {}
+            });
+            distanceLabelMarkers = [];
+            if (distanceLine) {
+                map.removeLayer(distanceLine);
+                distanceLine = null;
+            }
+            // distancePickMode는 true 유지하여 계속 거리재기 가능
+            setDistanceGuideMessage();
         }
 
         if (radiusPickMode) {
             handled = true;
             if (radiusDrawState === 'drawing') {
+                // 반경 그리는 중이면 현재 반경 확정
                 updateRadiusPreview(e.latlng, true);
             }
-            radiusDrawState = 'idle';
-            radiusPickMode = false;
-            setRadiusPickButtonState();
+            // 우클릭 후 다음 반경재기를 위해 초기화 (radiusPickMode는 true 유지)
+            radiusDrawState = 'await_center';
+            radiusCenterPoint = null;
+            if (radiusCenterMarker) {
+                map.removeLayer(radiusCenterMarker);
+                radiusCenterMarker = null;
+            }
+            if (radiusGuideLine) {
+                map.removeLayer(radiusGuideLine);
+                radiusGuideLine = null;
+            }
+            if (radiusDeleteMarker) {
+                map.removeLayer(radiusDeleteMarker);
+                radiusDeleteMarker = null;
+            }
+            setRadiusResultText('반경 결과: -');
+            // radiusPickMode는 true 유지하여 계속 반경재기 가능
         }
 
         if (handled) {
+            L.DomEvent.stop(e);
+            return;
+        }
+
+        const preferredKinds = isRoadLinkLabelTarget(e?.originalEvent?.target) ? ['link'] : getPreferredRoadKinds();
+        if (canInspectRoadShapes() && (Date.now() - lastRoadLayerInteractionTs) > 160 && openNearestRoadPopupAt(e.latlng, preferredKinds)) {
             L.DomEvent.stop(e);
             return;
         }
@@ -317,6 +381,11 @@ function renderFromCurrentData() {
     renderMarkerTable();
     focusOnInitialView();
     updateMap();
+
+    // Visualize guide events from log (C2X, Accident)
+    setTimeout(() => {
+        visualizeGuideEventsFromLog();
+    }, 100);
 }
 
 function refreshRouteInfoLinkIds(lines) {
@@ -568,6 +637,20 @@ function drawDistanceVisuals() {
         weight: 3,
         opacity: 0.9
     }).addTo(map);
+
+    // 거리선 중점에 삭제 버튼 추가
+    const midLat = (pickedDistancePoints[0].lat + pickedDistancePoints[pickedDistancePoints.length - 1].lat) / 2;
+    const midLon = (pickedDistancePoints[0].lon + pickedDistancePoints[pickedDistancePoints.length - 1].lon) / 2;
+    const deleteBtn = L.marker([midLat, midLon], {
+        icon: L.divIcon({
+            className: 'distance-delete-btn-wrapper',
+            html: '<button class="distance-delete-btn" title="거리재기 삭제">✕</button>',
+            iconSize: [24, 24],
+            iconAnchor: [12, 12]
+        })
+    }).addTo(map);
+    deleteBtn.on('click', () => resetDistanceSelection());
+    distanceMarkers.push(deleteBtn);
 
     let cumulative = 0;
     for (let i = 1; i < pickedDistancePoints.length; i += 1) {
@@ -989,6 +1072,168 @@ function bindSearchControls() {
     document.getElementById('ridSearchBox')?.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') handleRidSearch();
     });
+}
+
+function setInspectMode(mode) {
+    inspectMode = mode === 'road' ? 'road' : 'marker';
+    document.getElementById('markerInspectModeButton')?.classList.toggle('active', inspectMode === 'marker');
+    document.getElementById('roadInspectModeButton')?.classList.toggle('active', inspectMode === 'road');
+}
+
+function canInspectRoadShapes() {
+    return inspectMode === 'road' || markers.length === 0;
+}
+
+function isRoadLinkLabelTarget(target) {
+    return !!target?.closest?.('.road-link-label');
+}
+
+function makePopupDraggable(popup) {
+    // 컨테이너(닫기 버튼·꼬리 포함 전체)를 이동시켜야 × 버튼이 분리되지 않는다.
+    const container = popup?._container;
+    const wrapper = popup?._wrapper;
+    if (!container || !wrapper) return;
+
+    // 본문은 텍스트 선택/복사가 가능해야 하므로 드래그는 상단 핸들로만 한다.
+    if (wrapper.querySelector(':scope > .popup-drag-handle')) return;
+
+    const handle = document.createElement('div');
+    handle.className = 'popup-drag-handle';
+    handle.title = '드래그하여 이동';
+    handle.textContent = '⠿';
+    wrapper.insertBefore(handle, wrapper.firstChild);
+
+    const parseTranslate = (value) => {
+        const match = String(value || '').match(/translate3d?\(\s*([-\d.]+)px,\s*([-\d.]+)px/i);
+        if (!match) return { x: 0, y: 0 };
+        return { x: Number(match[1]) || 0, y: Number(match[2]) || 0 };
+    };
+
+    handle.addEventListener('mousedown', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+
+        const startMouseX = event.clientX;
+        const startMouseY = event.clientY;
+        const startPos = parseTranslate(container.style.transform);
+        if (map.dragging) map.dragging.disable();
+
+        const handleMove = (moveEvent) => {
+            const dx = moveEvent.clientX - startMouseX;
+            const dy = moveEvent.clientY - startMouseY;
+            container.style.transform = `translate3d(${startPos.x + dx}px, ${startPos.y + dy}px, 0px)`;
+        };
+
+        const handleUp = () => {
+            document.removeEventListener('mousemove', handleMove);
+            document.removeEventListener('mouseup', handleUp);
+            if (map.dragging) map.dragging.enable();
+        };
+
+        document.addEventListener('mousemove', handleMove);
+        document.addEventListener('mouseup', handleUp);
+    });
+}
+
+function flattenLatLngs(latlngs, out = []) {
+    if (!Array.isArray(latlngs)) return out;
+    latlngs.forEach((item) => {
+        if (Array.isArray(item)) {
+            flattenLatLngs(item, out);
+        } else if (item && Number.isFinite(item.lat) && Number.isFinite(item.lng)) {
+            out.push(item);
+        }
+    });
+    return out;
+}
+
+function findNearestRoadLayerAt(kind, latlng) {
+    const target = latlng && Number.isFinite(latlng.lat) && Number.isFinite(latlng.lng)
+        ? latlng
+        : null;
+    if (!target) return null;
+
+    const isNode = kind === 'node';
+    const isVertex = kind === 'vertex';
+    const layerGroup = isNode ? roadNodeGeoLayer : (isVertex ? roadLinkVertexGeoLayer : roadLinkGeoLayer);
+    if (!layerGroup) return null;
+
+    let best = null;
+    let bestDistance = Infinity;
+    layerGroup.eachLayer((layer) => {
+        let distance = Infinity;
+        if (typeof layer.getLatLng === 'function') {
+            distance = target.distanceTo(layer.getLatLng());
+        } else if (typeof layer.getLatLngs === 'function') {
+            const points = flattenLatLngs(layer.getLatLngs());
+            points.forEach((point) => {
+                distance = Math.min(distance, target.distanceTo(point));
+            });
+        }
+        if (!Number.isFinite(distance) || distance >= bestDistance) return;
+        bestDistance = distance;
+        best = layer;
+    });
+
+    const maxDistance = isNode ? 24 : (isVertex ? 14 : 44);
+    if (!best || bestDistance > maxDistance) return null;
+    return best;
+}
+
+function findNearestRoadCandidateAt(latlng, preferredKinds = ['node', 'link']) {
+    const target = latlng && Number.isFinite(latlng.lat) && Number.isFinite(latlng.lng)
+        ? latlng
+        : null;
+    if (!target) return null;
+
+    let best = null;
+    let bestDistance = Infinity;
+    let bestZ = -Infinity;
+
+    preferredKinds.forEach((kind) => {
+        const layer = findNearestRoadLayerAt(kind, target);
+        if (!layer) return;
+
+        let distance = Infinity;
+        if (typeof layer.getLatLng === 'function') {
+            distance = target.distanceTo(layer.getLatLng());
+        } else if (typeof layer.getLatLngs === 'function') {
+            const points = flattenLatLngs(layer.getLatLngs());
+            points.forEach((point) => {
+                distance = Math.min(distance, target.distanceTo(point));
+            });
+        }
+        if (!Number.isFinite(distance)) return;
+        const paneName = getRoadPaneName(kind === 'vertex' ? ROAD_LINK_VERTEX_LAYER : (kind === 'node' ? ROAD_NODE_LAYER : ROAD_LINK_LAYER));
+        const paneZ = Number(map.getPane(paneName)?.style?.zIndex || 0);
+        const withinTieRange = Math.abs(distance - bestDistance) <= 6;
+        if (distance > bestDistance && !withinTieRange) return;
+        if (withinTieRange && paneZ < bestZ) return;
+        bestDistance = distance;
+        bestZ = paneZ;
+        best = { kind, layer, feature: layer.feature, distance, paneZ };
+    });
+
+    return best;
+}
+
+function openNearestRoadPopupAt(latlng, preferredKinds = ['node', 'link']) {
+    const match = findNearestRoadCandidateAt(latlng, preferredKinds);
+    if (!match) return false;
+
+    if (match.kind === 'link') {
+        openRoadLayerPopup(match.layer, match.feature, 'link', 'Road Link', latlng);
+        return true;
+    }
+    if (match.kind === 'node') {
+        openRoadLayerPopup(match.layer, match.feature, 'node', 'Road Node', latlng);
+        return true;
+    }
+    if (match.kind === 'vertex') {
+        openRoadLayerPopup(match.layer, match.feature, 'vertex', 'Road Link Vertex', latlng);
+        return true;
+    }
+    return false;
 }
 
 function initRoutePanel() {
@@ -1418,7 +1663,7 @@ async function handleTmapRouteRequest() {
             throw new Error(data?.error ? `${data.error}${detailText ? `\n${detailText}` : ''}` : '경로 요청 실패');
         }
 
-        renderTmapRouteResult(data.response);
+        renderTmapRouteResultWithEvents(data.response);
     } catch (error) {
         setTmapRouteStatus(error.message || '경로 요청 실패', true);
     } finally {
@@ -2070,20 +2315,46 @@ function refreshRoadLayerStyles() {
             }));
         });
     }
+    if (roadLinkVertexGeoLayer) {
+        roadLinkVertexGeoLayer.eachLayer((layer) => {
+            if (typeof layer.setStyle !== 'function') return;
+            layer.setStyle(getRoadLinkVertexStyle({
+                ...(layer?.feature?.properties || {}),
+                __featureRef: layer?.feature || null
+            }));
+        });
+    }
 }
 
 function setSelectedRoadFeature(kind, feature) {
     const shpIndex = getRoadFeatureIndex(feature);
-    selectedRoadFeatureRef = Number.isFinite(shpIndex)
-        ? { kind, shpIndex }
-        : { kind: null, shpIndex: null };
+    const vertexIndex = Number(feature?.properties?.LINK_VERTEX_INDEX);
+    const partIndex = Number(feature?.properties?.LINK_VERTEX_PART);
+    if (kind === 'vertex' && Number.isFinite(shpIndex) && Number.isFinite(vertexIndex)) {
+        selectedRoadFeatureRef = {
+            kind,
+            shpIndex,
+            vertexIndex,
+            partIndex: Number.isFinite(partIndex) ? partIndex : 0
+        };
+    } else if (Number.isFinite(shpIndex)) {
+        selectedRoadFeatureRef = { kind, shpIndex };
+    } else {
+        selectedRoadFeatureRef = { kind: null, shpIndex: null };
+    }
     refreshRoadLayerStyles();
 }
 
 function isSelectedRoadFeature(kind, feature) {
     if (!feature || selectedRoadFeatureRef.kind !== kind) return false;
     const shpIndex = getRoadFeatureIndex(feature);
-    return Number.isFinite(shpIndex) && shpIndex === selectedRoadFeatureRef.shpIndex;
+    if (!Number.isFinite(shpIndex) || shpIndex !== selectedRoadFeatureRef.shpIndex) return false;
+    if (kind !== 'vertex') return true;
+    const vertexIndex = Number(feature?.properties?.LINK_VERTEX_INDEX);
+    const partIndex = Number(feature?.properties?.LINK_VERTEX_PART);
+    return Number.isFinite(vertexIndex)
+        && vertexIndex === selectedRoadFeatureRef.vertexIndex
+        && (Number.isFinite(partIndex) ? partIndex : 0) === (selectedRoadFeatureRef.partIndex ?? 0);
 }
 
 function renderCustomLinkRuleList() {
@@ -2169,15 +2440,20 @@ function applyRoadNodeStyleConfig() {
     const radiusRaw = Number(radiusInput?.value);
     const weightRaw = Number(weightInput?.value);
 
-    roadNodeStyleConfig = {
+    const nextStyle = {
         color,
         stroke,
         radius: Number.isFinite(radiusRaw) ? Math.max(1, Math.min(12, radiusRaw)) : 3.2,
         weight: Number.isFinite(weightRaw) ? Math.max(0, Math.min(5, weightRaw)) : 1
     };
+    if (roadStyleContextLayerName === ROAD_LINK_VERTEX_LAYER) {
+        roadVertexStyleConfig = nextStyle;
+    } else {
+        roadNodeStyleConfig = nextStyle;
+    }
     refreshRoadLayerStyles();
     if (roadShapeLoaded) scheduleRoadViewportQuery();
-    setUploadProgress(100, '노드 스타일 적용 완료', false);
+    setUploadProgress(100, `${roadStyleContextLayerName === ROAD_LINK_VERTEX_LAYER ? 'Vertex' : '노드'} 스타일 적용 완료`, false);
 }
 
 function initToolPanels() {
@@ -2622,8 +2898,8 @@ function cloneRoadShapeGroupsForWorker() {
     ['link', 'node'].forEach((kind) => {
         const sourceGroups = Array.isArray(roadShapeLocalGroupsByKind?.[kind]) ? roadShapeLocalGroupsByKind[kind] : [];
         sourceGroups.forEach((group) => {
-            const shpBuf = group?.shpBuf instanceof ArrayBuffer ? group.shpBuf.slice(0) : null;
-            const dbfBuf = group?.dbfBuf instanceof ArrayBuffer ? group.dbfBuf.slice(0) : null;
+            const shpBuf = group?.shpBuf instanceof ArrayBuffer && group.shpBuf.byteLength > 0 ? group.shpBuf : null;
+            const dbfBuf = group?.dbfBuf instanceof ArrayBuffer && group.dbfBuf.byteLength > 0 ? group.dbfBuf : null;
             if (!(shpBuf instanceof ArrayBuffer)) return;
             groups.push({
                 kind,
@@ -2636,6 +2912,47 @@ function cloneRoadShapeGroupsForWorker() {
         });
     });
     return groups;
+}
+
+async function getRoadShapeGroupsForWorker() {
+    const inMemoryGroups = cloneRoadShapeGroupsForWorker();
+    if (inMemoryGroups.length > 0) {
+        return inMemoryGroups;
+    }
+
+    const restored = [];
+    for (const kind of ['link', 'node']) {
+        const record = await loadRoadShapeKindFromLocalDb(kind);
+        const groups = Array.isArray(record?.groups) ? record.groups : [];
+        if (groups.length > 0) {
+            roadShapeLocalGroupsByKind[kind] = groups;
+            restored.push(...groups.map((group) => ({
+                kind,
+                name: group?.name || `${kind}_shape`,
+                shpBuf: group?.shpBuf,
+                dbfBuf: group?.dbfBuf,
+                prjText: typeof group?.prjText === 'string' ? group.prjText : '',
+                cpgText: typeof group?.cpgText === 'string' ? group.cpgText : ''
+            })));
+        }
+    }
+    return restored;
+}
+
+function releaseTransferredRoadShapeBuffers(groups) {
+    if (!Array.isArray(groups) || groups.length === 0) return;
+    const transferredKeys = new Set(
+        groups.map((group) => `${group?.kind || ''}::${group?.name || ''}`)
+    );
+    ['link', 'node'].forEach((kind) => {
+        const sourceGroups = Array.isArray(roadShapeLocalGroupsByKind?.[kind]) ? roadShapeLocalGroupsByKind[kind] : [];
+        sourceGroups.forEach((group) => {
+            const key = `${kind}::${group?.name || ''}`;
+            if (!transferredKeys.has(key)) return;
+            group.shpBuf = null;
+            group.dbfBuf = null;
+        });
+    });
 }
 
 async function loadRoadShapeOnDemand() {
@@ -2661,7 +2978,7 @@ async function loadRoadShapeOnDemandForced() {
         };
         syncRoadShapeWorkerQueryKeys();
 
-        const groups = cloneRoadShapeGroupsForWorker();
+        const groups = await getRoadShapeGroupsForWorker();
         if (!Array.isArray(groups) || groups.length === 0) {
             throw new Error('로컬 Shape 데이터가 없습니다. Link/Node 폴더를 업로드하세요.');
         }
@@ -2671,6 +2988,7 @@ async function loadRoadShapeOnDemandForced() {
             if (group.dbfBuf instanceof ArrayBuffer) transferables.push(group.dbfBuf);
         });
         roadShapeWorker.postMessage({ type: 'loadGroups', groups }, transferables);
+        releaseTransferredRoadShapeBuffers(groups);
     } catch (e) {
         roadShapeLoading = false;
         roadShapePendingLoad = false;
@@ -2813,7 +3131,9 @@ function requestRoadShapeAttrs(kind, index) {
 }
 
 function getRoadFeatureIndex(feature) {
-    const raw = feature?._shpIndex ?? feature?.properties?._shpIndex;
+    const raw = feature?._shpIndex
+        ?? feature?.properties?._shpIndex
+        ?? feature?.properties?.__featureRef?.shpIndex;
     const index = Number(raw);
     return Number.isFinite(index) ? index : null;
 }
@@ -2946,41 +3266,60 @@ function attachRoadShapePopup(feature, layer, kind, title) {
 
     layer.bindPopup(makeRoadPopupContent(baseProps, title), { maxWidth: 420, autoPan: false, keepInView: false });
     layer.on('click', (event) => {
-        setSelectedRoadFeature(kind, feature);
-
-        const clickLat = Number(event?.latlng?.lat);
-        const clickLon = Number(event?.latlng?.lng);
-        const popupBaseProps = { ...baseProps };
-        if (Number.isFinite(clickLat) && Number.isFinite(clickLon)) {
-            popupBaseProps.CLICK_LAT = clickLat.toFixed(6);
-            popupBaseProps.CLICK_LON = clickLon.toFixed(6);
+        if (!canInspectRoadShapes()) {
+            if (event?.originalEvent) L.DomEvent.stop(event.originalEvent);
+            return;
         }
-        if (Number.isFinite(linkAngle) && Number.isFinite(selectedDrCoordinate?.heading)) {
-            popupBaseProps.DR_HEADING = `${Number(selectedDrCoordinate.heading).toFixed(2)}°`;
-            const diff = computeHeadingDeltaDegrees(selectedDrCoordinate.heading, linkAngle);
-            if (Number.isFinite(diff)) {
-                popupBaseProps.DR_LINK_DIFF = `${diff.toFixed(2)}°`;
-            }
-        }
+        openRoadLayerPopup(layer, feature, kind, title, event?.latlng, event?.originalEvent);
+    });
+}
 
-        const loadingProps = { ...popupBaseProps, 상태: '속성 조회 중...' };
-        layer.setPopupContent(makeRoadPopupContent(loadingProps, title));
-        if (typeof layer.openPopup === 'function') {
-            layer.openPopup(event?.latlng);
-        }
-        if (event?.originalEvent) {
-            L.DomEvent.stop(event.originalEvent);
-        }
+function openRoadLayerPopup(layer, feature, kind, title, latlng, originalEvent = null) {
+    const baseProps = { ...(feature?.properties || {}) };
+    const shpIndex = getRoadFeatureIndex(feature);
+    const linkAngle = title === 'Road Link' ? computeRoadFeatureAngle(feature) : null;
+    if (Number.isFinite(shpIndex)) {
+        baseProps.SHP_INDEX = shpIndex + 1;
+    }
+    if (Number.isFinite(linkAngle)) {
+        baseProps.LINK_ANGLE = `${linkAngle.toFixed(2)}°`;
+    }
 
-        if (!Number.isFinite(shpIndex)) return;
+    setSelectedRoadFeature(kind, feature);
+    lastRoadLayerInteractionTs = Date.now();
 
-        requestRoadShapeAttrs(kind, shpIndex).then((attrs) => {
-            const attrObj = (attrs && typeof attrs === 'object') ? attrs : {};
-            const merged = Object.keys(attrObj).length > 0
-                ? { ...popupBaseProps, ...attrObj }
-                : popupBaseProps;
-            layer.setPopupContent(makeRoadPopupContent(merged, title));
-        });
+    const clickLat = Number(latlng?.lat);
+    const clickLon = Number(latlng?.lng);
+    const popupBaseProps = { ...baseProps };
+    if (Number.isFinite(clickLat) && Number.isFinite(clickLon)) {
+        popupBaseProps.CLICK_LAT = clickLat.toFixed(6);
+        popupBaseProps.CLICK_LON = clickLon.toFixed(6);
+    }
+    if (Number.isFinite(linkAngle) && Number.isFinite(selectedDrCoordinate?.heading)) {
+        popupBaseProps.DR_HEADING = `${Number(selectedDrCoordinate.heading).toFixed(2)}°`;
+        const diff = computeHeadingDeltaDegrees(selectedDrCoordinate.heading, linkAngle);
+        if (Number.isFinite(diff)) {
+            popupBaseProps.DR_LINK_DIFF = `${diff.toFixed(2)}°`;
+        }
+    }
+
+    const loadingProps = { ...popupBaseProps, 상태: '속성 조회 중...' };
+    layer.setPopupContent(makeRoadPopupContent(loadingProps, title));
+    if (typeof layer.openPopup === 'function') {
+        layer.openPopup(latlng);
+    }
+    if (originalEvent) {
+        L.DomEvent.stop(originalEvent);
+    }
+
+    if (!Number.isFinite(shpIndex) || kind === 'vertex') return;
+
+    requestRoadShapeAttrs(kind, shpIndex).then((attrs) => {
+        const attrObj = (attrs && typeof attrs === 'object') ? attrs : {};
+        const merged = Object.keys(attrObj).length > 0
+            ? { ...popupBaseProps, ...attrObj }
+            : popupBaseProps;
+        layer.setPopupContent(makeRoadPopupContent(merged, title));
     });
 }
 
@@ -2996,9 +3335,9 @@ function ensureRoadInteractionPanes() {
     };
 
     // Keep road-shape layers below markerPane so parsed marker popups remain clickable.
-    ensurePane('roadLinkPane', 560);
-    ensurePane('roadLinkVertexPane', 570);
-    ensurePane('roadNodePane', 580);
+    ensurePane('roadLinkPane', 550);
+    ensurePane('roadNodePane', 551);
+    ensurePane('roadLinkVertexPane', 552);
 
     if (!roadLinkSvgRenderer) {
         roadLinkSvgRenderer = L.svg({ pane: 'roadLinkPane' });
@@ -3015,13 +3354,36 @@ function getRoadPaneName(layerName) {
     return null;
 }
 
-function getRoadLinkVertexStyle() {
+function getPreferredRoadKinds() {
+    const kindByLayerName = {
+        [ROAD_LINK_LAYER]: 'link',
+        [ROAD_NODE_LAYER]: 'node',
+        [ROAD_LINK_VERTEX_LAYER]: 'vertex'
+    };
+    return layerOrder
+        .filter((name) => isRoadShapeLayerName(name) && activeGroups.has(name))
+        .map((name) => kindByLayerName[name])
+        .filter(Boolean)
+        .reverse();
+}
+
+function getRoadLinkVertexStyle(props = {}) {
+    const radius = roadVertexStyleConfig.radius;
+    if (isSelectedRoadFeature('vertex', props?.__featureRef)) {
+        return {
+            radius,
+            color: '#b91c1c',
+            fillColor: '#ef4444',
+            fillOpacity: 0.98,
+            weight: Math.max(roadVertexStyleConfig.weight, 1.8)
+        };
+    }
     return {
-        radius: 2.8,
-        color: '#0f172a',
-        fillColor: '#f8fafc',
+        radius,
+        color: roadVertexStyleConfig.stroke,
+        fillColor: roadVertexStyleConfig.color,
         fillOpacity: 0.95,
-        weight: 1.2
+        weight: roadVertexStyleConfig.weight
     };
 }
 
@@ -3132,19 +3494,17 @@ function ensureRoadShapeLayers() {
             pane: 'roadLinkVertexPane',
             interactive: true,
             bubblingMouseEvents: false,
-            pointToLayer: (_feature, latlng) => L.circleMarker(latlng, {
+            pointToLayer: (feature, latlng) => L.circleMarker(latlng, {
                 pane: 'roadLinkVertexPane',
                 interactive: true,
                 bubblingMouseEvents: false,
-                ...getRoadLinkVertexStyle()
+                ...getRoadLinkVertexStyle({
+                    ...(feature?.properties || {}),
+                    __featureRef: feature
+                })
             }),
             onEachFeature: (feature, layer) => {
-                const props = feature?.properties || {};
-                layer.bindPopup(makeRoadPopupContent(props, 'Road Link Vertex'), {
-                    maxWidth: 420,
-                    autoPan: false,
-                    keepInView: false
-                });
+                attachRoadShapePopup(feature, layer, 'vertex', 'Road Link Vertex');
             }
         });
         addLayerToGroup(ROAD_LINK_VERTEX_LAYER, roadLinkVertexGeoLayer);
@@ -3178,7 +3538,7 @@ function queryRoadViewport() {
         type: 'query',
         requestId: ++roadShapeQueryRequestId,
         bounds: [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()],
-        includeLinks: activeGroups.has(ROAD_LINK_LAYER),
+        includeLinks: activeGroups.has(ROAD_LINK_LAYER) || activeGroups.has(ROAD_LINK_VERTEX_LAYER),
         includeNodes: activeGroups.has(ROAD_NODE_LAYER),
         linkPropKeys: getRoadWorkerRequestedLinkProps(),
         maxLinks: limits.maxLinks,
@@ -3630,7 +3990,7 @@ function resetVisualization() {
     selectedCandidateLinkIds = new Set();
     activeGroups = new Set([...activeGroups].filter((name) => name === ROAD_LINK_LAYER || name === ROAD_NODE_LAYER || name === ROAD_LINK_VERTEX_LAYER));
     layerOrder = layerOrder.filter((name) => name === ROAD_LINK_LAYER || name === ROAD_NODE_LAYER || name === ROAD_LINK_VERTEX_LAYER);
-    isLayerTreeExpanded = true;
+    resultTreeExpanded = true;
     renderLayerControls();
     handleRoadZoomChanged();
 }
@@ -3696,14 +4056,14 @@ function drawMarkers(coordinates) {
             const marker = useDrHeadingArrow
                 ? L.marker([latitude, longitude], {
                     icon: buildDrHeadingIcon(coord.heading, coord.color || '#ef4444')
-                }).bindPopup(popupText)
+                })
                 : L.circleMarker([latitude, longitude], {
                     radius: isGnssTransitionHighlight ? 6 : 3,
                     color: coord.color || 'black',
                     weight: isGnssTransitionHighlight ? 3 : 1,
                     fill: coord.fill,
                     fillOpacity: 0.8
-                }).bindPopup(popupText);
+                });
 
             marker.dlt_id = coord.dlt_id;
             marker.timestamp_ms = coord.timestamp_ms;
@@ -3717,7 +4077,16 @@ function drawMarkers(coordinates) {
                 radius: useDrHeadingArrow ? null : (marker.options.radius ?? 3)
             };
             attachMarkerDistancePick(marker);
-            marker.on('click', () => {
+            marker._popupContent = popupText;
+            marker.on('click', (e) => {
+                if (inspectMode !== 'marker') {
+                    if (inspectMode === 'road') {
+                        const latlng = e?.latlng || L.latLng(latitude, longitude);
+                        openNearestRoadPopupAt(latlng, getPreferredRoadKinds());
+                    }
+                    if (e) L.DomEvent.stopPropagation(e);
+                    return;
+                }
                 if (coordtype === 'DR-based') {
                     selectedDrCoordinate = coord;
                     selectedCandidateLinkIds = extractCandidateLinkIdSet(coord?.extra);
@@ -3728,6 +4097,10 @@ function drawMarkers(coordinates) {
                             __featureRef: feature
                         }));
                     }
+                }
+                L.popup().setLatLng([latitude, longitude]).setContent(marker._popupContent).openOn(map);
+                if (e) {
+                    L.DomEvent.stopPropagation(e);
                 }
             });
 
@@ -3760,11 +4133,23 @@ function drawRequestGroupMarkers(requestGroups, markers) {
 
         if (members.length === 1) {
             const coord = members[0];
-            marker.bindPopup(makePopupText(coord, 'Request'));
             marker.dlt_id = coord.dlt_id;
             marker.timestamp_ms = coord.timestamp_ms;
             marker.id = coord.id || 0;
             marker.data = coord;
+            marker._popupContent = makePopupText(coord, 'Request');
+            marker.on('click', (e) => {
+                if (inspectMode !== 'marker') {
+                    if (inspectMode === 'road') {
+                        const latlng = e?.latlng || L.latLng(latitude, longitude);
+                        openNearestRoadPopupAt(latlng, getPreferredRoadKinds());
+                    }
+                    if (e) L.DomEvent.stopPropagation(e);
+                    return;
+                }
+                L.popup().setLatLng([latitude, longitude]).setContent(marker._popupContent).openOn(map);
+                if (e) L.DomEvent.stopPropagation(e);
+            });
         } else {
             marker.dlt_id = request.dlt_id_list[0];
             marker.timestamp_ms = request.timestamp_ms_list[0];
@@ -3774,10 +4159,20 @@ function drawRequestGroupMarkers(requestGroups, markers) {
             const initialContent = `<div style="min-width:100px;">Request (${1}/${members.length})</div>`;
             const popup = L.popup({ autoClose: false, closeOnClick: false }).setContent(initialContent);
             marker.bindPopup(popup);
-
-            marker.on('click', () => {
+            marker.on('click', (e) => {
+                if (inspectMode !== 'marker') {
+                    if (inspectMode === 'road') {
+                        const latlng = e?.latlng || L.latLng(latitude, longitude);
+                        openNearestRoadPopupAt(latlng, getPreferredRoadKinds());
+                    }
+                    if (e) L.DomEvent.stopPropagation(e);
+                    return;
+                }
                 if (!request.currentIndex) request.currentIndex = 0;
                 showRequestGroupPopup(request, marker);
+                if (e) {
+                    L.DomEvent.stopPropagation(e);
+                }
             });
         }
         marker._isIconMarker = true;
@@ -3860,6 +4255,9 @@ function makePopupText(coordinate, coordtype) {
 
     if (coordtype === "DR-based") {
         text += `<br>isDRGps: ${coordinate.extra?.isDRGps ?? ""}`;
+        if (coordinate.extra?.mm_feedback_reason) {
+            text += `<br><b>MM Feedback:</b> ${coordinate.extra.mm_feedback_reason}`;
+        }
         text += buildCandidateLinkPopupHtml(coordinate?.extra);
     }
     if (coordtype === "Request") {
@@ -3871,6 +4269,7 @@ function makePopupText(coordinate, coordtype) {
             text += `<br>${state}`;
         }
     }
+
     return text;
 }
 
@@ -3901,6 +4300,7 @@ function extractCandidateLinkIdSet(extra) {
     });
     return nextIds;
 }
+
 
 function pickCandidateField(entry, keys) {
     if (!entry || typeof entry !== 'object' || !Array.isArray(keys)) return '';
@@ -4451,7 +4851,8 @@ function openLayerContextMenu(layerName, anchorEl) {
     if (!menu) return;
 
     const isLink = layerName === ROAD_LINK_LAYER;
-    const isNode = layerName === ROAD_NODE_LAYER;
+    const isPointLayer = layerName === ROAD_NODE_LAYER || layerName === ROAD_LINK_VERTEX_LAYER;
+    roadStyleContextLayerName = isPointLayer ? layerName : ROAD_NODE_LAYER;
 
     const title = document.getElementById('layerCtxTitle');
     if (title) title.textContent = `${layerName} 스타일`;
@@ -4459,7 +4860,24 @@ function openLayerContextMenu(layerName, anchorEl) {
     const linkSec = document.getElementById('layerCtxLinkSection');
     const nodeSec = document.getElementById('layerCtxNodeSection');
     if (linkSec) linkSec.style.display = isLink ? '' : 'none';
-    if (nodeSec) nodeSec.style.display = isNode ? '' : 'none';
+    if (nodeSec) nodeSec.style.display = isPointLayer ? '' : 'none';
+    const nodeSubtitle = nodeSec?.querySelector('.layer-ctx-subtitle');
+    if (nodeSubtitle) {
+        nodeSubtitle.textContent = layerName === ROAD_LINK_VERTEX_LAYER ? 'Vertex 스타일' : '노드 스타일';
+    }
+    const applyBtn = document.getElementById('applyNodeStyleButton');
+    if (applyBtn) {
+        applyBtn.textContent = layerName === ROAD_LINK_VERTEX_LAYER ? 'Vertex 스타일 적용' : '노드 스타일 적용';
+    }
+    const styleSource = layerName === ROAD_LINK_VERTEX_LAYER ? roadVertexStyleConfig : roadNodeStyleConfig;
+    const nodeColorInput = document.getElementById('nodeColorInput');
+    const nodeStrokeInput = document.getElementById('nodeStrokeInput');
+    const nodeRadiusInput = document.getElementById('nodeRadiusInput');
+    const nodeWeightInput = document.getElementById('nodeWeightInput');
+    if (nodeColorInput) nodeColorInput.value = styleSource.color;
+    if (nodeStrokeInput) nodeStrokeInput.value = styleSource.stroke;
+    if (nodeRadiusInput) nodeRadiusInput.value = String(styleSource.radius);
+    if (nodeWeightInput) nodeWeightInput.value = String(styleSource.weight);
 
     if (isLink) {
         renderLinkStyleFieldOptions();
@@ -4539,76 +4957,11 @@ function closeLayerContextMenu() {
     if (menu) menu.classList.add('hidden');
 }
 
-function renderLayerControls() {
-    const list = document.getElementById('layerControlList');
-    if (!list) return;
-    list.innerHTML = '';
+function isRoadShapeLayerName(name) {
+    return name === ROAD_LINK_LAYER || name === ROAD_NODE_LAYER || name === ROAD_LINK_VERTEX_LAYER;
+}
 
-    ensureFeatureGroupsFromCurrentLayers();
-
-    const sortedGroups = Object.keys(featureGroups).sort((a, b) => {
-        const keyDiff = getLayerOrderKey(a) - getLayerOrderKey(b);
-        return keyDiff !== 0 ? keyDiff : a.localeCompare(b);
-    });
-    if (layerOrder.length === 0) {
-        layerOrder = sortedGroups.slice();
-    } else {
-        const missing = sortedGroups.filter((name) => !layerOrder.includes(name));
-        layerOrder = layerOrder.filter((name) => sortedGroups.includes(name)).concat(missing);
-    }
-
-    const groups = layerOrder.slice();
-    const visibleCount = groups.filter((name) => activeGroups.has(name)).length;
-
-    const tree = document.createElement('div');
-    tree.className = 'layer-tree-card';
-
-    const rootRow = document.createElement('div');
-    rootRow.className = 'layer-root-row';
-
-    const rootToggleBtn = document.createElement('button');
-    rootToggleBtn.type = 'button';
-    rootToggleBtn.className = 'layer-tree-toggle';
-    rootToggleBtn.textContent = isLayerTreeExpanded ? '▾' : '▸';
-    rootToggleBtn.onclick = () => {
-        isLayerTreeExpanded = !isLayerTreeExpanded;
-        renderLayerControls();
-    };
-    rootRow.appendChild(rootToggleBtn);
-
-    const rootCheckbox = document.createElement('input');
-    rootCheckbox.type = 'checkbox';
-    rootCheckbox.className = 'layer-control-check';
-    rootCheckbox.checked = groups.length > 0 && visibleCount === groups.length;
-    rootCheckbox.indeterminate = visibleCount > 0 && visibleCount < groups.length;
-    rootCheckbox.onchange = () => {
-        const enable = rootCheckbox.checked;
-        groups.forEach((layerName) => {
-            const group = featureGroups[layerName];
-            if (!group) return;
-            if (enable) {
-                if (!map.hasLayer(group)) map.addLayer(group);
-                activeGroups.add(layerName);
-            } else {
-                if (map.hasLayer(group)) map.removeLayer(group);
-                activeGroups.delete(layerName);
-            }
-        });
-        updateMap();
-        renderLayerControls();
-    };
-    rootRow.appendChild(rootCheckbox);
-
-    const rootLabel = document.createElement('div');
-    rootLabel.className = 'layer-root-label';
-    rootLabel.textContent = `result_${currentResultName}`;
-    rootRow.appendChild(rootLabel);
-    tree.appendChild(rootRow);
-
-    const childWrap = document.createElement('div');
-    childWrap.className = 'layer-children';
-    if (!isLayerTreeExpanded) childWrap.style.display = 'none';
-
+function appendLayerRows(childWrap, groups) {
     groups.forEach((name) => {
         const group = featureGroups[name];
         if (!group) return;
@@ -4656,10 +5009,30 @@ function renderLayerControls() {
             if (checkbox.checked) {
                 if (!map.hasLayer(group)) map.addLayer(group);
                 activeGroups.add(name);
+
+                // Road Node를 키면 Vertex 이전 상태 복원
+                if (name === ROAD_NODE_LAYER && vertexWasActiveBeforeNodeDisabled) {
+                    const vertexGroup = featureGroups[ROAD_LINK_VERTEX_LAYER];
+                    if (vertexGroup && !map.hasLayer(vertexGroup)) {
+                        map.addLayer(vertexGroup);
+                        activeGroups.add(ROAD_LINK_VERTEX_LAYER);
+                    }
+                }
             } else {
                 if (map.hasLayer(group)) map.removeLayer(group);
                 activeGroups.delete(name);
+
+                // Road Node를 끄면 Vertex 상태 기억 후 함께 끔 (UI 일관성)
+                if (name === ROAD_NODE_LAYER) {
+                    vertexWasActiveBeforeNodeDisabled = activeGroups.has(ROAD_LINK_VERTEX_LAYER);
+                    const vertexGroup = featureGroups[ROAD_LINK_VERTEX_LAYER];
+                    if (vertexGroup && map.hasLayer(vertexGroup)) {
+                        map.removeLayer(vertexGroup);
+                        activeGroups.delete(ROAD_LINK_VERTEX_LAYER);
+                    }
+                }
             }
+
             updateMap();
             renderLayerControls();
         };
@@ -4681,8 +5054,7 @@ function renderLayerControls() {
         count.textContent = `${displayCount}`;
         row.appendChild(count);
 
-        // 우클릭 컨텍스트 메뉴 (Road Link / Road Node 전용)
-        if (name === ROAD_LINK_LAYER || name === ROAD_NODE_LAYER) {
+        if (name === ROAD_LINK_LAYER || name === ROAD_NODE_LAYER || name === ROAD_LINK_VERTEX_LAYER) {
             const ctxBtn = document.createElement('button');
             ctxBtn.type = 'button';
             ctxBtn.className = 'layer-ctx-trigger';
@@ -4701,11 +5073,101 @@ function renderLayerControls() {
         }
 
         childWrap.appendChild(row);
-        appendRoadRuleControls(childWrap, name);
+        if (name !== ROAD_LINK_VERTEX_LAYER) {
+            appendRoadRuleControls(childWrap, name);
+        }
     });
+}
 
+function createLayerTreeCard(rootLabelText, groups, expanded = true, visibilityGroups = null) {
+    const effectiveVisibilityGroups = Array.isArray(visibilityGroups) ? visibilityGroups : groups;
+    const visibleCount = effectiveVisibilityGroups.filter((name) => activeGroups.has(name)).length;
+    const tree = document.createElement('div');
+    tree.className = 'layer-tree-card';
+
+    const rootRow = document.createElement('div');
+    rootRow.className = 'layer-root-row';
+
+    const rootToggleBtn = document.createElement('button');
+    rootToggleBtn.type = 'button';
+    rootToggleBtn.className = 'layer-tree-toggle';
+    rootToggleBtn.textContent = expanded ? '▾' : '▸';
+    rootToggleBtn.onclick = () => {
+        if (rootLabelText === 'Road Shape') {
+            roadTreeExpanded = !roadTreeExpanded;
+        } else {
+            resultTreeExpanded = !resultTreeExpanded;
+        }
+        renderLayerControls();
+    };
+    rootRow.appendChild(rootToggleBtn);
+
+    const rootCheckbox = document.createElement('input');
+    rootCheckbox.type = 'checkbox';
+    rootCheckbox.className = 'layer-control-check';
+    rootCheckbox.checked = effectiveVisibilityGroups.length > 0 && visibleCount === effectiveVisibilityGroups.length;
+    rootCheckbox.indeterminate = visibleCount > 0 && visibleCount < effectiveVisibilityGroups.length;
+    rootCheckbox.onchange = () => {
+        const enable = rootCheckbox.checked;
+        effectiveVisibilityGroups.forEach((layerName) => {
+            const group = featureGroups[layerName];
+            if (!group) return;
+            if (enable) {
+                if (!map.hasLayer(group)) map.addLayer(group);
+                activeGroups.add(layerName);
+            } else {
+                if (map.hasLayer(group)) map.removeLayer(group);
+                activeGroups.delete(layerName);
+            }
+        });
+        updateMap();
+        renderLayerControls();
+    };
+    rootRow.appendChild(rootCheckbox);
+
+    const rootLabel = document.createElement('div');
+    rootLabel.className = 'layer-root-label';
+    rootLabel.textContent = rootLabelText;
+    rootRow.appendChild(rootLabel);
+    tree.appendChild(rootRow);
+
+    const childWrap = document.createElement('div');
+    childWrap.className = 'layer-children';
+    if (!expanded) childWrap.style.display = 'none';
+    appendLayerRows(childWrap, groups);
     tree.appendChild(childWrap);
-    list.appendChild(tree);
+    return tree;
+}
+
+function renderLayerControls() {
+    const list = document.getElementById('layerControlList');
+    if (!list) return;
+    list.innerHTML = '';
+
+    ensureFeatureGroupsFromCurrentLayers();
+
+    const sortedGroups = Object.keys(featureGroups).sort((a, b) => {
+        const keyDiff = getLayerOrderKey(a) - getLayerOrderKey(b);
+        return keyDiff !== 0 ? keyDiff : a.localeCompare(b);
+    });
+    if (layerOrder.length === 0) {
+        layerOrder = sortedGroups.slice();
+    } else {
+        const missing = sortedGroups.filter((name) => !layerOrder.includes(name));
+        layerOrder = layerOrder.filter((name) => sortedGroups.includes(name)).concat(missing);
+    }
+
+    const resultGroups = layerOrder.filter((name) => !isRoadShapeLayerName(name));
+    const roadGroups = layerOrder.filter((name) => isRoadShapeLayerName(name) && name !== ROAD_LINK_VERTEX_LAYER);
+    const roadShapeVisibilityGroups = layerOrder.filter((name) => isRoadShapeLayerName(name));
+
+    if (resultGroups.length > 0) {
+        list.appendChild(createLayerTreeCard(`result_${currentResultName}`, resultGroups, resultTreeExpanded));
+    }
+    if (roadGroups.length > 0) {
+        const tree = createLayerTreeCard('Road Shape', roadGroups, roadTreeExpanded, roadShapeVisibilityGroups);
+        list.appendChild(tree);
+    }
     applyLayerOrderZIndex();
 }
 
@@ -4737,12 +5199,27 @@ function appendRoadRuleControls(parent, layerName) {
         }).filter((rule) => !!rule.key);
         rules = baseRules.concat(customRules);
     } else {
-        rules = ROAD_NODE_RULES.map((rule) => ({
-            key: rule.key,
-            label: rule.label,
-            color: rule.color,
-            count: Number(roadNodeRenderedRuleCounts?.[rule.key] || 0)
-        }));
+        const vertexCount = Number.isFinite(layerCountOverride[ROAD_LINK_VERTEX_LAYER])
+            ? layerCountOverride[ROAD_LINK_VERTEX_LAYER]
+            : (featureGroups[ROAD_LINK_VERTEX_LAYER]?.getLayers?.().length || 0);
+        const roadNodeEnabled = activeGroups.has(ROAD_NODE_LAYER);
+        rules = [
+            {
+                key: '__vertex_layer__',
+                label: 'Vertex',
+                color: getLayerSwatchColor(ROAD_LINK_VERTEX_LAYER),
+                count: vertexCount,
+                layerName: ROAD_LINK_VERTEX_LAYER,
+                disabled: !roadNodeEnabled  // Road Node가 꺼져 있으면 Vertex도 비활성화
+            },
+            ...ROAD_NODE_RULES.map((rule) => ({
+                key: rule.key,
+                label: rule.label,
+                color: rule.color,
+                count: Number(roadNodeRenderedRuleCounts?.[rule.key] || 0),
+                layerName: ROAD_NODE_LAYER
+            }))
+        ];
     }
 
     const ruleWrap = document.createElement('div');
@@ -4755,9 +5232,24 @@ function appendRoadRuleControls(parent, layerName) {
         const checkbox = document.createElement('input');
         checkbox.type = 'checkbox';
         checkbox.className = 'layer-control-check';
-        checkbox.checked = enabledMap[rule.key] !== false;
+        checkbox.checked = rule.layerName === ROAD_LINK_VERTEX_LAYER
+            ? activeGroups.has(ROAD_LINK_VERTEX_LAYER)
+            : enabledMap[rule.key] !== false;
+        checkbox.disabled = rule.disabled === true;
+        checkbox.title = rule.disabled ? 'Road Node를 활성화하면 사용 가능' : '';
         checkbox.onchange = () => {
-            enabledMap[rule.key] = checkbox.checked;
+            if (rule.layerName === ROAD_LINK_VERTEX_LAYER) {
+                const group = featureGroups[ROAD_LINK_VERTEX_LAYER];
+                if (checkbox.checked) {
+                    if (group && !map.hasLayer(group)) map.addLayer(group);
+                    activeGroups.add(ROAD_LINK_VERTEX_LAYER);
+                } else {
+                    if (group && map.hasLayer(group)) map.removeLayer(group);
+                    activeGroups.delete(ROAD_LINK_VERTEX_LAYER);
+                }
+            } else {
+                enabledMap[rule.key] = checkbox.checked;
+            }
             if (roadShapeLoaded) {
                 scheduleRoadViewportQuery();
             }
@@ -4883,7 +5375,10 @@ function applyLayerOrderZIndex() {
         if (paneName) {
             const pane = map.getPane(paneName);
             if (pane) {
-                pane.style.zIndex = String(560 + idx * 5);
+                const extra =
+                    name === ROAD_NODE_LAYER ? 2 :
+                    (name === ROAD_LINK_VERTEX_LAYER ? 0 : 0);
+                pane.style.zIndex = String(550 + idx + extra);
             }
         }
         const zBase = 1000 + idx * 10;
@@ -4891,7 +5386,7 @@ function applyLayerOrderZIndex() {
             if (typeof layer.setZIndexOffset === 'function') {
                 layer.setZIndexOffset(zBase);
             }
-            if (typeof layer.bringToFront === 'function') {
+            if (typeof layer.bringToFront === 'function' && activeGroups.has(name)) {
                 layer.bringToFront();
             }
         });
@@ -5386,4 +5881,252 @@ function highlightLine(lineLayer) {
         opacity: 0.5,
         interactive: false
     }).addTo(highlightLayer);
+}
+
+// ============================================================================
+// C2X Events & Traffic Incident Visualization
+// ============================================================================
+
+const EVENT_ICON_MAP = {
+    'A': { name: '사고', color: '#ef4444', icon: '🚨' },
+    'B': { name: '공사', color: '#f59e0b', icon: '🚧' },
+    'C': { name: '행사', color: '#8b5cf6', icon: '🎉' },
+    'D': { name: '재해', color: '#dc2626', icon: '⚠️' },
+    'E': { name: '통제', color: '#059669', icon: '🛑' },
+};
+
+function getEventIconConfig(typeCode) {
+    return EVENT_ICON_MAP[typeCode] || { name: '기타', color: '#6b7280', icon: '📍' };
+}
+
+function createEventMarkerIcon(typeCode, iconText = null) {
+    const config = getEventIconConfig(typeCode);
+    const iconHtml = `
+        <div style="
+            background-color: ${config.color};
+            color: white;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            border: 2px solid white;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        ">
+            ${iconText || config.icon}
+        </div>
+    `;
+    return L.divIcon({
+        html: iconHtml,
+        className: 'event-marker',
+        iconSize: [40, 40],
+        iconAnchor: [20, 20],
+        popupAnchor: [0, -20]
+    });
+}
+
+function renderTrafficIncidents(tvasResult) {
+    if (!tvasResult || !tvasResult.incidents || tvasResult.incidents.length === 0) {
+        return;
+    }
+
+    const eventGroup = ensureTmapFeatureGroup('Traffic Events');
+    const coords = resolveVertexCoordinates(tvasResult);
+    const coordMap = new Map();
+    coords.forEach((coord, idx) => {
+        coordMap.set(idx, { lat: coord.lat, lon: coord.lon });
+    });
+
+    tvasResult.incidents.forEach((incident) => {
+        const vxCoord = coordMap.get(incident.startVxIdx);
+        if (!vxCoord) return;
+
+        const eventIcon = createEventMarkerIcon(incident.typeCode);
+        const typeConfig = getEventIconConfig(incident.typeCode);
+        const marker = L.marker([vxCoord.lat, vxCoord.lon], { icon: eventIcon });
+
+        marker.bindPopup(`
+            <div style="min-width: 200px;">
+                <div style="font-weight: bold; color: ${typeConfig.color}; margin-bottom: 8px;">
+                    ${typeConfig.icon} ${typeConfig.name}
+                </div>
+                <div style="font-size: 12px;">
+                    <div><strong>종류:</strong> ${typeConfig.name}</div>
+                    <div><strong>위치 Index:</strong> ${incident.startVxIdx}</div>
+                    ${incident.content ? `<div><strong>내용:</strong> ${escapeHtml(incident.content)}</div>` : ''}
+                </div>
+            </div>
+        `);
+
+        eventGroup.addLayer(marker);
+    });
+
+    renderLayerControls();
+}
+
+function renderDangerAreas(tvasResult) {
+    if (!tvasResult || !tvasResult.dangerAreas || tvasResult.dangerAreas.length === 0) {
+        return;
+    }
+
+    const dangerGroup = ensureTmapFeatureGroup('Danger Areas');
+    const coords = resolveVertexCoordinates(tvasResult);
+    const coordMap = new Map();
+    coords.forEach((coord, idx) => {
+        coordMap.set(idx, { lat: coord.lat, lon: coord.lon });
+    });
+
+    const DANGER_TYPE_MAP = {
+        1: { name: '급커브', color: '#f97316', icon: '🔄' },
+        2: { name: '스쿨존', color: '#0ea5e9', icon: '🏫' },
+        3: { name: '철도건널목', color: '#8b5cf6', icon: '🚂' },
+        4: { name: '속도범프', color: '#ec4899', icon: '⬆️' },
+        5: { name: '사고다발지', color: '#dc2626', icon: '⚠️' },
+    };
+
+    tvasResult.dangerAreas.forEach((area) => {
+        const startCoord = coordMap.get(area.startVxIdx);
+        const endCoord = coordMap.get(area.endVxIdx);
+
+        if (!startCoord || !endCoord) return;
+
+        const typeConfig = DANGER_TYPE_MAP[area.type] || { name: '위험구간', color: '#6b7280', icon: '📍' };
+        const latlngs = [
+            [startCoord.lat, startCoord.lon],
+            [endCoord.lat, endCoord.lon]
+        ];
+
+        const polyline = L.polyline(latlngs, {
+            color: typeConfig.color,
+            weight: 3,
+            opacity: 0.6,
+            dashArray: '5, 5'
+        });
+
+        polyline.bindPopup(`
+            <div style="min-width: 150px;">
+                <div style="font-weight: bold; color: ${typeConfig.color}; margin-bottom: 8px;">
+                    ${typeConfig.icon} ${typeConfig.name}
+                </div>
+                <div style="font-size: 12px;">
+                    <div><strong>구간:</strong> ${area.startVxIdx} ~ ${area.endVxIdx}</div>
+                    <div><strong>거리:</strong> ${area.sectionLength}m</div>
+                    ${area.speedLimit > 0 ? `<div><strong>제한속도:</strong> ${area.speedLimit}km/h</div>` : ''}
+                </div>
+            </div>
+        `);
+
+        dangerGroup.addLayer(polyline);
+
+        const midCoord = {
+            lat: (startCoord.lat + endCoord.lat) / 2,
+            lon: (startCoord.lon + endCoord.lon) / 2
+        };
+        const marker = L.marker([midCoord.lat, midCoord.lon], {
+            icon: createEventMarkerIcon(null, typeConfig.icon)
+        });
+        dangerGroup.addLayer(marker);
+    });
+
+    renderLayerControls();
+}
+
+function renderTmapRouteResultWithEvents(routeResponse) {
+    renderTmapRouteResult(routeResponse);
+
+    if (!tmapRouteResult || !tmapRouteResult.tvasResult) {
+        return;
+    }
+
+    setTimeout(() => {
+        renderTrafficIncidents(tmapRouteResult.tvasResult);
+        renderDangerAreas(tmapRouteResult.tvasResult);
+    }, 100);
+}
+
+// MFS 유고정보 name → 이벤트 타입 코드 (사고/공사/행사/재해/통제)
+function mfsNameToEventCode(name) {
+    const s = String(name || '');
+    if (s.includes('사고')) return 'A';
+    if (s.includes('공사')) return 'B';
+    if (s.includes('행사')) return 'C';
+    if (s.includes('재해')) return 'D';
+    if (s.includes('통제')) return 'E';
+    return null;
+}
+
+function visualizeGuideEventsFromLog() {
+    if (!Array.isArray(markersData) || markersData.length === 0) {
+        console.log('❌ visualizeGuideEventsFromLog: No markers data');
+        return;
+    }
+
+    const guideMarkers = markersData.filter((m) => m.extra?.guide_event);
+    const c2xEvents = guideMarkers.filter((m) => m.extra.event_type === 'C2X');
+    const mfsEvents = guideMarkers.filter((m) => m.extra.event_type === 'MFS');
+    console.log(`📊 Guide Events: ${c2xEvents.length} C2X, ${mfsEvents.length} MFS(유고정보)`);
+
+    if (guideMarkers.length === 0) {
+        return;
+    }
+
+    // C2X 이벤트 (V2X 통신 수신 — EventPos 좌표)
+    if (c2xEvents.length > 0) {
+        const c2xGroup = ensureTmapFeatureGroup('C2X Events');
+        c2xGroup.clearLayers();
+
+        c2xEvents.forEach((marker) => {
+            const icon = createEventMarkerIcon(null, '📡');
+            const markerObj = L.marker([marker.latitude, marker.longitude], { icon });
+
+            markerObj.bindPopup(`
+                <div style="min-width: 200px;">
+                    <div style="font-weight: bold; color: #3b82f6; margin-bottom: 8px;">
+                        📡 C2X Event
+                    </div>
+                    <div style="font-size: 12px;">
+                        <div><strong>Event ID:</strong> ${escapeHtml(String(marker.extra.event_id))}</div>
+                        <div><strong>Event Type(CC):</strong> ${marker.extra.event_type_code ?? '-'}</div>
+                        ${marker.extra.event_time ? `<div><strong>Event Time:</strong> ${escapeHtml(marker.extra.event_time)}</div>` : ''}
+                        <div><strong>좌표:</strong> ${marker.latitude.toFixed(6)}, ${marker.longitude.toFixed(6)}</div>
+                        <div><strong>Log Time:</strong> ${marker.timestamp_str || '-'}</div>
+                    </div>
+                </div>
+            `);
+
+            c2xGroup.addLayer(markerObj);
+        });
+    }
+
+    // TMAP 유고정보 (MFS — 서버 Point.location 좌표)
+    if (mfsEvents.length > 0) {
+        const mfsGroup = ensureTmapFeatureGroup('Tmap Incidents (MFS)');
+        mfsGroup.clearLayers();
+
+        mfsEvents.forEach((marker) => {
+            const code = mfsNameToEventCode(marker.extra.name);
+            const typeConfig = getEventIconConfig(code);
+            const icon = createEventMarkerIcon(code);
+            const markerObj = L.marker([marker.latitude, marker.longitude], { icon });
+
+            markerObj.bindPopup(`
+                <div style="min-width: 200px;">
+                    <div style="font-weight: bold; color: ${typeConfig.color}; margin-bottom: 8px;">
+                        ${typeConfig.icon} ${escapeHtml(marker.extra.name || typeConfig.name)}
+                    </div>
+                    <div style="font-size: 12px;">
+                        <div><strong>Key:</strong> ${escapeHtml(String(marker.extra.event_id))}</div>
+                        <div><strong>좌표:</strong> ${marker.latitude.toFixed(6)}, ${marker.longitude.toFixed(6)}</div>
+                        <div><strong>Log Time:</strong> ${marker.timestamp_str || '-'}</div>
+                    </div>
+                </div>
+            `);
+
+            mfsGroup.addLayer(markerObj);
+        });
+    }
+
+    renderLayerControls();
 }

@@ -60,8 +60,11 @@ class CoordType(Enum):
                 return "#f97316"
             if gnss_mode == "Normal":
                 return "#facc15"
-        if self == CoordType.DR and coord.extra.get("isDRGps") == 0:
-            return "orange"
+        if self == CoordType.DR:
+            if coord.extra.get("mm_feedback"):
+                return "black"
+            if coord.extra.get("isDRGps") == 0:
+                return "orange"
         return self.color
 
     def should_fill_marker(self, coord):

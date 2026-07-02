@@ -14,6 +14,7 @@ DEG2RAD = math.pi / 180.0
 
 COORDINATES = {coord_type: [] for coord_type in CoordType}
 LINES = {line_type: [] for line_type in LineType}
+GUIDE_EVENTS = []  # C2X events and accident events
 min_timestamp = datetime.max
 max_timestamp = datetime.min
 last_road_match_state = None
@@ -41,6 +42,9 @@ DLT_RELEVANT_BYTE_KEYWORDS = [
     b"Candidate Link[",
     b"shouldStayRoute distance:",
     b"[[MM] : 4] State =",
+    b"[MM_FEEDBACK]",
+    b"createCar2XEvent",
+    b"processContents",
 ]
 
 SET_ROUTE_INFORMATION_PATTERN = re.compile(
@@ -60,6 +64,7 @@ GNSS_MODE_EVENT_PATTERN = re.compile(
     r"GNSS mode:\s*event=([A-Za-z_]+)\s+from=([A-Za-z_]+)\s+to=([A-Za-z_]+)"
 )
 GNSS_MODE_INLINE_PATTERN = re.compile(r"mode=([A-Za-z_]+)")
+MM_FEEDBACK_PATTERN = re.compile(r"\[MM_FEEDBACK\]\s*([^\r\n\x00]+)")
 CANDIDATE_LINK_PATTERN = re.compile(
     r"Candidate Link\[\s*(\-?\d+)\]\s*"
     r"([+\-]?\d+(?:\.\d+)?)\s*\|\s*"
@@ -70,6 +75,27 @@ CANDIDATE_LINK_PATTERN = re.compile(
     r"Lane:\s*(\-?\d+)"
 )
 
+# C2X Events & TMAP Incident (MFS) Events — both carry actual WGS84 coordinates.
+#
+# C2X (V2X 통신 수신):
+#   MapObjectProvider createCar2XEvent nEventID : 110, nEventType : 18,
+#     aDASISProfile : 14427270, eType : 1, coord : 37.544675,126.976875,
+#     eventTime : 202605150652, currentTime : 202605151552
+CAR2X_CREATE_PATTERN = re.compile(
+    r"createCar2XEvent\s+nEventID\s*:\s*(\d+),\s*nEventType\s*:\s*(\d+)"
+    r".*?coord\s*:\s*(-?\d+\.\d+),(-?\d+\.\d+)"
+    r"(?:.*?eventTime\s*:\s*(\d+))?"
+)
+
+# TMAP 유고정보 (MFS - Map Feature Service):
+#   MapObjectProvider processContents type:1 state:1 key:MFS_XXXXX visible:1
+#     level:16500 coord:37.XXXXXX,126.XXXXXX bCharge:0 VoltAC:0 bMarker:0 name:교통사고
+MFS_CONTENT_PATTERN = re.compile(
+    r"processContents\s+type:(\d+)\s+state:(\d+)\s+key:(\S+)\s+visible:(\d+)\s+level:(\d+)"
+    r"\s+coord:(-?\d+\.\d+),(-?\d+\.\d+)"
+    r".*?name:([^\r\n\x00]+)"
+)
+
 
 def lat_lon_dist(lat1, lon1, lat2, lon2):
     local_x = -(((lon2 - lon1) * DEG2RAD) * math.cos(DEG2RAD * lat1)) * EARTH_RADIUS
@@ -78,7 +104,7 @@ def lat_lon_dist(lat1, lon1, lat2, lon2):
 
 
 def reset_runtime_state():
-    global COORDINATES, LINES
+    global COORDINATES, LINES, GUIDE_EVENTS
     global min_timestamp, max_timestamp
     global last_road_match_state, last_route_match_state, last_threshold_info, log_base_timestamp, last_tvas_header_info
     global current_route_session_id, current_route_session_index, route_session_indices, route_session_sequence
@@ -86,6 +112,7 @@ def reset_runtime_state():
 
     COORDINATES = {coord_type: [] for coord_type in CoordType}
     LINES = {line_type: [] for line_type in LineType}
+    GUIDE_EVENTS = []
     min_timestamp = datetime.max
     max_timestamp = datetime.min
     last_road_match_state = None
@@ -111,6 +138,7 @@ def parse_log(log_file_path=None):
     temp_gnss1_coord = None
     temp_gnss2_coord = None
     last_dr_coordinate = None
+    pending_mm_feedback_reason = None
     last_vpm_coordinate = None
     last_road_match_coord = None
     last_route_match_coord = None
@@ -168,6 +196,9 @@ def parse_log(log_file_path=None):
                 route_session_sequence.setdefault(current_route_session_id, 0)
                 last_tvas_header_info = None
 
+            # Parse Guide Events (C2X, Accident)
+            parse_guide_event(line, timestamp)
+
             tvas_header_info = parse_tvas_header_info(line, last_tvas_header_info)
             if tvas_header_info is not None:
                 last_tvas_header_info = tvas_header_info
@@ -211,6 +242,15 @@ def parse_log(log_file_path=None):
                 last_road_match_state = road_match_state
             if route_match_state:
                 last_route_match_state = route_match_state
+
+            # MM feedback correction: capture the reason so the next DR coordinate
+            # can be highlighted and show what triggered the correction.
+            # "skipped" cases mean no correction was applied -> do not highlight.
+            mm_feedback_match = MM_FEEDBACK_PATTERN.search(line)
+            if mm_feedback_match:
+                reason = mm_feedback_match.group(1).strip()
+                if "skip" not in reason.lower():
+                    pending_mm_feedback_reason = reason
 
             for coord_type in CoordType:
                 if coord_type.pattern is None:
@@ -332,6 +372,11 @@ def parse_log(log_file_path=None):
                     if pending_candidate_link_scores:
                         dr_coordinate.extra["candidate_link_scores"] = pending_candidate_link_scores
                         pending_candidate_link_scores = []
+
+                    if pending_mm_feedback_reason is not None:
+                        dr_coordinate.extra["mm_feedback"] = True
+                        dr_coordinate.extra["mm_feedback_reason"] = pending_mm_feedback_reason
+                        pending_mm_feedback_reason = None
 
                     COORDINATES[coord_type].append(dr_coordinate)
                     last_dr_coordinate = dr_coordinate
@@ -826,6 +871,62 @@ def parse_set_route_information(line):
     }
 
 
+def parse_guide_event(line, timestamp):
+    """Parse C2X events and TMAP incident (MFS) events with actual coordinates.
+
+    C2X:  MapObjectProvider createCar2XEvent nEventID : 110, ... coord : 37.544675,126.976875, ...
+    MFS:  MapObjectProvider processContents type:1 ... key:MFS_XXX ... coord:37.XX,126.XX ... name:교통사고
+    """
+    global GUIDE_EVENTS
+
+    c2x_match = CAR2X_CREATE_PATTERN.search(line)
+    if c2x_match:
+        latitude = float(c2x_match.group(3))
+        longitude = float(c2x_match.group(4))
+        if not (30.0 < latitude < 45.0 and 120.0 < longitude < 135.0):
+            return False
+
+        GUIDE_EVENTS.append({
+            "type": "C2X",
+            "event_id": int(c2x_match.group(1)),
+            "event_type_code": int(c2x_match.group(2)),
+            "latitude": latitude,
+            "longitude": longitude,
+            "event_time": c2x_match.group(5) or "",
+            "name": "",
+            "timestamp": timestamp,
+        })
+        return True
+
+    mfs_match = MFS_CONTENT_PATTERN.search(line)
+    if mfs_match:
+        key = mfs_match.group(3).strip()
+        # 유고정보(MFS_*)만 수집 — 충전소 등 다른 processContents 로그 제외
+        if not key.startswith("MFS"):
+            return False
+
+        latitude = float(mfs_match.group(6))
+        longitude = float(mfs_match.group(7))
+        if not (30.0 < latitude < 45.0 and 120.0 < longitude < 135.0):
+            return False
+
+        GUIDE_EVENTS.append({
+            "type": "MFS",
+            "event_id": key,
+            "event_type_code": int(mfs_match.group(1)),
+            "state": int(mfs_match.group(2)),
+            "visible": int(mfs_match.group(4)),
+            "latitude": latitude,
+            "longitude": longitude,
+            "event_time": "",
+            "name": mfs_match.group(8).strip(),
+            "timestamp": timestamp,
+        })
+        return True
+
+    return False
+
+
 def parse_tvas_header_info(line, previous_info=None):
     info = dict(previous_info or {})
     matched = False
@@ -937,9 +1038,55 @@ def write_data_to_csv(out_path=None):
                 )
 
 
+def build_guide_event_markers():
+    """Convert GUIDE_EVENTS to marker format. Coordinates come directly from the log."""
+    if not GUIDE_EVENTS:
+        return []
+
+    markers = []
+    event_id_counter = 10000  # Start from 10000 to avoid conflicts with coordinate IDs
+    seen = set()
+
+    for event in GUIDE_EVENTS:
+        # Same event can be logged repeatedly — dedupe by source/id/position
+        dedupe_key = (event["type"], event["event_id"], event["latitude"], event["longitude"])
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+
+        marker = {
+            "id": event_id_counter,
+            "dlt_id": None,
+            "type": "Guide Event",
+            "latitude": event["latitude"],
+            "longitude": event["longitude"],
+            "heading": None,
+            "extra": {
+                "event_type": event["type"],  # "C2X" or "MFS"
+                "event_id": event["event_id"],
+                "event_type_code": event.get("event_type_code"),
+                "event_time": event.get("event_time", ""),
+                "name": event.get("name", ""),
+                "guide_event": True,
+            },
+            "timestamp_ms": int(event["timestamp"].timestamp() * 1000) if event["timestamp"] else 0,
+            "timestamp_str": event["timestamp"].strftime("%Y/%m/%d %H:%M:%S.%f")[:-3] if event["timestamp"] else "",
+            "color": "#3498db" if event["type"] == "C2X" else "#e74c3c",
+            "fill": True,
+        }
+        markers.append(marker)
+        event_id_counter += 1
+
+    return markers
+
+
 def build_runtime_payload():
     all_coords = [coord.to_json() for coords in COORDINATES.values() for coord in coords]
     all_lines = [line.to_json() for lines in LINES.values() for line in lines]
+
+    # Convert guide events to marker coordinates
+    all_coords.extend(build_guide_event_markers())
+
     all_coords.sort(key=lambda c: c.get("id") if c.get("id") is not None else 0)
     all_lines.sort(key=lambda l: l.get("id") if l.get("id") is not None else 0)
     valid_ids = [data["id"] for data in all_coords if data.get("id") is not None]
