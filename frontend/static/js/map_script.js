@@ -275,7 +275,7 @@ function init() {
                 // 확정된 거리는 지도에 남기고, 다음 측정을 위해 현재 점들만 초기화
                 pickedDistancePoints = [];
                 // distancePickMode는 true 유지하여 계속 거리재기 가능
-                setDistanceGuideMessage();
+                // 결과값은 계속 표시 (새로운 점 선택하면 업데이트됨)
                 return;
             }
             // 점 0개 또는 1개인 경우 전체 초기화
@@ -316,7 +316,7 @@ function init() {
                 map.removeLayer(radiusDeleteMarker);
                 radiusDeleteMarker = null;
             }
-            setRadiusResultText('반경 결과: -');
+            // 반경 결과값은 계속 표시 (새로운 중심점 선택하면 초기화됨)
             // radiusPickMode는 true 유지하여 계속 반경재기 가능
         }
 
@@ -933,10 +933,7 @@ function setRadiusCenter(lat, lon) {
     if (lonInput) lonInput.value = lon.toFixed(6);
 
     if (radiusCenterMarker) map.removeLayer(radiusCenterMarker);
-    if (radiusCircle) {
-        map.removeLayer(radiusCircle);
-        radiusCircle = null;
-    }
+    // radiusCircle은 유지 (이전에 확정된 반경들을 지도에 남김)
     if (radiusGuideLine) {
         map.removeLayer(radiusGuideLine);
         radiusGuideLine = null;
