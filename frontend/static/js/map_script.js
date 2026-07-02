@@ -6124,9 +6124,10 @@ function visualizeGuideEventsFromLog() {
     }
 
     const guideMarkers = markersData.filter((m) => m.extra?.guide_event);
+    const sdiMarkers = markersData.filter((m) => m.extra?.sdi_event);
     const c2xEvents = guideMarkers.filter((m) => m.extra.event_type === 'C2X');
     const mfsEvents = guideMarkers.filter((m) => m.extra.event_type === 'MFS');
-    console.log(`📊 Guide Events: ${c2xEvents.length} C2X, ${mfsEvents.length} MFS(유고정보)`);
+    console.log(`📊 Guide Events: ${c2xEvents.length} C2X, ${mfsEvents.length} MFS(유고정보), SDI: ${sdiMarkers.length}`);
 
     if (guideMarkers.length === 0) {
         return;
@@ -6185,6 +6186,35 @@ function visualizeGuideEventsFromLog() {
             `);
 
             mfsGroup.addLayer(markerObj);
+        });
+    }
+
+    // SDI Events (Safety Drive Information — 카메라, 과속방지턱 등)
+    if (sdiMarkers.length > 0) {
+        const sdiGroup = ensureTmapFeatureGroup('SDI Events');
+        sdiGroup.clearLayers();
+
+        sdiMarkers.forEach((marker) => {
+            const icon = createEventMarkerIcon(null, '🛣️');
+            const markerObj = L.marker([marker.latitude, marker.longitude], { icon });
+
+            markerObj.bindPopup(`
+                <div style="min-width: 200px;">
+                    <div style="font-weight: bold; color: #f39c12; margin-bottom: 8px;">
+                        🛣️ SDI Event
+                    </div>
+                    <div style="font-size: 12px;">
+                        <div><strong>Type:</strong> ${escapeHtml(marker.extra.sdi_type_name || 'SDI ' + marker.extra.sdi_type)}</div>
+                        <div><strong>SDI Type:</strong> ${marker.extra.sdi_type}</div>
+                        ${marker.extra.speed ? `<div><strong>Speed Limit:</strong> ${marker.extra.speed} km/h</div>` : ''}
+                        <div><strong>Source:</strong> ${marker.extra.source}</div>
+                        <div><strong>좌표:</strong> ${marker.latitude.toFixed(6)}, ${marker.longitude.toFixed(6)}</div>
+                        <div><strong>Log Time:</strong> ${marker.timestamp_str || '-'}</div>
+                    </div>
+                </div>
+            `);
+
+            sdiGroup.addLayer(markerObj);
         });
     }
 
