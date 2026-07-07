@@ -1,8 +1,7 @@
 const map = L.map('map', { preferCanvas: true }).setView([37.5665, 126.9780], 15);
 const highlightLayer = L.layerGroup().addTo(map);
 const roadCanvasRenderer = L.canvas({ padding: 0.25 });
-let roadLinkSvgRenderer = null;
-let roadNodeSvgRenderer = null;
+const roadCanvasRendererNode = L.canvas({ padding: 0.25 });
 
 const baseLayers = {
     "Google Maps": L.tileLayer('http://mt0.google.com/vt/lyrs=m&hl=ko&x={x}&y={y}&z={z}', {
@@ -3399,12 +3398,6 @@ function ensureRoadInteractionPanes() {
     ensurePane('roadNodePane', 551);
     ensurePane('roadLinkVertexPane', 552);
 
-    if (!roadLinkSvgRenderer) {
-        roadLinkSvgRenderer = L.svg({ pane: 'roadLinkPane' });
-    }
-    if (!roadNodeSvgRenderer) {
-        roadNodeSvgRenderer = L.svg({ pane: 'roadNodePane' });
-    }
 }
 
 function getRoadPaneName(layerName) {
@@ -3504,7 +3497,7 @@ function ensureRoadShapeLayers() {
     if (!roadLinkGeoLayer) {
         roadLinkGeoLayer = L.geoJSON(null, {
             pane: 'roadLinkPane',
-            renderer: roadLinkSvgRenderer,
+            renderer: roadCanvasRenderer,
             interactive: true,
             bubblingMouseEvents: false,
             style: (feature) => getRoadLinkStyle({
@@ -3534,7 +3527,7 @@ function ensureRoadShapeLayers() {
             bubblingMouseEvents: false,
             pointToLayer: (feature, latlng) => L.circleMarker(latlng, {
                 pane: 'roadNodePane',
-                renderer: roadNodeSvgRenderer,
+                renderer: roadCanvasRendererNode,
                 interactive: true,
                 bubblingMouseEvents: false,
                 ...getRoadNodeStyle({
