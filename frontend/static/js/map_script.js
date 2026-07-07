@@ -4087,91 +4087,113 @@ function drawMarkers(coordinates) {
     markers = [];
     requestGroups = {};
 
-    coordinates.forEach(coord => {
-        const coordtype = coord.type;
-        const latitude = coord.latitude;
-        const longitude = coord.longitude;
-        if (latitude === undefined || longitude === undefined) return;
+    const BATCH_SIZE = 200;
+    let processedCount = 0;
+    const totalCount = coordinates.length;
 
-        if (coordtype === 'Request') {
-            const key = `${latitude},${longitude}`;
-            if (!requestGroups[key]) {
-                requestGroups[key] = {
-                    currentIndex: 0,
-                    latitude: latitude,
-                    longitude: longitude,
-                    members: [],
-                    marker: [],
-                    dlt_id_list: [],
-                    timestamp_ms_list: []
+    function processBatch(startIndex) {
+        const endIndex = Math.min(startIndex + BATCH_SIZE, totalCount);
+
+        for (let i = startIndex; i < endIndex; i++) {
+            const coord = coordinates[i];
+            const coordtype = coord.type;
+            const latitude = coord.latitude;
+            const longitude = coord.longitude;
+            if (latitude === undefined || longitude === undefined) continue;
+
+            if (coordtype === 'Request') {
+                const key = `${latitude},${longitude}`;
+                if (!requestGroups[key]) {
+                    requestGroups[key] = {
+                        currentIndex: 0,
+                        latitude: latitude,
+                        longitude: longitude,
+                        members: [],
+                        marker: [],
+                        dlt_id_list: [],
+                        timestamp_ms_list: []
+                    };
+                }
+                requestGroups[key].members.push(coord);
+                requestGroups[key].dlt_id_list.push(coord.dlt_id);
+                requestGroups[key].timestamp_ms_list.push(coord.timestamp_ms);
+            } else {
+                const popupText = makePopupText(coord, coordtype);
+                const isGnssTransitionHighlight = coordtype === 'Filtered GNSS' && !!coord?.extra?.gnss_transition_highlight;
+                const useDrHeadingArrow = coordtype === 'DR-based' && drHeadingArrowEnabled;
+                const marker = useDrHeadingArrow
+                    ? L.marker([latitude, longitude], {
+                        icon: buildDrHeadingIcon(coord.heading, coord.color || '#ef4444')
+                    })
+                    : L.circleMarker([latitude, longitude], {
+                        radius: isGnssTransitionHighlight ? 6 : 3,
+                        color: coord.color || 'black',
+                        weight: isGnssTransitionHighlight ? 3 : 1,
+                        fill: coord.fill,
+                        fillOpacity: 0.8
+                    });
+
+                marker.dlt_id = coord.dlt_id;
+                marker.timestamp_ms = coord.timestamp_ms;
+                marker.id = coord.id || 0;
+                marker.data = coord;
+                marker._isIconMarker = useDrHeadingArrow;
+                marker._baseStyle = {
+                    opacity: 1,
+                    fillOpacity: useDrHeadingArrow ? 1 : 0.8,
+                    weight: marker.options?.weight ?? 1,
+                    radius: useDrHeadingArrow ? null : (marker.options.radius ?? 3)
                 };
-            }
-            requestGroups[key].members.push(coord);
-            requestGroups[key].dlt_id_list.push(coord.dlt_id);
-            requestGroups[key].timestamp_ms_list.push(coord.timestamp_ms);
-        } else {
-            const popupText = makePopupText(coord, coordtype);
-            const isGnssTransitionHighlight = coordtype === 'Filtered GNSS' && !!coord?.extra?.gnss_transition_highlight;
-            const useDrHeadingArrow = coordtype === 'DR-based' && drHeadingArrowEnabled;
-            const marker = useDrHeadingArrow
-                ? L.marker([latitude, longitude], {
-                    icon: buildDrHeadingIcon(coord.heading, coord.color || '#ef4444')
-                })
-                : L.circleMarker([latitude, longitude], {
-                    radius: isGnssTransitionHighlight ? 6 : 3,
-                    color: coord.color || 'black',
-                    weight: isGnssTransitionHighlight ? 3 : 1,
-                    fill: coord.fill,
-                    fillOpacity: 0.8
+                attachMarkerDistancePick(marker);
+                marker._popupContent = popupText;
+                marker.on('click', (e) => {
+                    if (inspectMode !== 'marker') {
+                        if (inspectMode === 'road') {
+                            const latlng = e?.latlng || L.latLng(latitude, longitude);
+                            openNearestRoadPopupAt(latlng, getPreferredRoadKinds());
+                        }
+                        if (e) L.DomEvent.stopPropagation(e);
+                        return;
+                    }
+                    if (coordtype === 'DR-based') {
+                        selectedDrCoordinate = coord;
+                        selectedCandidateLinkIds = extractCandidateLinkIdSet(coord?.extra);
+                        refreshDrSelectionStyles();
+                        if (roadLinkGeoLayer) {
+                            roadLinkGeoLayer.setStyle((feature) => getRoadLinkStyle({
+                                ...(feature?.properties || {}),
+                                __featureRef: feature
+                            }));
+                        }
+                    }
+                    L.popup().setLatLng([latitude, longitude]).setContent(marker._popupContent).openOn(map);
+                    if (e) {
+                        L.DomEvent.stopPropagation(e);
+                    }
                 });
 
-            marker.dlt_id = coord.dlt_id;
-            marker.timestamp_ms = coord.timestamp_ms;
-            marker.id = coord.id || 0;
-            marker.data = coord;
-            marker._isIconMarker = useDrHeadingArrow;
-            marker._baseStyle = {
-                opacity: 1,
-                fillOpacity: useDrHeadingArrow ? 1 : 0.8,
-                weight: marker.options?.weight ?? 1,
-                radius: useDrHeadingArrow ? null : (marker.options.radius ?? 3)
-            };
-            attachMarkerDistancePick(marker);
-            marker._popupContent = popupText;
-            marker.on('click', (e) => {
-                if (inspectMode !== 'marker') {
-                    if (inspectMode === 'road') {
-                        const latlng = e?.latlng || L.latLng(latitude, longitude);
-                        openNearestRoadPopupAt(latlng, getPreferredRoadKinds());
-                    }
-                    if (e) L.DomEvent.stopPropagation(e);
-                    return;
-                }
-                if (coordtype === 'DR-based') {
-                    selectedDrCoordinate = coord;
-                    selectedCandidateLinkIds = extractCandidateLinkIdSet(coord?.extra);
-                    refreshDrSelectionStyles();
-                    if (roadLinkGeoLayer) {
-                        roadLinkGeoLayer.setStyle((feature) => getRoadLinkStyle({
-                            ...(feature?.properties || {}),
-                            __featureRef: feature
-                        }));
-                    }
-                }
-                L.popup().setLatLng([latitude, longitude]).setContent(marker._popupContent).openOn(map);
-                if (e) {
-                    L.DomEvent.stopPropagation(e);
-                }
-            });
-
-            addLayerToGroup(coordtype, marker);
-            markers.push(marker);
+                addLayerToGroup(coordtype, marker);
+                markers.push(marker);
+            }
         }
-    });
 
-    drawRequestGroupMarkers(requestGroups, markers);
-    refreshDrSelectionStyles();
-    addOverlayLayers(featureGroups);
+        processedCount = endIndex;
+        if (endIndex < totalCount) {
+            requestAnimationFrame(() => processBatch(endIndex));
+        } else {
+            drawRequestGroupMarkers(requestGroups, markers);
+            refreshDrSelectionStyles();
+            addOverlayLayers(featureGroups);
+        }
+    }
+
+    if (totalCount > 0) {
+        processBatch(0);
+    } else {
+        drawRequestGroupMarkers(requestGroups, markers);
+        refreshDrSelectionStyles();
+        addOverlayLayers(featureGroups);
+    }
 }
 
 function drawRequestGroupMarkers(requestGroups, markers) {
