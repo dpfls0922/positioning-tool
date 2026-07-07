@@ -5499,31 +5499,40 @@ function applyTimeVisibility(layer, visible) {
     if (!layer) return;
 
     if (layer._isIconMarker && typeof layer.setOpacity === 'function') {
-        layer.setOpacity(visible ? 1 : 0);
+        if (layer._isVisible !== visible) {
+            layer._isVisible = visible;
+            layer.setOpacity(visible ? 1 : 0);
+        }
         return;
     }
 
     if (layer._baseStyle && typeof layer.setStyle === 'function') {
-        if (visible) {
-            layer.setStyle({
-                opacity: layer._baseStyle.opacity,
-                fillOpacity: layer._baseStyle.fillOpacity ?? layer._baseStyle.opacity,
-                weight: layer._baseStyle.weight
-            });
-            if (typeof layer.setRadius === 'function' && Number.isFinite(layer._baseStyle.radius)) {
-                layer.setRadius(layer._baseStyle.radius);
-            }
-        } else {
-            layer.setStyle({ opacity: 0, fillOpacity: 0, weight: 0 });
-            if (typeof layer.setRadius === 'function') {
-                layer.setRadius(0);
+        if (layer._isVisible !== visible) {
+            layer._isVisible = visible;
+            if (visible) {
+                layer.setStyle({
+                    opacity: layer._baseStyle.opacity,
+                    fillOpacity: layer._baseStyle.fillOpacity ?? layer._baseStyle.opacity,
+                    weight: layer._baseStyle.weight
+                });
+                if (typeof layer.setRadius === 'function' && Number.isFinite(layer._baseStyle.radius)) {
+                    layer.setRadius(layer._baseStyle.radius);
+                }
+            } else {
+                layer.setStyle({ opacity: 0, fillOpacity: 0, weight: 0 });
+                if (typeof layer.setRadius === 'function') {
+                    layer.setRadius(0);
+                }
             }
         }
         return;
     }
 
     if (typeof layer.setOpacity === 'function') {
-        layer.setOpacity(visible ? 1 : 0);
+        if (layer._isVisible !== visible) {
+            layer._isVisible = visible;
+            layer.setOpacity(visible ? 1 : 0);
+        }
     }
 }
 
