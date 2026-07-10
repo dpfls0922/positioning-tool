@@ -1407,10 +1407,12 @@ def build_runtime_payload():
     # Attach parking lot state information to DR-based coordinates
     attach_parking_state_to_coords(all_coords)
 
+    # Extract parking lot state markers from DR-based coordinates with parking state
+    parking_lot_state_markers = build_parking_lot_state_markers(all_coords)
+
     # Convert guide events and SDI events to marker coordinates
     all_coords.extend(build_guide_event_markers())
     all_coords.extend(build_sdi_markers())
-    # Note: parking lot markers are now integrated into DR-based coordinates via parking_state
 
     all_coords.sort(key=lambda c: c.get("id") if c.get("id") is not None else 0)
     all_lines.sort(key=lambda l: l.get("id") if l.get("id") is not None else 0)
@@ -1425,12 +1427,57 @@ def build_runtime_payload():
         "max_timestamp_ms": max_ts_ms,
         "max_id": max_id,
         "coords": all_coords,
+        "parking_lot_state_markers": parking_lot_state_markers,
         "lines": all_lines,
     }
 
 
+def build_parking_lot_state_markers(coords):
+    """Extract DR-based coordinates with parking state and format as markers."""
+    markers = []
+    marker_id_counter = 30000  # Start from 30000 to avoid conflicts
+
+    for coord in coords:
+        if coord.get('type') != 'DR-based':
+            continue
+
+        parking_state = coord.get('extra', {}).get('parking_state')
+        if not parking_state:
+            continue
+
+        # Set color based on parking state
+        if parking_state == 'ParkingLot':
+            color = '#808080'  # 회색 - 주차장 중
+        elif parking_state in ('EnterCandidate', 'EnterReady'):
+            color = '#ff9800'  # 주황색 - 진입 후보/준비
+        else:
+            continue  # Skip unknown states
+
+        marker = {
+            "id": marker_id_counter,
+            "dlt_id": coord.get('dlt_id'),
+            "type": "Parking Lot State",
+            "latitude": coord.get("latitude"),
+            "longitude": coord.get("longitude"),
+            "heading": coord.get("heading"),
+            "color": color,
+            "fill": True,
+            "timestamp_ms": coord.get("timestamp_ms"),
+            "timestamp_str": coord.get("timestamp_str"),
+            "extra": {
+                "parking_state": parking_state,
+                "parking_candidate_count": coord.get('extra', {}).get('parking_candidate_count', 0),
+                "parking_best_link_id": coord.get('extra', {}).get('parking_best_link_id', -1),
+            }
+        }
+        markers.append(marker)
+        marker_id_counter += 1
+
+    return markers
+
+
 def attach_parking_state_to_coords(coords):
-    """Attach closest parking lot state to DR-based coordinates."""
+    """Attach closest parking lot state to DR-based coordinates (only attach to extra, no color change)."""
     if not PARKING_LOT_EVENTS:
         return
 
@@ -1461,7 +1508,7 @@ def attach_parking_state_to_coords(coords):
             if diff == 0:
                 break
 
-        # Attach parking state if within 2 second window
+        # Attach parking state if within 2 second window (only store in extra, no color override)
         if closest_event and min_diff <= 2000:
             coord['extra']['parking_state'] = closest_event.get('state')
             coord['extra']['parking_candidate_count'] = closest_event.get('candidate_count', 0)

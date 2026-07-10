@@ -378,6 +378,7 @@ function initSlider(min, max) {
 function renderFromCurrentData() {
     resetVisualization();
     drawMarkers(markersData);
+    drawParkingLotStateMarkers(parkingLotStateMarkersData);
     drawPolylines(linesData);
     addControlLayers();
     renderLayerControls();
@@ -2758,6 +2759,7 @@ function handleUploadAndParse() {
         }
 
         markersData = response.coords || [];
+        parkingLotStateMarkersData = response.parking_lot_state_markers || [];
         linesData = response.lines || [];
         currentResultName = response.result_name || 'result';
         minTs = Number.isFinite(response.min_timestamp_ms) ? response.min_timestamp_ms : 0;
@@ -4172,15 +4174,8 @@ function drawMarkers(coordinates) {
                 const isGnssTransitionHighlight = coordtype === 'Filtered GNSS' && !!coord?.extra?.gnss_transition_highlight;
                 const useDrHeadingArrow = coordtype === 'DR-based' && drHeadingArrowEnabled;
 
-                // Color DR-based markers based on parking lot state
+                // Use color set by backend based on parking state
                 let markerColor = coord.color || 'black';
-                if (coordtype === 'DR-based' && coord.extra?.parking_state) {
-                    if (coord.extra.parking_state === 'ParkingLot') {
-                        markerColor = '#808080';  // 회색 - 주차장 진입
-                    } else if (coord.extra.parking_state === 'EnterCandidate' || coord.extra.parking_state === 'EnterReady') {
-                        markerColor = '#ff9800';  // 주황색 - 진입 전
-                    }
-                }
 
                 const marker = useDrHeadingArrow
                     ? L.marker([latitude, longitude], {
@@ -4253,6 +4248,74 @@ function drawMarkers(coordinates) {
     } else {
         drawRequestGroupMarkers(requestGroups, markers);
         refreshDrSelectionStyles();
+        addOverlayLayers(featureGroups);
+    }
+}
+
+function drawParkingLotStateMarkers(parkingLotStateMarkers) {
+    if (!parkingLotStateMarkers || parkingLotStateMarkers.length === 0) {
+        return;
+    }
+
+    const parkingLotLayer = ensureTmapFeatureGroup('Parking Lot State');
+    parkingLotLayer.clearLayers();
+
+    const BATCH_SIZE = 200;
+    let processedCount = 0;
+    const totalCount = parkingLotStateMarkers.length;
+
+    function processBatch(startIndex) {
+        const endIndex = Math.min(startIndex + BATCH_SIZE, totalCount);
+
+        for (let i = startIndex; i < endIndex; i++) {
+            const coord = parkingLotStateMarkers[i];
+            const latitude = coord.latitude;
+            const longitude = coord.longitude;
+            if (latitude === undefined || longitude === undefined) continue;
+
+            const markerColor = coord.color || '#808080';
+            const popupText = makePopupText(coord, 'Parking Lot State');
+
+            const marker = L.circleMarker([latitude, longitude], {
+                radius: 3,
+                color: markerColor,
+                weight: 1,
+                fill: true,
+                fillOpacity: 0.8
+            });
+
+            marker.dlt_id = coord.dlt_id;
+            marker.timestamp_ms = coord.timestamp_ms;
+            marker.id = coord.id || 0;
+            marker.data = coord;
+            marker._baseStyle = {
+                opacity: 1,
+                fillOpacity: 0.8,
+                weight: 1,
+                radius: 3
+            };
+            marker._popupContent = popupText;
+            marker.on('click', (e) => {
+                if (inspectMode === 'marker') {
+                    L.popup().setLatLng([latitude, longitude]).setContent(marker._popupContent).openOn(map);
+                    if (e) L.DomEvent.stopPropagation(e);
+                }
+            });
+
+            parkingLotLayer.addLayer(marker);
+        }
+
+        processedCount = endIndex;
+        if (endIndex < totalCount) {
+            requestAnimationFrame(() => processBatch(endIndex));
+        } else {
+            addOverlayLayers(featureGroups);
+        }
+    }
+
+    if (totalCount > 0) {
+        processBatch(0);
+    } else {
         addOverlayLayers(featureGroups);
     }
 }
@@ -4415,6 +4478,16 @@ function makePopupText(coordinate, coordtype) {
 
         text += buildCandidateLinkPopupHtml(coordinate?.extra);
     }
+    if (coordtype === "Parking Lot State") {
+        if (coordinate.extra?.parking_state) {
+            text += `<br><b>주차장 상태:</b> ${coordinate.extra.parking_state}`;
+            text += `<br>후보 링크 개수: ${coordinate.extra.parking_candidate_count || 0}`;
+            if (coordinate.extra.parking_best_link_id && coordinate.extra.parking_best_link_id > 0) {
+                text += `<br>최고 매칭 Link ID: ${coordinate.extra.parking_best_link_id}`;
+            }
+        }
+    }
+
     if (coordtype === "Request") {
         text += `<br>${coordinate.extra?.group_1 ?? ""} ${coordinate.extra?.group_2_text ?? ""}`;
     }
