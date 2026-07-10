@@ -3,6 +3,12 @@ const highlightLayer = L.layerGroup().addTo(map);
 const roadCanvasRenderer = L.canvas({ padding: 0.25 });
 const roadCanvasRendererNode = L.canvas({ padding: 0.25 });
 
+// Dedicated pane for Parking Lot State markers: separate canvas above the default
+// overlayPane (z-index 400), so these markers always render on top of DR-based etc.
+map.createPane('parkingLotPane');
+map.getPane('parkingLotPane').style.zIndex = 650;
+const parkingLotRenderer = L.canvas({ padding: 0.25, pane: 'parkingLotPane' });
+
 const baseLayers = {
     "Google Maps": L.tileLayer('http://mt0.google.com/vt/lyrs=m&hl=ko&x={x}&y={y}&z={z}', {
         maxZoom: 22,
@@ -4212,11 +4218,6 @@ function drawMarkers(coordinates) {
                         fillOpacity: 0.8
                     });
 
-                // Set lower z-index for DR-based markers so Parking Lot State appears above
-                if (coordtype === 'DR-based' && !useDrHeadingArrow) {
-                    marker.setStyle({ zIndex: 100 });
-                }
-
                 marker.dlt_id = coord.dlt_id;
                 marker.timestamp_ms = coord.timestamp_ms;
                 marker.id = coord.id || 0;
@@ -4314,12 +4315,10 @@ function drawParkingLotStateMarkers(coordsData) {
                 weight: 1,
                 fill: true,
                 fillOpacity: 0.8,
-                pane: 'overlayPane',  // Ensure parking lot markers render above other layers
+                pane: 'parkingLotPane',  // Dedicated pane (z-index 650) above default overlayPane (400)
+                renderer: parkingLotRenderer,
                 bubblingMouseEvents: false
             });
-
-            // Bring parking lot markers to front to ensure they appear above other markers
-            marker.bringToFront();
 
             marker.dlt_id = coord.dlt_id;
             marker.timestamp_ms = coord.timestamp_ms;
