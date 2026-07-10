@@ -4506,8 +4506,8 @@ function makePopupText(coordinate, coordtype) {
     }
 
     if (coordtype === "Request") {
-        text += `<br><b>Content ID:</b> ${coordinate.extra?.group_1 ?? "-"}`;
-        text += `<br><b>요청 타입:</b> ${coordinate.extra?.group_2_text ?? ""}`;
+        text += `<br>Content ID: ${coordinate.extra?.group_1 ?? "-"}`;
+        text += `<br>요청 타입: ${coordinate.extra?.group_2_text ?? ""}`;
 
         // Show route info for this request
         const route_session_id = coordinate.extra?.route_session_id;
@@ -6146,14 +6146,17 @@ function handleRequestIdSearch() {
     const searchValue = String(input?.value || '').trim();
 
     if (!searchValue) {
-        showInfoMessage('Request 경로 검색', 'Request ID를 입력하세요.');
+        showInfoMessage('Request 경로 검색', 'Request ID 또는 Content ID를 입력하세요.');
         return;
     }
 
-    // Find request by ID
+    // Find request by ID, DLT ID, or Content ID (group_1)
+    const searchNum = Number(searchValue);
     const request = markersData.find(m =>
         m.type === 'Request' &&
-        (m.id === Number(searchValue) || m.dlt_id === Number(searchValue))
+        (m.id === searchNum ||
+         m.dlt_id === searchNum ||
+         m.extra?.group_1 === searchValue)
     );
 
     if (!request) {
