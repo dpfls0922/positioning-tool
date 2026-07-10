@@ -6207,25 +6207,133 @@ function handleRequestIdSearch() {
             interactive: false
         }).addTo(highlightLayer);
 
-        // Highlight request point
+        // Mark initial location (Request point)
         const requestLat = request.latitude;
         const requestLon = request.longitude;
         L.circleMarker([requestLat, requestLon], {
-            radius: 8,
+            radius: 10,
             color: '#3b82f6',
             fillColor: '#60a5fa',
-            fillOpacity: 0.8,
-            weight: 2,
+            fillOpacity: 0.9,
+            weight: 3,
             interactive: false
         }).addTo(highlightLayer);
+
+        // Add label for initial location
+        L.marker([requestLat, requestLon], {
+            icon: L.divIcon({
+                className: 'route-label',
+                html: '<div style="background:#3b82f6;color:white;padding:2px 6px;border-radius:3px;font-size:11px;font-weight:bold;white-space:nowrap;">시작</div>',
+                iconSize: [40, 20],
+                iconAnchor: [20, 10]
+            }),
+            interactive: false
+        }).addTo(highlightLayer);
+
+        // Mark destination (last route end point)
+        const lastRoute = routeInfos[routeInfos.length - 1];
+        const destLat = lastRoute.extra?.route_end_lat;
+        const destLon = lastRoute.extra?.route_end_lon;
+        if (destLat !== undefined && destLon !== undefined) {
+            L.circleMarker([destLat, destLon], {
+                radius: 10,
+                color: '#ef4444',
+                fillColor: '#f87171',
+                fillOpacity: 0.9,
+                weight: 3,
+                interactive: false
+            }).addTo(highlightLayer);
+
+            // Add label for destination
+            L.marker([destLat, destLon], {
+                icon: L.divIcon({
+                    className: 'route-label',
+                    html: '<div style="background:#ef4444;color:white;padding:2px 6px;border-radius:3px;font-size:11px;font-weight:bold;white-space:nowrap;">목적지</div>',
+                    iconSize: [50, 20],
+                    iconAnchor: [25, 10]
+                }),
+                interactive: false
+            }).addTo(highlightLayer);
+        }
+
+        // Mark waypoints (via locations)
+        if (routeInfos.length > 2) {
+            for (let i = 1; i < routeInfos.length - 1; i++) {
+                const via = routeInfos[i];
+                const viaLat = via.extra?.route_end_lat;
+                const viaLon = via.extra?.route_end_lon;
+                if (viaLat !== undefined && viaLon !== undefined) {
+                    L.circleMarker([viaLat, viaLon], {
+                        radius: 7,
+                        color: '#f59e0b',
+                        fillColor: '#fbbf24',
+                        fillOpacity: 0.8,
+                        weight: 2,
+                        interactive: false
+                    }).addTo(highlightLayer);
+
+                    // Add waypoint number label
+                    L.marker([viaLat, viaLon], {
+                        icon: L.divIcon({
+                            className: 'route-label',
+                            html: `<div style="background:#f59e0b;color:white;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:bold;width:20px;text-align:center;">경유${i}</div>`,
+                            iconSize: [30, 20],
+                            iconAnchor: [15, 10]
+                        }),
+                        interactive: false
+                    }).addTo(highlightLayer);
+                }
+            }
+        }
 
         // Fit map bounds to route
         const bounds = L.latLngBounds(routePoints);
         map.fitBounds(bounds, { padding: [50, 50] });
 
+        // Build detailed info message
+        const firstRoute = routeInfos[0];
+        const lastRoute = routeInfos[routeInfos.length - 1];
+
+        const origin = {
+            lat: request.latitude.toFixed(6),
+            lon: request.longitude.toFixed(6)
+        };
+
+        const destination = {
+            lat: lastRoute.extra?.route_end_lat?.toFixed(6) || '-',
+            lon: lastRoute.extra?.route_end_lon?.toFixed(6) || '-'
+        };
+
+        let infoMsg = `<b>Request ID:</b> ${request.id}<br>`;
+        infoMsg += `<b>요청 타입:</b> ${request.extra?.group_2_text}<br>`;
+        infoMsg += `<br><b>초기 위치 (Request Point):</b><br>[${origin.lat}, ${origin.lon}]<br>`;
+        infoMsg += `<br><b>목적지 위치:</b><br>[${destination.lat}, ${destination.lon}]<br>`;
+        infoMsg += `<br><b>경로 세그먼트:</b> ${routeInfos.length}개<br>`;
+
+        if (routeInfos.length > 2) {
+            infoMsg += `<br><b>경유지:</b><br>`;
+            for (let i = 1; i < routeInfos.length - 1; i++) {
+                const via = routeInfos[i];
+                const viaLat = via.extra?.route_end_lat?.toFixed(6) || '-';
+                const viaLon = via.extra?.route_end_lon?.toFixed(6) || '-';
+                infoMsg += `[${viaLat}, ${viaLon}]<br>`;
+            }
+        }
+
+        infoMsg += `<br><b>경로 상세:</b><br>`;
+        for (let i = 0; i < routeInfos.length; i++) {
+            const route = routeInfos[i];
+            const startLat = route.extra?.route_start_lat?.toFixed(6) || '-';
+            const startLon = route.extra?.route_start_lon?.toFixed(6) || '-';
+            const endLat = route.extra?.route_end_lat?.toFixed(6) || '-';
+            const endLon = route.extra?.route_end_lon?.toFixed(6) || '-';
+            const linkId = route.extra?.link_id || '-';
+            infoMsg += `Link ${i + 1}: [${startLat}, ${startLon}] → [${endLat}, ${endLon}] (ID: ${linkId})<br>`;
+        }
+
         showInfoMessage(
-            'Request 경로 검색',
-            `Request ID ${request.id} (${request.extra?.group_2_text})<br>경로: ${routeInfos.length}개 세그먼트`
+            'Request 경로 검색 상세 정보',
+            infoMsg
         );
     }
 }
