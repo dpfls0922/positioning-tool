@@ -6292,7 +6292,6 @@ function handleRequestIdSearch() {
 
         // Build detailed info message
         const firstRoute = routeInfos[0];
-        const lastRoute = routeInfos[routeInfos.length - 1];
 
         const origin = {
             lat: request.latitude.toFixed(6),
