@@ -4206,6 +4206,11 @@ function drawMarkers(coordinates) {
                         fillOpacity: 0.8
                     });
 
+                // Set lower z-index for DR-based markers so Parking Lot State appears above
+                if (coordtype === 'DR-based' && !useDrHeadingArrow) {
+                    marker.setStyle({ zIndex: 100 });
+                }
+
                 marker.dlt_id = coord.dlt_id;
                 marker.timestamp_ms = coord.timestamp_ms;
                 marker.id = coord.id || 0;
@@ -4303,8 +4308,12 @@ function drawParkingLotStateMarkers(coordsData) {
                 weight: 1,
                 fill: true,
                 fillOpacity: 0.8,
-                pane: 'overlayPane'  // Ensure parking lot markers render above other layers
+                pane: 'overlayPane',  // Ensure parking lot markers render above other layers
+                bubblingMouseEvents: false
             });
+
+            // Set high z-index to ensure parking lot markers appear above other markers
+            marker.setStyle({ zIndex: 1000 });
 
             marker.dlt_id = coord.dlt_id;
             marker.timestamp_ms = coord.timestamp_ms;
@@ -4318,10 +4327,16 @@ function drawParkingLotStateMarkers(coordsData) {
             };
             marker._popupContent = popupText;
             marker.on('click', (e) => {
-                if (inspectMode === 'marker') {
-                    L.popup().setLatLng([latitude, longitude]).setContent(marker._popupContent).openOn(map);
+                if (inspectMode !== 'marker') {
+                    if (inspectMode === 'road') {
+                        const latlng = e?.latlng || L.latLng(latitude, longitude);
+                        openNearestRoadPopupAt(latlng, getPreferredRoadKinds());
+                    }
                     if (e) L.DomEvent.stopPropagation(e);
+                    return;
                 }
+                L.popup().setLatLng([latitude, longitude]).setContent(marker._popupContent).openOn(map);
+                if (e) L.DomEvent.stopPropagation(e);
             });
 
             parkingLotLayer.addLayer(marker);
