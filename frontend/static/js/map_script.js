@@ -4171,13 +4171,24 @@ function drawMarkers(coordinates) {
                 const popupText = makePopupText(coord, coordtype);
                 const isGnssTransitionHighlight = coordtype === 'Filtered GNSS' && !!coord?.extra?.gnss_transition_highlight;
                 const useDrHeadingArrow = coordtype === 'DR-based' && drHeadingArrowEnabled;
+
+                // Color DR-based markers based on parking lot state
+                let markerColor = coord.color || 'black';
+                if (coordtype === 'DR-based' && coord.extra?.parking_state) {
+                    if (coord.extra.parking_state === 'ParkingLot') {
+                        markerColor = '#808080';  // 회색 - 주차장 진입
+                    } else if (coord.extra.parking_state === 'EnterCandidate' || coord.extra.parking_state === 'EnterReady') {
+                        markerColor = '#ff9800';  // 주황색 - 진입 전
+                    }
+                }
+
                 const marker = useDrHeadingArrow
                     ? L.marker([latitude, longitude], {
-                        icon: buildDrHeadingIcon(coord.heading, coord.color || '#ef4444')
+                        icon: buildDrHeadingIcon(coord.heading, markerColor)
                     })
                     : L.circleMarker([latitude, longitude], {
                         radius: isGnssTransitionHighlight ? 6 : 3,
-                        color: coord.color || 'black',
+                        color: markerColor,
                         weight: isGnssTransitionHighlight ? 3 : 1,
                         fill: coord.fill,
                         fillOpacity: 0.8
@@ -4390,6 +4401,18 @@ function makePopupText(coordinate, coordtype) {
         if (coordinate.extra?.mm_feedback_reason) {
             text += `<br><b>MM Feedback:</b> ${coordinate.extra.mm_feedback_reason}`;
         }
+
+        // Add parking lot state information
+        if (coordinate.extra?.parking_state) {
+            text += `<br><b>주차장 상태:</b> ${coordinate.extra.parking_state}`;
+            if (coordinate.extra.parking_state !== 'ParkingLot') {
+                text += `<br>후보 링크 개수: ${coordinate.extra.parking_candidate_count || 0}`;
+                if (coordinate.extra.parking_best_link_id && coordinate.extra.parking_best_link_id > 0) {
+                    text += `<br>최고 매칭 Link ID: ${coordinate.extra.parking_best_link_id}`;
+                }
+            }
+        }
+
         text += buildCandidateLinkPopupHtml(coordinate?.extra);
     }
     if (coordtype === "Request") {

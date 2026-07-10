@@ -1404,10 +1404,13 @@ def build_runtime_payload():
     all_coords = [coord.to_json() for coords in COORDINATES.values() for coord in coords]
     all_lines = [line.to_json() for lines in LINES.values() for line in lines]
 
-    # Convert guide events, SDI events, and parking lot events to marker coordinates
+    # Attach parking lot state information to DR-based coordinates
+    attach_parking_state_to_coords(all_coords)
+
+    # Convert guide events and SDI events to marker coordinates
     all_coords.extend(build_guide_event_markers())
     all_coords.extend(build_sdi_markers())
-    all_coords.extend(build_parking_lot_markers())
+    # Note: parking lot markers are now integrated into DR-based coordinates via parking_state
 
     all_coords.sort(key=lambda c: c.get("id") if c.get("id") is not None else 0)
     all_lines.sort(key=lambda l: l.get("id") if l.get("id") is not None else 0)
@@ -1424,6 +1427,45 @@ def build_runtime_payload():
         "coords": all_coords,
         "lines": all_lines,
     }
+
+
+def attach_parking_state_to_coords(coords):
+    """Attach closest parking lot state to DR-based coordinates."""
+    if not PARKING_LOT_EVENTS:
+        return
+
+    # Sort parking events by timestamp for efficient matching
+    sorted_events = sorted(PARKING_LOT_EVENTS, key=lambda e: e['timestamp'])
+
+    for coord in coords:
+        if coord.get('type') != 'DR-based':
+            continue
+
+        coord_ts = coord.get('timestamp_ms', 0)
+        if not coord_ts:
+            continue
+
+        # Find closest parking state within 2 seconds
+        closest_event = None
+        min_diff = float('inf')
+
+        for event in sorted_events:
+            event_ts = int(event['timestamp'].timestamp() * 1000)
+            diff = abs(coord_ts - event_ts)
+
+            if diff < min_diff:
+                min_diff = diff
+                closest_event = event
+
+            # Early exit if found exact match
+            if diff == 0:
+                break
+
+        # Attach parking state if within 2 second window
+        if closest_event and min_diff <= 2000:
+            coord['extra']['parking_state'] = closest_event.get('state')
+            coord['extra']['parking_candidate_count'] = closest_event.get('candidate_count', 0)
+            coord['extra']['parking_best_link_id'] = closest_event.get('best_link_id', -1)
 
 
 def write_data_to_json(out_path=None):
