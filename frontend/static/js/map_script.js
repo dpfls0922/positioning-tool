@@ -176,6 +176,11 @@ const ROAD_LINK_BASE_STYLE_STORAGE_KEY = 'road_link_base_style_v1';
 let roadShapeCacheDirHandlePromise = null;
 
 function init() {
+    // Initialize data variables
+    if (typeof markersData === 'undefined') markersData = [];
+    if (typeof parkingLotStateMarkersData === 'undefined') parkingLotStateMarkersData = [];
+    if (typeof linesData === 'undefined') linesData = [];
+
     map.zoomControl.remove();
     initSlider(minTs, maxTs);
     drawPolygons();
