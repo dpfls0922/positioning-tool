@@ -1838,12 +1838,17 @@ function setupDragAndDrop(dropZoneId, inputId) {
 
     if (!dropZone || !fileInput) return;
 
+    // Skip if already setup to prevent duplicate event listeners
+    if (dropZone._dragDropSetup) return;
+    dropZone._dragDropSetup = true;
+
     // Prevent default drag behaviors
+    const preventDefaults = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+    };
     ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-        dropZone.addEventListener(eventName, (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-        });
+        dropZone.addEventListener(eventName, preventDefaults);
     });
 
     // Highlight drop zone when dragging over
@@ -1871,8 +1876,9 @@ function setupDragAndDrop(dropZoneId, inputId) {
         }
     });
 
-    // Make dropzone clickable
-    dropZone.addEventListener('click', () => {
+    // Make dropzone clickable (only once!)
+    dropZone.addEventListener('click', (e) => {
+        e.stopPropagation();
         fileInput.click();
     });
 }
