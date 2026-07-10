@@ -1832,6 +1832,51 @@ function initSidebar() {
     syncSidebarToggle();
 }
 
+function setupDragAndDrop(dropZoneId, inputId) {
+    const dropZone = document.getElementById(dropZoneId);
+    const fileInput = document.getElementById(inputId);
+
+    if (!dropZone || !fileInput) return;
+
+    // Prevent default drag behaviors
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+        dropZone.addEventListener(eventName, (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+        });
+    });
+
+    // Highlight drop zone when dragging over
+    ['dragenter', 'dragover'].forEach(eventName => {
+        dropZone.addEventListener(eventName, () => {
+            dropZone.style.borderColor = '#3b82f6';
+            dropZone.style.backgroundColor = '#eef2ff';
+        });
+    });
+
+    ['dragleave', 'drop'].forEach(eventName => {
+        dropZone.addEventListener(eventName, () => {
+            dropZone.style.borderColor = '#cbd5e1';
+            dropZone.style.backgroundColor = '#f8fafc';
+        });
+    });
+
+    // Handle drop
+    dropZone.addEventListener('drop', (e) => {
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
+            fileInput.files = files;
+            // Trigger change event to update UI
+            fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+    });
+
+    // Make dropzone clickable
+    dropZone.addEventListener('click', () => {
+        fileInput.click();
+    });
+}
+
 function initUploadPanel() {
     bind('parseUploadButton', 'click', handleUploadAndParse);
     bind('parseLinkShpButton', 'click', () => handleUploadRoadShape('link'));
@@ -1844,6 +1889,11 @@ function initUploadPanel() {
     bindFileSelectionSummary('logFileInput', 'logFileNameText', false);
     bindFileSelectionSummary('linkShpFolderInput', 'linkShpFileText', true);
     bindFileSelectionSummary('nodeShpFolderInput', 'nodeShpFileText', true);
+
+    // Setup drag and drop for DLT log files
+    setupDragAndDrop('logDropZone', 'logFileInput');
+    setupDragAndDrop('linkDropZone', 'linkShpFolderInput');
+    setupDragAndDrop('nodeDropZone', 'nodeShpFolderInput');
 
     loadRoadLinkBaseStylesFromStorage();
 
@@ -6274,7 +6324,10 @@ function visualizeGuideEventsFromLog() {
             markerObj.bindPopup(`
                 <div style="min-width: 200px;">
                     <div style="font-weight: bold; color: #3b82f6; margin-bottom: 8px;">
-                        📡 C2X Event
+                        📡 가이드 이벤트 (Guide Event) - C2X
+                    </div>
+                    <div style="font-size: 11px; color: #64748b; margin-bottom: 8px;">
+                        V2X 통신으로 수신한 위험정보
                     </div>
                     <div style="font-size: 12px;">
                         <div><strong>Event ID:</strong> ${escapeHtml(String(marker.extra.event_id))}</div>
@@ -6302,11 +6355,15 @@ function visualizeGuideEventsFromLog() {
             const markerObj = L.marker([marker.latitude, marker.longitude], { icon });
 
             markerObj.bindPopup(`
-                <div style="min-width: 200px;">
+                <div style="min-width: 220px;">
                     <div style="font-weight: bold; color: ${typeConfig.color}; margin-bottom: 8px;">
-                        ${typeConfig.icon} ${escapeHtml(marker.extra.name || typeConfig.name)}
+                        ${typeConfig.icon} 가이드 이벤트 (Guide Event) - MFS
+                    </div>
+                    <div style="font-size: 11px; color: #64748b; margin-bottom: 8px;">
+                        TMAP 유고정보 (Map Feature Service)
                     </div>
                     <div style="font-size: 12px;">
+                        <div><strong>이벤트명:</strong> ${escapeHtml(marker.extra.name || typeConfig.name)}</div>
                         <div><strong>Key:</strong> ${escapeHtml(String(marker.extra.event_id))}</div>
                         <div><strong>좌표:</strong> ${marker.latitude.toFixed(6)}, ${marker.longitude.toFixed(6)}</div>
                         <div><strong>Log Time:</strong> ${marker.timestamp_str || '-'}</div>
