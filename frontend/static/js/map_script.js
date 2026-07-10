@@ -29,6 +29,7 @@ let layerControl = null;
 let baseLayerInitialized = false;
 
 let markers = [];
+let parkingLotStateMarkers = [];
 let polylines = [];
 let requestGroups = {};
 let activeGroups = new Set();
@@ -4094,6 +4095,7 @@ function isInSelectedRange(timestampMs, minVal, maxVal) {
 
 function resetVisualization() {
     markers.forEach(marker => map.removeLayer(marker));
+    parkingLotStateMarkers.forEach(marker => map.removeLayer(marker));
     polylines.forEach(polyline => map.removeLayer(polyline));
     highlightLayer.clearLayers();
     clearDistanceVisuals();
@@ -4111,6 +4113,7 @@ function resetVisualization() {
     });
 
     markers = [];
+    parkingLotStateMarkers = [];
     polylines = [];
     requestGroups = {};
     selectedCandidateLinkIds = new Set();
@@ -4266,25 +4269,27 @@ function drawMarkers(coordinates) {
     }
 }
 
-function drawParkingLotStateMarkers(parkingLotStateMarkers) {
-    console.log('[DEBUG] drawParkingLotStateMarkers called with:', parkingLotStateMarkers?.length || 0, 'markers');
-    if (!parkingLotStateMarkers || parkingLotStateMarkers.length === 0) {
+function drawParkingLotStateMarkers(coordsData) {
+    console.log('[DEBUG] drawParkingLotStateMarkers called with:', coordsData?.length || 0, 'markers');
+    if (!coordsData || coordsData.length === 0) {
         console.log('[DEBUG] No parking lot state markers to render');
+        parkingLotStateMarkers = [];
         return;
     }
 
     const parkingLotLayer = ensureTmapFeatureGroup('Parking Lot State');
     parkingLotLayer.clearLayers();
+    parkingLotStateMarkers = [];
 
     const BATCH_SIZE = 200;
     let processedCount = 0;
-    const totalCount = parkingLotStateMarkers.length;
+    const totalCount = coordsData.length;
 
     function processBatch(startIndex) {
         const endIndex = Math.min(startIndex + BATCH_SIZE, totalCount);
 
         for (let i = startIndex; i < endIndex; i++) {
-            const coord = parkingLotStateMarkers[i];
+            const coord = coordsData[i];
             const latitude = coord.latitude;
             const longitude = coord.longitude;
             if (latitude === undefined || longitude === undefined) continue;
@@ -4320,6 +4325,7 @@ function drawParkingLotStateMarkers(parkingLotStateMarkers) {
             });
 
             parkingLotLayer.addLayer(marker);
+            parkingLotStateMarkers.push(marker);
         }
 
         processedCount = endIndex;
@@ -5668,6 +5674,13 @@ function updateMap() {
 
     markers.forEach(marker => {
         const groupActive = activeGroups.has(getLayerGroupName(marker));
+        const visibleByTime = isInSelectedRange(marker.timestamp_ms, minVal, maxVal);
+        applyTimeVisibility(marker, groupActive && visibleByTime);
+    });
+
+    // Apply timeline visibility to Parking Lot State markers
+    parkingLotStateMarkers.forEach(marker => {
+        const groupActive = activeGroups.has('Parking Lot State');
         const visibleByTime = isInSelectedRange(marker.timestamp_ms, minVal, maxVal);
         applyTimeVisibility(marker, groupActive && visibleByTime);
     });
