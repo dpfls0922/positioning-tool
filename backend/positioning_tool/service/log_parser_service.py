@@ -50,6 +50,7 @@ DLT_RELEVANT_BYTE_KEYWORDS = [
     b"processContents",
     b"GetSdiSelected select",
     b"onDriveStatusChanged SDI",
+    b"ApplyParkingLotDetector",
     b"ParkingLotDetector transition",
 ]
 
