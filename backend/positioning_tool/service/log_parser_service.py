@@ -113,12 +113,14 @@ SDI_DRIVE_STATUS_PATTERN = re.compile(
     r"onDriveStatusChanged\s+SDI\[(\d+)\].*?Speed\s*:\s*(\d+).*?pt\((-?\d+\.\d+),(-?\d+\.\d+)\)"
 )
 
-# ParkingLot Detector state transitions:
-#   ParkingLotDetector transition: Idle -> EnterCandidate, reason=enter_candidate, trackedLinkId=12345, inputLinkId=12346, ...
-#   ParkingLotDetector transition: EnterCandidate -> EnterReady, reason=enter_ready, ...
-#   ParkingLotDetector transition: EnterReady -> ParkingLot, reason=enter_confirmed_by_projection, ...
-#   ParkingLotDetector transition: ParkingLot -> ExitReady, reason=exit_ready, ...
-#   ParkingLotDetector transition: ExitReady -> Idle, reason=exit_by_distance, ...
+# ParkingLot Detector application results:
+#   ApplyParkingLotDetector: state=3, candidateCount=2, bestLinkId=51075, bestMatchState=1
+PARKING_LOT_APPLY_PATTERN = re.compile(
+    r"ApplyParkingLotDetector:\s*state=(\d+),\s*candidateCount=(\d+),\s*bestLinkId=(\d+)"
+)
+
+# ParkingLot Detector state transitions (fallback):
+#   ParkingLotDetector transition: Idle -> EnterCandidate, reason=enter_candidate, ...
 PARKING_LOT_STATE_CHANGE_PATTERN = re.compile(
     r"ParkingLotDetector transition:\s*([A-Za-z]+)\s*->\s*([A-Za-z]+),\s*reason=([^,]+)"
 )
@@ -967,44 +969,74 @@ def parse_sdi_event(line, timestamp):
 
 
 def parse_parking_lot_event(line, timestamp):
-    """Parse ParkingLot detector state transitions from navisdk logs.
+    """Parse ParkingLot detector events from navisdk logs.
 
+    ApplyParkingLotDetector: state=3, candidateCount=2, bestLinkId=51075
     ParkingLotDetector transition: Idle -> EnterCandidate, reason=...
-    ParkingLotDetector transition: EnterCandidate -> EnterReady, reason=...
-    ParkingLotDetector transition: EnterReady -> ParkingLot, reason=...
-    ParkingLotDetector transition: ParkingLot -> ExitReady, reason=...
-    ParkingLotDetector transition: ExitReady -> Idle, reason=...
     """
     global PARKING_LOT_EVENTS, last_gnss_coordinate
 
-    match = PARKING_LOT_STATE_CHANGE_PATTERN.search(line)
-    if not match:
-        return False
+    # Try ApplyParkingLotDetector pattern first (most frequent)
+    apply_match = PARKING_LOT_APPLY_PATTERN.search(line)
+    if apply_match:
+        state_code = int(apply_match.group(1))
+        candidate_count = int(apply_match.group(2))
+        best_link_id = int(apply_match.group(3))
 
-    prev_state = match.group(1)
-    next_state = match.group(2)
-    reason = match.group(3)
+        # Use last known GNSS coordinate if available
+        if last_gnss_coordinate is None:
+            return False
 
-    # Use last known GNSS coordinate if available
-    if last_gnss_coordinate is None:
-        return False
+        latitude = last_gnss_coordinate.get('latitude')
+        longitude = last_gnss_coordinate.get('longitude')
 
-    latitude = last_gnss_coordinate.get('latitude')
-    longitude = last_gnss_coordinate.get('longitude')
+        if not (30.0 < latitude < 45.0 and 120.0 < longitude < 135.0):
+            return False
 
-    if not (30.0 < latitude < 45.0 and 120.0 < longitude < 135.0):
-        return False
+        state_names = {0: "Idle", 1: "EnterCandidate", 2: "EnterReady", 3: "ParkingLot", 4: "ExitReady"}
+        state_name = state_names.get(state_code, f"State({state_code})")
 
-    PARKING_LOT_EVENTS.append({
-        "type": "ParkingLot State",
-        "prev_state": prev_state,
-        "next_state": next_state,
-        "reason": reason,
-        "latitude": latitude,
-        "longitude": longitude,
-        "timestamp": timestamp,
-    })
-    return True
+        PARKING_LOT_EVENTS.append({
+            "type": "ParkingLot Apply",
+            "state": state_name,
+            "state_code": state_code,
+            "candidate_count": candidate_count,
+            "best_link_id": best_link_id,
+            "latitude": latitude,
+            "longitude": longitude,
+            "timestamp": timestamp,
+        })
+        return True
+
+    # Try state transition pattern (fallback)
+    change_match = PARKING_LOT_STATE_CHANGE_PATTERN.search(line)
+    if change_match:
+        prev_state = change_match.group(1)
+        next_state = change_match.group(2)
+        reason = change_match.group(3)
+
+        # Use last known GNSS coordinate if available
+        if last_gnss_coordinate is None:
+            return False
+
+        latitude = last_gnss_coordinate.get('latitude')
+        longitude = last_gnss_coordinate.get('longitude')
+
+        if not (30.0 < latitude < 45.0 and 120.0 < longitude < 135.0):
+            return False
+
+        PARKING_LOT_EVENTS.append({
+            "type": "ParkingLot Transition",
+            "prev_state": prev_state,
+            "next_state": next_state,
+            "reason": reason,
+            "latitude": latitude,
+            "longitude": longitude,
+            "timestamp": timestamp,
+        })
+        return True
+
+    return False
 
 
 def parse_guide_event(line, timestamp):
@@ -1238,7 +1270,7 @@ def build_parking_lot_markers():
     seen = set()
 
     # State transition colors and labels
-    STATE_CONFIG = {
+    TRANSITION_CONFIG = {
         ("Idle", "EnterCandidate"): {"label": "주차장 후보 진입", "color": "#f59e0b", "icon": "🟡"},
         ("EnterCandidate", "EnterReady"): {"label": "주차장 진입 준비", "color": "#f97316", "icon": "🟠"},
         ("EnterReady", "ParkingLot"): {"label": "주차장 진입 완료", "color": "#ef4444", "icon": "🔴"},
@@ -1246,37 +1278,76 @@ def build_parking_lot_markers():
         ("ExitReady", "Idle"): {"label": "주차장 탈출 완료", "color": "#06b6d4", "icon": "🔵"},
     }
 
+    # Apply state colors - based on current state
+    APPLY_CONFIG = {
+        "Idle": {"color": "#64748b", "icon": "⚪", "label": "유휴"},
+        "EnterCandidate": {"color": "#f59e0b", "icon": "🟡", "label": "후보 진입"},
+        "EnterReady": {"color": "#f97316", "icon": "🟠", "label": "진입 준비"},
+        "ParkingLot": {"color": "#ef4444", "icon": "🔴", "label": "주차장 중"},
+        "ExitReady": {"color": "#8b5cf6", "icon": "🟣", "label": "탈출 준비"},
+    }
+
     for event in PARKING_LOT_EVENTS:
-        prev_state = event.get("prev_state", "")
-        next_state = event.get("next_state", "")
-        state_key = (prev_state, next_state)
+        event_type = event.get("type", "")
 
-        config = STATE_CONFIG.get(state_key, {
-            "label": f"{prev_state} → {next_state}",
-            "color": "#6b7280",
-            "icon": "⚪"
-        })
+        if event_type == "ParkingLot Apply":
+            # ApplyParkingLotDetector events
+            state = event.get("state", "Unknown")
+            config = APPLY_CONFIG.get(state, {"color": "#6b7280", "icon": "⚪", "label": state})
 
-        marker = {
-            "id": event_id_counter,
-            "dlt_id": None,
-            "type": "Parking Lot State",
-            "latitude": event["latitude"],
-            "longitude": event["longitude"],
-            "heading": None,
-            "extra": {
-                "event_type": "ParkingLot",
-                "prev_state": prev_state,
-                "next_state": next_state,
-                "state_label": config["label"],
-                "reason": event.get("reason", ""),
-                "icon": config["icon"],
-            },
-            "timestamp_ms": int(event["timestamp"].timestamp() * 1000) if event["timestamp"] else 0,
-            "timestamp_str": event["timestamp"].strftime("%Y/%m/%d %H:%M:%S.%f")[:-3] if event["timestamp"] else "",
-            "color": config["color"],
-            "fill": True,
-        }
+            marker = {
+                "id": event_id_counter,
+                "dlt_id": None,
+                "type": "Parking Lot State",
+                "latitude": event["latitude"],
+                "longitude": event["longitude"],
+                "heading": None,
+                "extra": {
+                    "event_type": "ParkingLot",
+                    "state": state,
+                    "state_label": config["label"],
+                    "candidate_count": event.get("candidate_count", 0),
+                    "best_link_id": event.get("best_link_id", -1),
+                    "icon": config["icon"],
+                },
+                "timestamp_ms": int(event["timestamp"].timestamp() * 1000) if event["timestamp"] else 0,
+                "timestamp_str": event["timestamp"].strftime("%Y/%m/%d %H:%M:%S.%f")[:-3] if event["timestamp"] else "",
+                "color": config["color"],
+                "fill": True,
+            }
+        else:
+            # State transition events
+            prev_state = event.get("prev_state", "")
+            next_state = event.get("next_state", "")
+            state_key = (prev_state, next_state)
+
+            config = TRANSITION_CONFIG.get(state_key, {
+                "label": f"{prev_state} → {next_state}",
+                "color": "#6b7280",
+                "icon": "⚪"
+            })
+
+            marker = {
+                "id": event_id_counter,
+                "dlt_id": None,
+                "type": "Parking Lot State",
+                "latitude": event["latitude"],
+                "longitude": event["longitude"],
+                "heading": None,
+                "extra": {
+                    "event_type": "ParkingLot",
+                    "prev_state": prev_state,
+                    "next_state": next_state,
+                    "state_label": config["label"],
+                    "reason": event.get("reason", ""),
+                    "icon": config["icon"],
+                },
+                "timestamp_ms": int(event["timestamp"].timestamp() * 1000) if event["timestamp"] else 0,
+                "timestamp_str": event["timestamp"].strftime("%Y/%m/%d %H:%M:%S.%f")[:-3] if event["timestamp"] else "",
+                "color": config["color"],
+                "fill": True,
+            }
+
         markers.append(marker)
         event_id_counter += 1
 

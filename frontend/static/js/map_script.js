@@ -6427,14 +6427,29 @@ function visualizeGuideEventsFromLog() {
                 pane: 'markerPane'
             });
 
-            const popupContent = `
+            let popupContent = `
                 <div class="popup-content" style="min-width: 240px;">
                     <div style="font-weight: bold; color: ${color}; margin-bottom: 8px;">
-                        ${icon} ${markerData.extra?.state_label || '주차장 상태 변화'}
+                        ${icon} ${markerData.extra?.state_label || '주차장 상태'}
                     </div>
                     <table style="font-size: 12px;">
-                        <tr><td><strong>상태:</strong></td><td>${markerData.extra?.prev_state || 'N/A'} → ${markerData.extra?.next_state || 'N/A'}</td></tr>
-                        <tr><td><strong>이유:</strong></td><td>${markerData.extra?.reason || 'N/A'}</td></tr>
+            `;
+
+            // Show state transition or apply info
+            if (markerData.extra?.prev_state) {
+                popupContent += `
+                        <tr><td><strong>상태:</strong></td><td>${markerData.extra.prev_state} → ${markerData.extra.next_state}</td></tr>
+                        <tr><td><strong>이유:</strong></td><td>${markerData.extra.reason || 'N/A'}</td></tr>
+                `;
+            } else if (markerData.extra?.state) {
+                popupContent += `
+                        <tr><td><strong>상태:</strong></td><td>${markerData.extra.state}</td></tr>
+                        <tr><td><strong>후보 개수:</strong></td><td>${markerData.extra.candidate_count || 0}</td></tr>
+                        <tr><td><strong>최고 매칭 Link:</strong></td><td>${markerData.extra.best_link_id || 'N/A'}</td></tr>
+                `;
+            }
+
+            popupContent += `
                         <tr><td><strong>좌표:</strong></td><td>${markerData.latitude.toFixed(6)}, ${markerData.longitude.toFixed(6)}</td></tr>
                         <tr><td><strong>시간:</strong></td><td>${markerData.timestamp_str || 'N/A'}</td></tr>
                     </table>
