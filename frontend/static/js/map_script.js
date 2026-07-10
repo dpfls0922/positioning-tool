@@ -4506,6 +4506,7 @@ function makePopupText(coordinate, coordtype) {
     }
 
     if (coordtype === "Request") {
+        text += `<br><b>Content ID:</b> ${coordinate.extra?.group_1 ?? "-"}`;
         text += `<br><b>요청 타입:</b> ${coordinate.extra?.group_2_text ?? ""}`;
 
         // Show route info for this request
