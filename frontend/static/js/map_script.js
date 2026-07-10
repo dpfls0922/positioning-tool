@@ -2771,10 +2771,6 @@ function handleUploadAndParse() {
         const exportCsvBtn = document.getElementById('exportCsvMenuButton');
         if (exportCsvBtn) exportCsvBtn.disabled = false;
 
-        // Reset file input for next selection
-        fileInput.value = '';
-        document.getElementById('logFileNameText').textContent = '파일 선택 또는 드래그';
-
         finishParsingProgress(true, '완료');
     };
 
