@@ -505,6 +505,7 @@ def parse_log(log_file_path=None):
                         extra_info = {
                             "group_1": match.group(1),
                             "group_2_text": group2_enum.label,
+                            "route_session_id": current_route_session_id,
                         }
 
                         if (
@@ -1414,8 +1415,9 @@ def build_runtime_payload():
     import sys
     print(f'[DEBUG] build_runtime_payload: created parking_lot_state_markers = {len(parking_lot_state_markers)}', file=sys.stderr)
 
-    # Convert guide events to marker coordinates
+    # Convert guide events and route info to marker coordinates
     all_coords.extend(build_guide_event_markers())
+    all_coords.extend(build_route_info_markers(all_lines))
 
     all_coords.sort(key=lambda c: c.get("id") if c.get("id") is not None else 0)
     all_lines.sort(key=lambda l: l.get("id") if l.get("id") is not None else 0)
@@ -1484,6 +1486,50 @@ def build_parking_lot_state_markers(coords):
 
     import sys
     print(f'[DEBUG] build_parking_lot_state_markers: DR-based={dr_based_count}, with_parking_state={with_parking_state}, markers created={len(markers)}', file=sys.stderr)
+    return markers
+
+
+def build_route_info_markers(lines):
+    """Convert Route Info lines to marker coordinates for displaying route details."""
+    markers = []
+    marker_id_counter = 40000  # Start from 40000 to avoid conflicts
+
+    if not lines:
+        return markers
+
+    route_info_lines = [line for line in lines if line.get('type') == 'Route Info']
+
+    for line in route_info_lines:
+        start_lat, start_lon = line.get('start', (None, None))
+        end_lat, end_lon = line.get('end', (None, None))
+
+        if start_lat is None or start_lon is None:
+            continue
+
+        marker = {
+            "id": marker_id_counter,
+            "dlt_id": None,
+            "type": "Route Info",
+            "latitude": start_lat,
+            "longitude": start_lon,
+            "heading": None,
+            "color": "#e91e63",  # Deep pink for route info
+            "fill": False,
+            "timestamp_ms": 0,
+            "timestamp_str": "",
+            "extra": {
+                "route_session_id": line.get('extra', {}).get('route_session_id'),
+                "link_id": line.get('extra', {}).get('link_id'),
+                "route_start_lat": start_lat,
+                "route_start_lon": start_lon,
+                "route_end_lat": end_lat,
+                "route_end_lon": end_lon,
+                "route_session_index": line.get('extra', {}).get('route_session_index'),
+            }
+        }
+        markers.append(marker)
+        marker_id_counter += 1
+
     return markers
 
 

@@ -4502,7 +4502,30 @@ function makePopupText(coordinate, coordtype) {
     }
 
     if (coordtype === "Request") {
-        text += `<br>${coordinate.extra?.group_1 ?? ""} ${coordinate.extra?.group_2_text ?? ""}`;
+        text += `<br><b>요청 타입:</b> ${coordinate.extra?.group_2_text ?? ""}`;
+
+        // Show route info for this request
+        const route_session_id = coordinate.extra?.route_session_id;
+        if (route_session_id) {
+            const routeInfos = markersData.filter(c =>
+                c.type === 'Route Info' &&
+                c.extra?.route_session_id === route_session_id
+            );
+
+            if (routeInfos.length > 0) {
+                text += `<br><br><b>경로 정보:</b>`;
+                routeInfos.forEach((route, idx) => {
+                    const startLat = route.extra?.route_start_lat?.toFixed(6) || '-';
+                    const startLon = route.extra?.route_start_lon?.toFixed(6) || '-';
+                    const endLat = route.extra?.route_end_lat?.toFixed(6) || '-';
+                    const endLon = route.extra?.route_end_lon?.toFixed(6) || '-';
+                    const linkId = route.extra?.link_id || '-';
+
+                    text += `<br>Link ${idx + 1}: [${startLat}, ${startLon}] → [${endLat}, ${endLon}]`;
+                    text += `<br>Link ID: ${linkId}`;
+                });
+            }
+        }
     }
     if (coordtype === "Route Match" || coordtype === "Road Match") {
         const state = coordinate.extra?.match_state || "";
