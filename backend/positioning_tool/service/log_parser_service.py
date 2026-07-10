@@ -113,10 +113,14 @@ SDI_DRIVE_STATUS_PATTERN = re.compile(
     r"onDriveStatusChanged\s+SDI\[(\d+)\].*?Speed\s*:\s*(\d+).*?pt\((-?\d+\.\d+),(-?\d+\.\d+)\)"
 )
 
-# ParkingLot Detector exit events:
-#   ParkingLotDetector transition: ParkingLot -> Idle, reason=exit_by_distance, trackedLinkId=12345, inputLinkId=12346, endpointDirection=None, fB=0.234, delta=0.150, dist=45.23
-PARKING_LOT_EXIT_PATTERN = re.compile(
-    r"ParkingLotDetector transition:\s*ParkingLot\s*->\s*Idle,\s*reason=([^,]+),\s*trackedLinkId=(\d+),\s*inputLinkId=(\d+)"
+# ParkingLot Detector state transitions:
+#   ParkingLotDetector transition: Idle -> EnterCandidate, reason=enter_candidate, trackedLinkId=12345, inputLinkId=12346, ...
+#   ParkingLotDetector transition: EnterCandidate -> EnterReady, reason=enter_ready, ...
+#   ParkingLotDetector transition: EnterReady -> ParkingLot, reason=enter_confirmed_by_projection, ...
+#   ParkingLotDetector transition: ParkingLot -> ExitReady, reason=exit_ready, ...
+#   ParkingLotDetector transition: ExitReady -> Idle, reason=exit_by_distance, ...
+PARKING_LOT_STATE_CHANGE_PATTERN = re.compile(
+    r"ParkingLotDetector transition:\s*([A-Za-z]+)\s*->\s*([A-Za-z]+),\s*reason=([^,]+)"
 )
 
 
@@ -963,19 +967,23 @@ def parse_sdi_event(line, timestamp):
 
 
 def parse_parking_lot_event(line, timestamp):
-    """Parse ParkingLot detector exit events from navisdk logs.
+    """Parse ParkingLot detector state transitions from navisdk logs.
 
-    ParkingLotDetector transition: ParkingLot -> Idle, reason=exit_by_distance, trackedLinkId=12345, inputLinkId=12346, ...
+    ParkingLotDetector transition: Idle -> EnterCandidate, reason=...
+    ParkingLotDetector transition: EnterCandidate -> EnterReady, reason=...
+    ParkingLotDetector transition: EnterReady -> ParkingLot, reason=...
+    ParkingLotDetector transition: ParkingLot -> ExitReady, reason=...
+    ParkingLotDetector transition: ExitReady -> Idle, reason=...
     """
     global PARKING_LOT_EVENTS, last_gnss_coordinate
 
-    match = PARKING_LOT_EXIT_PATTERN.search(line)
+    match = PARKING_LOT_STATE_CHANGE_PATTERN.search(line)
     if not match:
         return False
 
-    reason = match.group(1)
-    tracked_link_id = int(match.group(2))
-    input_link_id = int(match.group(3))
+    prev_state = match.group(1)
+    next_state = match.group(2)
+    reason = match.group(3)
 
     # Use last known GNSS coordinate if available
     if last_gnss_coordinate is None:
@@ -988,10 +996,10 @@ def parse_parking_lot_event(line, timestamp):
         return False
 
     PARKING_LOT_EVENTS.append({
-        "type": "ParkingLot Exit",
+        "type": "ParkingLot State",
+        "prev_state": prev_state,
+        "next_state": next_state,
         "reason": reason,
-        "tracked_link_id": tracked_link_id,
-        "input_link_id": input_link_id,
         "latitude": latitude,
         "longitude": longitude,
         "timestamp": timestamp,
@@ -1229,39 +1237,44 @@ def build_parking_lot_markers():
     event_id_counter = 30000  # Start from 30000 to avoid conflicts
     seen = set()
 
-    REASON_NAMES = {
-        "exit_by_distance": "거리 기반 탈출",
-        "exit_by_projection": "프로젝션 기반 탈출",
-        "exit_by_projection_delta": "프로젝션 델타 기반 탈출",
+    # State transition colors and labels
+    STATE_CONFIG = {
+        ("Idle", "EnterCandidate"): {"label": "주차장 후보 진입", "color": "#f59e0b", "icon": "🟡"},
+        ("EnterCandidate", "EnterReady"): {"label": "주차장 진입 준비", "color": "#f97316", "icon": "🟠"},
+        ("EnterReady", "ParkingLot"): {"label": "주차장 진입 완료", "color": "#ef4444", "icon": "🔴"},
+        ("ParkingLot", "ExitReady"): {"label": "주차장 탈출 준비", "color": "#8b5cf6", "icon": "🟣"},
+        ("ExitReady", "Idle"): {"label": "주차장 탈출 완료", "color": "#06b6d4", "icon": "🔵"},
     }
 
     for event in PARKING_LOT_EVENTS:
-        # Dedupe by position to avoid duplicate markers at same location
-        dedupe_key = (event["latitude"], event["longitude"])
-        if dedupe_key in seen:
-            continue
-        seen.add(dedupe_key)
+        prev_state = event.get("prev_state", "")
+        next_state = event.get("next_state", "")
+        state_key = (prev_state, next_state)
 
-        reason = event["reason"]
-        reason_name = REASON_NAMES.get(reason, reason)
+        config = STATE_CONFIG.get(state_key, {
+            "label": f"{prev_state} → {next_state}",
+            "color": "#6b7280",
+            "icon": "⚪"
+        })
 
         marker = {
             "id": event_id_counter,
             "dlt_id": None,
-            "type": "Parking Lot Exit",
+            "type": "Parking Lot State",
             "latitude": event["latitude"],
             "longitude": event["longitude"],
             "heading": None,
             "extra": {
                 "event_type": "ParkingLot",
-                "reason": reason,
-                "reason_name": reason_name,
-                "tracked_link_id": event["tracked_link_id"],
-                "input_link_id": event["input_link_id"],
+                "prev_state": prev_state,
+                "next_state": next_state,
+                "state_label": config["label"],
+                "reason": event.get("reason", ""),
+                "icon": config["icon"],
             },
             "timestamp_ms": int(event["timestamp"].timestamp() * 1000) if event["timestamp"] else 0,
             "timestamp_str": event["timestamp"].strftime("%Y/%m/%d %H:%M:%S.%f")[:-3] if event["timestamp"] else "",
-            "color": "#e74c3c",  # Red for parking lot exits
+            "color": config["color"],
             "fill": True,
         }
         markers.append(marker)

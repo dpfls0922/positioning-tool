@@ -6407,32 +6407,36 @@ function visualizeGuideEventsFromLog() {
         });
     }
 
-    // Parking Lot Exit Events
+    // Parking Lot State Transitions
     const parkingLotMarkers = markersData.filter((m) => m.extra?.event_type === 'ParkingLot');
     if (parkingLotMarkers.length > 0) {
-        const parkingGroup = ensureTmapFeatureGroup('Parking Lot Exit');
+        const parkingGroup = ensureTmapFeatureGroup('Parking Lot State');
         parkingGroup.clearLayers();
 
         parkingLotMarkers.forEach((markerData) => {
+            const icon = markerData.extra?.icon || '🅿️';
+            const color = markerData.color || '#6b7280';
+
             const markerObj = L.circleMarker([markerData.latitude, markerData.longitude], {
-                radius: 6,
-                color: '#e74c3c',
+                radius: 7,
+                color: color,
                 weight: 2,
                 fill: true,
-                fillColor: '#e74c3c',
+                fillColor: color,
                 fillOpacity: 0.8,
                 pane: 'markerPane'
             });
 
             const popupContent = `
-                <div class="popup-content">
-                    <div style="font-weight: bold; color: #e74c3c;">🅿️ ${markerData.extra?.reason_name || '주차장 탈출'}</div>
-                    <table>
-                        <tr><td>이유:</td><td>${markerData.extra?.reason || 'N/A'}</td></tr>
-                        <tr><td>Tracked Link ID:</td><td>${markerData.extra?.tracked_link_id || 'N/A'}</td></tr>
-                        <tr><td>Input Link ID:</td><td>${markerData.extra?.input_link_id || 'N/A'}</td></tr>
-                        <tr><td>좌표:</td><td>${markerData.latitude.toFixed(6)}, ${markerData.longitude.toFixed(6)}</td></tr>
-                        <tr><td>시간:</td><td>${markerData.timestamp_str || 'N/A'}</td></tr>
+                <div class="popup-content" style="min-width: 240px;">
+                    <div style="font-weight: bold; color: ${color}; margin-bottom: 8px;">
+                        ${icon} ${markerData.extra?.state_label || '주차장 상태 변화'}
+                    </div>
+                    <table style="font-size: 12px;">
+                        <tr><td><strong>상태:</strong></td><td>${markerData.extra?.prev_state || 'N/A'} → ${markerData.extra?.next_state || 'N/A'}</td></tr>
+                        <tr><td><strong>이유:</strong></td><td>${markerData.extra?.reason || 'N/A'}</td></tr>
+                        <tr><td><strong>좌표:</strong></td><td>${markerData.latitude.toFixed(6)}, ${markerData.longitude.toFixed(6)}</td></tr>
+                        <tr><td><strong>시간:</strong></td><td>${markerData.timestamp_str || 'N/A'}</td></tr>
                     </table>
                 </div>
             `;
