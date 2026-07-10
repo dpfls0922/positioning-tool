@@ -2766,6 +2766,11 @@ function handleUploadAndParse() {
         markersData = response.coords || [];
         parkingLotStateMarkersData = response.parking_lot_state_markers || [];
         linesData = response.lines || [];
+        console.log('[DEBUG] Loaded data:', {
+            markersCount: markersData.length,
+            parkingLotStateMarkersCount: parkingLotStateMarkersData.length,
+            linesCount: linesData.length
+        });
         currentResultName = response.result_name || 'result';
         minTs = Number.isFinite(response.min_timestamp_ms) ? response.min_timestamp_ms : 0;
         maxTs = Number.isFinite(response.max_timestamp_ms) ? response.max_timestamp_ms : 1;
@@ -4258,7 +4263,9 @@ function drawMarkers(coordinates) {
 }
 
 function drawParkingLotStateMarkers(parkingLotStateMarkers) {
+    console.log('[DEBUG] drawParkingLotStateMarkers called with:', parkingLotStateMarkers?.length || 0, 'markers');
     if (!parkingLotStateMarkers || parkingLotStateMarkers.length === 0) {
+        console.log('[DEBUG] No parking lot state markers to render');
         return;
     }
 
