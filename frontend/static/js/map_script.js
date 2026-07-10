@@ -4293,7 +4293,8 @@ function drawParkingLotStateMarkers(parkingLotStateMarkers) {
                 color: markerColor,
                 weight: 1,
                 fill: true,
-                fillOpacity: 0.8
+                fillOpacity: 0.8,
+                pane: 'overlayPane'  // Ensure parking lot markers render above other layers
             });
 
             marker.dlt_id = coord.dlt_id;

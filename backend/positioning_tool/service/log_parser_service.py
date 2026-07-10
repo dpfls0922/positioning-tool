@@ -1401,7 +1401,8 @@ def build_guide_event_markers():
 
 
 def build_runtime_payload():
-    print(f'[DEBUG] build_runtime_payload start: PARKING_LOT_EVENTS = {len(PARKING_LOT_EVENTS)}')
+    import sys
+    print(f'[DEBUG] build_runtime_payload start: PARKING_LOT_EVENTS = {len(PARKING_LOT_EVENTS)}', file=sys.stderr)
     all_coords = [coord.to_json() for coords in COORDINATES.values() for coord in coords]
     all_lines = [line.to_json() for lines in LINES.values() for line in lines]
 
@@ -1410,11 +1411,11 @@ def build_runtime_payload():
 
     # Extract parking lot state markers from DR-based coordinates with parking state
     parking_lot_state_markers = build_parking_lot_state_markers(all_coords)
-    print(f'[DEBUG] build_runtime_payload: created parking_lot_state_markers = {len(parking_lot_state_markers)}')
+    import sys
+    print(f'[DEBUG] build_runtime_payload: created parking_lot_state_markers = {len(parking_lot_state_markers)}', file=sys.stderr)
 
-    # Convert guide events and SDI events to marker coordinates
+    # Convert guide events to marker coordinates
     all_coords.extend(build_guide_event_markers())
-    all_coords.extend(build_sdi_markers())
 
     all_coords.sort(key=lambda c: c.get("id") if c.get("id") is not None else 0)
     all_lines.sort(key=lambda l: l.get("id") if l.get("id") is not None else 0)
@@ -1457,7 +1458,7 @@ def build_parking_lot_state_markers(coords):
         if parking_state == 'ParkingLot':
             color = '#808080'  # 회색 - 주차장 중
         elif parking_state in ('EnterCandidate', 'EnterReady'):
-            color = '#ff9800'  # 주황색 - 진입 후보/준비
+            color = '#ff1493'  # 분홍색 - 진입 후보/준비
         else:
             continue  # Skip unknown states
 
@@ -1481,13 +1482,15 @@ def build_parking_lot_state_markers(coords):
         markers.append(marker)
         marker_id_counter += 1
 
-    print(f'[DEBUG] build_parking_lot_state_markers: DR-based={dr_based_count}, with_parking_state={with_parking_state}, markers created={len(markers)}')
+    import sys
+    print(f'[DEBUG] build_parking_lot_state_markers: DR-based={dr_based_count}, with_parking_state={with_parking_state}, markers created={len(markers)}', file=sys.stderr)
     return markers
 
 
 def attach_parking_state_to_coords(coords):
     """Attach closest parking lot state to DR-based coordinates (only attach to extra, no color change)."""
-    print(f'[DEBUG] attach_parking_state_to_coords: PARKING_LOT_EVENTS count = {len(PARKING_LOT_EVENTS)}')
+    import sys
+    print(f'[DEBUG] attach_parking_state_to_coords: PARKING_LOT_EVENTS count = {len(PARKING_LOT_EVENTS)}', file=sys.stderr)
     if not PARKING_LOT_EVENTS:
         return
 
@@ -1526,7 +1529,8 @@ def attach_parking_state_to_coords(coords):
             coord['extra']['parking_best_link_id'] = closest_event.get('best_link_id', -1)
             attached_count += 1
 
-    print(f'[DEBUG] attach_parking_state_to_coords: attached to {attached_count} DR-based coordinates')
+    import sys
+    print(f'[DEBUG] attach_parking_state_to_coords: attached to {attached_count} DR-based coordinates', file=sys.stderr)
 
 
 def write_data_to_json(out_path=None):
