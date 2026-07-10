@@ -1124,6 +1124,7 @@ function bindSearchControls() {
     bind('idSearchButton', 'click', handleIdSearch);
     bind('latLonSearchButton', 'click', handleLatLonSearch);
     bind('ridSearchButton', 'click', handleRidSearch);
+    bind('requestIdSearchButton', 'click', handleRequestIdSearch);
 
     document.getElementById('searchBox')?.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') handleDltSearch();
@@ -1136,6 +1137,9 @@ function bindSearchControls() {
     });
     document.getElementById('ridSearchBox')?.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') handleRidSearch();
+    });
+    document.getElementById('requestIdSearchBox')?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') handleRequestIdSearch();
     });
 }
 
@@ -6134,6 +6138,96 @@ async function handleRidSearch() {
     }
 
     showInfoMessage('RID 검색 결과', `RID/LINK_ID ${escapeHtml(searchValue)} 에 해당하는 Road Link를 찾지 못했습니다.`);
+}
+
+function handleRequestIdSearch() {
+    const input = document.getElementById('requestIdSearchBox');
+    const searchValue = String(input?.value || '').trim();
+
+    if (!searchValue) {
+        showInfoMessage('Request 경로 검색', 'Request ID를 입력하세요.');
+        return;
+    }
+
+    // Find request by ID
+    const request = markersData.find(m =>
+        m.type === 'Request' &&
+        (m.id === Number(searchValue) || m.dlt_id === Number(searchValue))
+    );
+
+    if (!request) {
+        showInfoMessage('Request 경로 검색', `Request ID ${escapeHtml(searchValue)}를 찾지 못했습니다.`);
+        return;
+    }
+
+    // Get route session ID from request
+    const routeSessionId = request.extra?.route_session_id;
+    if (!routeSessionId) {
+        showInfoMessage('Request 경로 검색', '해당 Request의 경로 정보가 없습니다.');
+        return;
+    }
+
+    // Find all route info markers with this session ID
+    const routeInfos = markersData.filter(m =>
+        m.type === 'Route Info' &&
+        m.extra?.route_session_id === routeSessionId
+    );
+
+    if (routeInfos.length === 0) {
+        showInfoMessage('Request 경로 검색', '해당 Request의 경로를 찾지 못했습니다.');
+        return;
+    }
+
+    // Clear previous highlights
+    highlightLayer.clearLayers();
+
+    // Draw route as polyline
+    const routePoints = [];
+    for (const route of routeInfos) {
+        const startLat = route.extra?.route_start_lat;
+        const startLon = route.extra?.route_start_lon;
+        const endLat = route.extra?.route_end_lat;
+        const endLon = route.extra?.route_end_lon;
+
+        if (startLat !== undefined && startLon !== undefined) {
+            routePoints.push([startLat, startLon]);
+        }
+        if (endLat !== undefined && endLon !== undefined) {
+            routePoints.push([endLat, endLon]);
+        }
+    }
+
+    if (routePoints.length > 0) {
+        // Draw route polyline
+        L.polyline(routePoints, {
+            color: '#10b981',
+            weight: 4,
+            opacity: 0.8,
+            dashArray: '5, 5',
+            interactive: false
+        }).addTo(highlightLayer);
+
+        // Highlight request point
+        const requestLat = request.latitude;
+        const requestLon = request.longitude;
+        L.circleMarker([requestLat, requestLon], {
+            radius: 8,
+            color: '#3b82f6',
+            fillColor: '#60a5fa',
+            fillOpacity: 0.8,
+            weight: 2,
+            interactive: false
+        }).addTo(highlightLayer);
+
+        // Fit map bounds to route
+        const bounds = L.latLngBounds(routePoints);
+        map.fitBounds(bounds, { padding: [50, 50] });
+
+        showInfoMessage(
+            'Request 경로 검색',
+            `Request ID ${request.id} (${request.extra?.group_2_text})<br>경로: ${routeInfos.length}개 세그먼트`
+        );
+    }
 }
 
 function highlightMarker(marker) {
