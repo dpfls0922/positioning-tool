@@ -984,6 +984,10 @@ def parse_parking_lot_event(line, timestamp):
         candidate_count = int(apply_match.group(2))
         best_link_id = int(apply_match.group(3))
 
+        # Only track main parking states: 1=EnterCandidate, 2=EnterReady, 3=ParkingLot
+        if state_code not in (1, 2, 3):
+            return False
+
         # Use last known GNSS coordinate if available
         if last_gnss_coordinate is None:
             return False
@@ -994,7 +998,7 @@ def parse_parking_lot_event(line, timestamp):
         if not (30.0 < latitude < 45.0 and 120.0 < longitude < 135.0):
             return False
 
-        state_names = {0: "Idle", 1: "EnterCandidate", 2: "EnterReady", 3: "ParkingLot", 4: "ExitReady"}
+        state_names = {1: "EnterCandidate", 2: "EnterReady", 3: "ParkingLot"}
         state_name = state_names.get(state_code, f"State({state_code})")
 
         PARKING_LOT_EVENTS.append({
@@ -1281,11 +1285,9 @@ def build_parking_lot_markers():
 
     # Apply state colors - based on current state
     APPLY_CONFIG = {
-        "Idle": {"color": "#64748b", "icon": "⚪", "label": "유휴"},
-        "EnterCandidate": {"color": "#f59e0b", "icon": "🟡", "label": "후보 진입"},
-        "EnterReady": {"color": "#f97316", "icon": "🟠", "label": "진입 준비"},
-        "ParkingLot": {"color": "#ef4444", "icon": "🔴", "label": "주차장 중"},
-        "ExitReady": {"color": "#8b5cf6", "icon": "🟣", "label": "탈출 준비"},
+        "EnterCandidate": {"color": "#f59e0b", "icon": "🟡", "label": "주차장 후보", "dashed": True},
+        "EnterReady": {"color": "#f97316", "icon": "🟠", "label": "주차장 진입 준비", "dashed": True},
+        "ParkingLot": {"color": "#000000", "icon": "🔴", "label": "주차장 중", "dashed": False},
     }
 
     for event in PARKING_LOT_EVENTS:
@@ -1294,7 +1296,7 @@ def build_parking_lot_markers():
         if event_type == "ParkingLot Apply":
             # ApplyParkingLotDetector events
             state = event.get("state", "Unknown")
-            config = APPLY_CONFIG.get(state, {"color": "#6b7280", "icon": "⚪", "label": state})
+            config = APPLY_CONFIG.get(state, {"color": "#6b7280", "icon": "⚪", "label": state, "dashed": False})
 
             marker = {
                 "id": event_id_counter,
@@ -1310,6 +1312,7 @@ def build_parking_lot_markers():
                     "candidate_count": event.get("candidate_count", 0),
                     "best_link_id": event.get("best_link_id", -1),
                     "icon": config["icon"],
+                    "dashed": config.get("dashed", False),
                 },
                 "timestamp_ms": int(event["timestamp"].timestamp() * 1000) if event["timestamp"] else 0,
                 "timestamp_str": event["timestamp"].strftime("%Y/%m/%d %H:%M:%S.%f")[:-3] if event["timestamp"] else "",

@@ -6417,14 +6417,16 @@ function visualizeGuideEventsFromLog() {
         parkingLotMarkers.forEach((markerData) => {
             const icon = markerData.extra?.icon || '🅿️';
             const color = markerData.color || '#6b7280';
+            const isDashed = markerData.extra?.dashed || false;
 
             const markerObj = L.circleMarker([markerData.latitude, markerData.longitude], {
                 radius: 7,
                 color: color,
-                weight: 2,
-                fill: true,
+                weight: isDashed ? 1 : 2.5,
+                dashArray: isDashed ? '5, 3' : null,
+                fill: !isDashed,
                 fillColor: color,
-                fillOpacity: 0.8,
+                fillOpacity: isDashed ? 0.3 : 0.8,
                 pane: 'markerPane'
             });
 
