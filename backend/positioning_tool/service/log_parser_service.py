@@ -1401,6 +1401,7 @@ def build_guide_event_markers():
 
 
 def build_runtime_payload():
+    print(f'[DEBUG] build_runtime_payload start: PARKING_LOT_EVENTS = {len(PARKING_LOT_EVENTS)}')
     all_coords = [coord.to_json() for coords in COORDINATES.values() for coord in coords]
     all_lines = [line.to_json() for lines in LINES.values() for line in lines]
 
@@ -1409,6 +1410,7 @@ def build_runtime_payload():
 
     # Extract parking lot state markers from DR-based coordinates with parking state
     parking_lot_state_markers = build_parking_lot_state_markers(all_coords)
+    print(f'[DEBUG] build_runtime_payload: created parking_lot_state_markers = {len(parking_lot_state_markers)}')
 
     # Convert guide events and SDI events to marker coordinates
     all_coords.extend(build_guide_event_markers())
@@ -1437,13 +1439,19 @@ def build_parking_lot_state_markers(coords):
     markers = []
     marker_id_counter = 30000  # Start from 30000 to avoid conflicts
 
+    dr_based_count = 0
+    with_parking_state = 0
+
     for coord in coords:
         if coord.get('type') != 'DR-based':
             continue
 
+        dr_based_count += 1
         parking_state = coord.get('extra', {}).get('parking_state')
         if not parking_state:
             continue
+
+        with_parking_state += 1
 
         # Set color based on parking state
         if parking_state == 'ParkingLot':
@@ -1473,16 +1481,19 @@ def build_parking_lot_state_markers(coords):
         markers.append(marker)
         marker_id_counter += 1
 
+    print(f'[DEBUG] build_parking_lot_state_markers: DR-based={dr_based_count}, with_parking_state={with_parking_state}, markers created={len(markers)}')
     return markers
 
 
 def attach_parking_state_to_coords(coords):
     """Attach closest parking lot state to DR-based coordinates (only attach to extra, no color change)."""
+    print(f'[DEBUG] attach_parking_state_to_coords: PARKING_LOT_EVENTS count = {len(PARKING_LOT_EVENTS)}')
     if not PARKING_LOT_EVENTS:
         return
 
     # Sort parking events by timestamp for efficient matching
     sorted_events = sorted(PARKING_LOT_EVENTS, key=lambda e: e['timestamp'])
+    attached_count = 0
 
     for coord in coords:
         if coord.get('type') != 'DR-based':
@@ -1513,6 +1524,9 @@ def attach_parking_state_to_coords(coords):
             coord['extra']['parking_state'] = closest_event.get('state')
             coord['extra']['parking_candidate_count'] = closest_event.get('candidate_count', 0)
             coord['extra']['parking_best_link_id'] = closest_event.get('best_link_id', -1)
+            attached_count += 1
+
+    print(f'[DEBUG] attach_parking_state_to_coords: attached to {attached_count} DR-based coordinates')
 
 
 def write_data_to_json(out_path=None):
