@@ -4509,6 +4509,8 @@ function makePopupText(coordinate, coordtype) {
                 text += `<br>최고 매칭 Link ID: ${coordinate.extra.parking_best_link_id}`;
             }
         }
+
+        text += buildCandidateLinkPopupHtml(coordinate?.extra);
     }
 
     if (coordtype === "Request") {
@@ -4622,22 +4624,30 @@ function buildCandidateLinkPopupHtml(extra) {
     }).join('');
 
     return `
-        <div class="road-popup-subtitle" style="margin-top:8px;">Candidate Link</div>
+        <div class="road-popup-subtitle" style="margin-top:8px;">후보 링크 정보</div>
+        <div style="font-size:11px;color:#666;margin-bottom:4px;">각 링크의 매칭 점수 정보</div>
         <div class="road-popup-summary">
             <table class="road-popup-table">
                 <thead>
                     <tr>
                         <th>#</th>
-                        <th>LINK_ID</th>
-                        <th>BASE</th>
-                        <th>DIST</th>
-                        <th>ANGLE</th>
-                        <th>LANE</th>
-                        <th>TOTAL</th>
+                        <th>Link ID</th>
+                        <th>기본점수</th>
+                        <th>거리점수</th>
+                        <th>각도페널티</th>
+                        <th>차선보너스</th>
+                        <th>총점</th>
                     </tr>
                 </thead>
                 <tbody>${rows}</tbody>
             </table>
+            <div style="font-size:10px;color:#888;margin-top:6px;">
+                <div>• 기본점수: 후보 링크의 기본 매칭 점수</div>
+                <div>• 거리점수: 현재 위치와의 거리에 따른 점수</div>
+                <div>• 각도페널티: 진행 방향과의 각도 차이에 의한 감점</div>
+                <div>• 차선보너스: 차선 정보 일치도에 따른 가산점</div>
+                <div>• 총점: 모든 요소를 합산한 최종 점수 (높을수록 좋음)</div>
+            </div>
         </div>
     `;
 }
