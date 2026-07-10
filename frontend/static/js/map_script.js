@@ -436,33 +436,17 @@ function renderRouteInfoMarkers(lines) {
         const startMarker = L.marker(firstLine.start, {
             icon: buildTmapWaypointIcon('S', '#16a34a', '출발')
         }).bindPopup(
-            `<b>${routeLayerName} 출발점</b><br>` +
+            `<b>${routeLayerName} Start</b><br>` +
             `Lat: ${Number(firstLine.start[0]).toFixed(7)}<br>` +
             `Lon: ${Number(firstLine.start[1]).toFixed(7)}`
         );
         group.addLayer(startMarker);
 
-        // Mark intermediate waypoints (경유지)
-        for (let i = 0; i < sessionLines.length - 1; i++) {
-            const currentLine = sessionLines[i];
-            const nextLine = sessionLines[i + 1];
-            const viaPoint = currentLine.end;
-
-            const viaMarker = L.marker(viaPoint, {
-                icon: buildTmapWaypointIcon(String(i + 1), '#f59e0b', `경유${i + 1}`)
-            }).bindPopup(
-                `<b>${routeLayerName} 경유지 ${i + 1}</b><br>` +
-                `Lat: ${Number(viaPoint[0]).toFixed(7)}<br>` +
-                `Lon: ${Number(viaPoint[1]).toFixed(7)}`
-            );
-            group.addLayer(viaMarker);
-        }
-
         // Mark end point (도착)
         const endMarker = L.marker(lastLine.end, {
             icon: buildTmapWaypointIcon('E', '#dc2626', '도착')
         }).bindPopup(
-            `<b>${routeLayerName} 도착점</b><br>` +
+            `<b>${routeLayerName} End</b><br>` +
             `Lat: ${Number(lastLine.end[0]).toFixed(7)}<br>` +
             `Lon: ${Number(lastLine.end[1]).toFixed(7)}`
         );
