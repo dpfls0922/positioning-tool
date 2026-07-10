@@ -432,19 +432,37 @@ function renderRouteInfoMarkers(lines) {
         const firstLine = sessionLines[0];
         const lastLine = sessionLines[sessionLines.length - 1];
 
+        // Mark start point (출발)
         const startMarker = L.marker(firstLine.start, {
             icon: buildTmapWaypointIcon('S', '#16a34a', '출발')
         }).bindPopup(
-            `<b>${routeLayerName} Start</b><br>` +
+            `<b>${routeLayerName} 출발점</b><br>` +
             `Lat: ${Number(firstLine.start[0]).toFixed(7)}<br>` +
             `Lon: ${Number(firstLine.start[1]).toFixed(7)}`
         );
         group.addLayer(startMarker);
 
+        // Mark intermediate waypoints (경유지)
+        for (let i = 0; i < sessionLines.length - 1; i++) {
+            const currentLine = sessionLines[i];
+            const nextLine = sessionLines[i + 1];
+            const viaPoint = currentLine.end;
+
+            const viaMarker = L.marker(viaPoint, {
+                icon: buildTmapWaypointIcon(String(i + 1), '#f59e0b', `경유${i + 1}`)
+            }).bindPopup(
+                `<b>${routeLayerName} 경유지 ${i + 1}</b><br>` +
+                `Lat: ${Number(viaPoint[0]).toFixed(7)}<br>` +
+                `Lon: ${Number(viaPoint[1]).toFixed(7)}`
+            );
+            group.addLayer(viaMarker);
+        }
+
+        // Mark end point (도착)
         const endMarker = L.marker(lastLine.end, {
             icon: buildTmapWaypointIcon('E', '#dc2626', '도착')
         }).bindPopup(
-            `<b>${routeLayerName} End</b><br>` +
+            `<b>${routeLayerName} 도착점</b><br>` +
             `Lat: ${Number(lastLine.end[0]).toFixed(7)}<br>` +
             `Lon: ${Number(lastLine.end[1]).toFixed(7)}`
         );
@@ -455,7 +473,11 @@ function renderRouteInfoMarkers(lines) {
 function clearRouteInfoMarkerLayers() {
     Object.keys(featureGroups).forEach((name) => {
         if (name === ROUTE_INFO_MARKER_LAYER || name.startsWith(ROUTE_INFO_MARKER_LAYER_PREFIX)) {
-            featureGroups[name].clearLayers();
+            const layer = featureGroups[name];
+            layer.clearLayers();
+            map.removeLayer(layer);
+            delete featureGroups[name];
+            delete overlays[name];
         }
     });
 }
@@ -4312,8 +4334,8 @@ function drawParkingLotStateMarkers(coordsData) {
                 bubblingMouseEvents: false
             });
 
-            // Set high z-index to ensure parking lot markers appear above other markers
-            marker.setStyle({ zIndex: 1000 });
+            // Bring parking lot markers to front to ensure they appear above other markers
+            marker.bringToFront();
 
             marker.dlt_id = coord.dlt_id;
             marker.timestamp_ms = coord.timestamp_ms;
