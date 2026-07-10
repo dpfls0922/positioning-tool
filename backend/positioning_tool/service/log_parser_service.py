@@ -16,6 +16,8 @@ COORDINATES = {coord_type: [] for coord_type in CoordType}
 LINES = {line_type: [] for line_type in LineType}
 GUIDE_EVENTS = []  # C2X events and accident events
 SDI_EVENTS = []  # SDI (Safety Drive Information) events
+PARKING_LOT_EVENTS = []  # ParkingLot detector exit events
+last_gnss_coordinate = None  # Track last GNSS position for parking lot events
 min_timestamp = datetime.max
 max_timestamp = datetime.min
 last_road_match_state = None
@@ -48,6 +50,7 @@ DLT_RELEVANT_BYTE_KEYWORDS = [
     b"processContents",
     b"GetSdiSelected select",
     b"onDriveStatusChanged SDI",
+    b"ParkingLotDetector transition",
 ]
 
 SET_ROUTE_INFORMATION_PATTERN = re.compile(
@@ -110,6 +113,12 @@ SDI_DRIVE_STATUS_PATTERN = re.compile(
     r"onDriveStatusChanged\s+SDI\[(\d+)\].*?Speed\s*:\s*(\d+).*?pt\((-?\d+\.\d+),(-?\d+\.\d+)\)"
 )
 
+# ParkingLot Detector exit events:
+#   ParkingLotDetector transition: ParkingLot -> Idle, reason=exit_by_distance, trackedLinkId=12345, inputLinkId=12346, endpointDirection=None, fB=0.234, delta=0.150, dist=45.23
+PARKING_LOT_EXIT_PATTERN = re.compile(
+    r"ParkingLotDetector transition:\s*ParkingLot\s*->\s*Idle,\s*reason=([^,]+),\s*trackedLinkId=(\d+),\s*inputLinkId=(\d+)"
+)
+
 
 def lat_lon_dist(lat1, lon1, lat2, lon2):
     local_x = -(((lon2 - lon1) * DEG2RAD) * math.cos(DEG2RAD * lat1)) * EARTH_RADIUS
@@ -118,7 +127,7 @@ def lat_lon_dist(lat1, lon1, lat2, lon2):
 
 
 def reset_runtime_state():
-    global COORDINATES, LINES, GUIDE_EVENTS, SDI_EVENTS
+    global COORDINATES, LINES, GUIDE_EVENTS, SDI_EVENTS, PARKING_LOT_EVENTS, last_gnss_coordinate
     global min_timestamp, max_timestamp
     global last_road_match_state, last_route_match_state, last_threshold_info, log_base_timestamp, last_tvas_header_info
     global current_route_session_id, current_route_session_index, route_session_indices, route_session_sequence
@@ -128,6 +137,8 @@ def reset_runtime_state():
     LINES = {line_type: [] for line_type in LineType}
     GUIDE_EVENTS = []
     SDI_EVENTS = []
+    PARKING_LOT_EVENTS = []
+    last_gnss_coordinate = None
     min_timestamp = datetime.max
     max_timestamp = datetime.min
     last_road_match_state = None
@@ -145,7 +156,7 @@ def reset_runtime_state():
 
 def parse_log(log_file_path=None):
     global last_road_match_state, last_route_match_state, last_threshold_info
-    global log_base_timestamp, last_tvas_header_info
+    global log_base_timestamp, last_tvas_header_info, last_gnss_coordinate
     global current_route_session_id, current_route_session_index, route_session_indices, route_session_sequence
     global current_gnss_mode, pending_gnss_mode_transition
 
@@ -211,9 +222,10 @@ def parse_log(log_file_path=None):
                 route_session_sequence.setdefault(current_route_session_id, 0)
                 last_tvas_header_info = None
 
-            # Parse Guide Events (C2X, Accident) and SDI Events
+            # Parse Guide Events (C2X, Accident), SDI Events, and Parking Lot Events
             parse_guide_event(line, timestamp)
             parse_sdi_event(line, timestamp)
+            parse_parking_lot_event(line, timestamp)
 
             tvas_header_info = parse_tvas_header_info(line, last_tvas_header_info)
             if tvas_header_info is not None:
@@ -301,6 +313,9 @@ def parse_log(log_file_path=None):
                         temp_gnss1_coord.extra["gnss_transition_highlight"] = True
                         pending_gnss_mode_transition = None
 
+                    # Update last GNSS coordinate for parking lot events
+                    last_gnss_coordinate = {"latitude": gnss_lat, "longitude": gnss_lon}
+
                 elif coord_type == CoordType.GNSS2:
                     latitude = float(match.group(1)) / 10000000
                     longitude = float(match.group(2)) / 10000000
@@ -321,6 +336,9 @@ def parse_log(log_file_path=None):
                         extra={"Speed": speed, "source": "gnss_line"},
                         timestamp=timestamp,
                     )
+
+                    # Update last GNSS coordinate for parking lot events
+                    last_gnss_coordinate = {"latitude": latitude, "longitude": longitude}
 
                 elif coord_type == CoordType.DR:
                     latitude = float(match.group(1))
@@ -944,6 +962,43 @@ def parse_sdi_event(line, timestamp):
     return False
 
 
+def parse_parking_lot_event(line, timestamp):
+    """Parse ParkingLot detector exit events from navisdk logs.
+
+    ParkingLotDetector transition: ParkingLot -> Idle, reason=exit_by_distance, trackedLinkId=12345, inputLinkId=12346, ...
+    """
+    global PARKING_LOT_EVENTS, last_gnss_coordinate
+
+    match = PARKING_LOT_EXIT_PATTERN.search(line)
+    if not match:
+        return False
+
+    reason = match.group(1)
+    tracked_link_id = int(match.group(2))
+    input_link_id = int(match.group(3))
+
+    # Use last known GNSS coordinate if available
+    if last_gnss_coordinate is None:
+        return False
+
+    latitude = last_gnss_coordinate.get('latitude')
+    longitude = last_gnss_coordinate.get('longitude')
+
+    if not (30.0 < latitude < 45.0 and 120.0 < longitude < 135.0):
+        return False
+
+    PARKING_LOT_EVENTS.append({
+        "type": "ParkingLot Exit",
+        "reason": reason,
+        "tracked_link_id": tracked_link_id,
+        "input_link_id": input_link_id,
+        "latitude": latitude,
+        "longitude": longitude,
+        "timestamp": timestamp,
+    })
+    return True
+
+
 def parse_guide_event(line, timestamp):
     """Parse C2X events and TMAP incident (MFS) events with actual coordinates.
 
@@ -1165,6 +1220,56 @@ def build_sdi_markers():
     return markers
 
 
+def build_parking_lot_markers():
+    """Convert PARKING_LOT_EVENTS to marker format."""
+    if not PARKING_LOT_EVENTS:
+        return []
+
+    markers = []
+    event_id_counter = 30000  # Start from 30000 to avoid conflicts
+    seen = set()
+
+    REASON_NAMES = {
+        "exit_by_distance": "거리 기반 탈출",
+        "exit_by_projection": "프로젝션 기반 탈출",
+        "exit_by_projection_delta": "프로젝션 델타 기반 탈출",
+    }
+
+    for event in PARKING_LOT_EVENTS:
+        # Dedupe by position to avoid duplicate markers at same location
+        dedupe_key = (event["latitude"], event["longitude"])
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+
+        reason = event["reason"]
+        reason_name = REASON_NAMES.get(reason, reason)
+
+        marker = {
+            "id": event_id_counter,
+            "dlt_id": None,
+            "type": "Parking Lot Exit",
+            "latitude": event["latitude"],
+            "longitude": event["longitude"],
+            "heading": None,
+            "extra": {
+                "event_type": "ParkingLot",
+                "reason": reason,
+                "reason_name": reason_name,
+                "tracked_link_id": event["tracked_link_id"],
+                "input_link_id": event["input_link_id"],
+            },
+            "timestamp_ms": int(event["timestamp"].timestamp() * 1000) if event["timestamp"] else 0,
+            "timestamp_str": event["timestamp"].strftime("%Y/%m/%d %H:%M:%S.%f")[:-3] if event["timestamp"] else "",
+            "color": "#e74c3c",  # Red for parking lot exits
+            "fill": True,
+        }
+        markers.append(marker)
+        event_id_counter += 1
+
+    return markers
+
+
 def build_guide_event_markers():
     """Convert GUIDE_EVENTS to marker format. Coordinates come directly from the log."""
     if not GUIDE_EVENTS:
@@ -1211,9 +1316,10 @@ def build_runtime_payload():
     all_coords = [coord.to_json() for coords in COORDINATES.values() for coord in coords]
     all_lines = [line.to_json() for lines in LINES.values() for line in lines]
 
-    # Convert guide events and SDI events to marker coordinates
+    # Convert guide events, SDI events, and parking lot events to marker coordinates
     all_coords.extend(build_guide_event_markers())
     all_coords.extend(build_sdi_markers())
+    all_coords.extend(build_parking_lot_markers())
 
     all_coords.sort(key=lambda c: c.get("id") if c.get("id") is not None else 0)
     all_lines.sort(key=lambda l: l.get("id") if l.get("id") is not None else 0)
