@@ -31,6 +31,7 @@ route_session_indices = {}
 route_session_sequence = {}
 current_gnss_mode = None
 pending_gnss_mode_transition = None
+ROUTE_REQUEST_POINTS = {}  # content_id(str) -> {depart, waypoints{idx: point}, dest}
 DLT_RELEVANT_BYTE_KEYWORDS = [
     b"[GPS]",
     b"[GNSS]",
@@ -52,6 +53,9 @@ DLT_RELEVANT_BYTE_KEYWORDS = [
     b"onDriveStatusChanged SDI",
     b"ApplyParkingLotDetector",
     b"ParkingLotDetector transition",
+    b"TVAS server route",
+    b"online request [",
+    b"[TVAS Header]",
 ]
 
 SET_ROUTE_INFORMATION_PATTERN = re.compile(
@@ -66,6 +70,19 @@ TVAS_HEADER_TOTAL_TIME_PATTERN = re.compile(r"navisdk :: \[\[TVAS Header\] : \d+
 TVAS_HEADER_TOTAL_DIST_PATTERN = re.compile(r"navisdk :: \[\[TVAS Header\] : \d+\] TotalDist = (\-?\d+)")
 TVAS_SERVER_SESSION_PATTERN = re.compile(
     r"TVAS server route nSessionID\s*:\s*([^,\s]+),\s*errorcode\s*:\s*([^,\s]+)"
+)
+# Route request point logs (SK coordinates; converted to WGS84 on the frontend):
+#   NaviProcessorInternal::online request [10000013]: departName = ..., departXPos = ..., departYPos = ...
+#   NaviProcessorInternal::online request [10000013]: wayPoint 0: fixed = 1, wayPointName = ..., destXPos = ..., destYPos = ...
+#   NaviProcessorInternal::online request [10000013]: destName = ..., destXPos = ..., destYPos = ...
+ROUTE_REQ_DEPART_PATTERN = re.compile(
+    r"online request \[(\d+)\]:\s*departName = (.*?),\s*departXPos = (-?\d+),\s*departYPos = (-?\d+)"
+)
+ROUTE_REQ_WAYPOINT_PATTERN = re.compile(
+    r"online request \[(\d+)\]:\s*wayPoint (\d+):\s*fixed = (-?\d+),\s*wayPointName = (.*?),\s*destXPos = (-?\d+),\s*destYPos = (-?\d+)"
+)
+ROUTE_REQ_DEST_PATTERN = re.compile(
+    r"online request \[(\d+)\]:\s*destName = (.*?),\s*destXPos = (-?\d+),\s*destYPos = (-?\d+)"
 )
 GNSS_MODE_EVENT_PATTERN = re.compile(
     r"GNSS mode:\s*event=([A-Za-z_]+)\s+from=([A-Za-z_]+)\s+to=([A-Za-z_]+)"
@@ -140,11 +157,14 @@ def reset_runtime_state():
     global current_route_session_id, current_route_session_index, route_session_indices, route_session_sequence
     global current_gnss_mode, pending_gnss_mode_transition
 
+    global ROUTE_REQUEST_POINTS
+
     COORDINATES = {coord_type: [] for coord_type in CoordType}
     LINES = {line_type: [] for line_type in LineType}
     GUIDE_EVENTS = []
     SDI_EVENTS = []
     PARKING_LOT_EVENTS = []
+    ROUTE_REQUEST_POINTS = {}
     last_gnss_coordinate = None
     min_timestamp = datetime.max
     max_timestamp = datetime.min
@@ -240,6 +260,7 @@ def parse_log(log_file_path=None):
             parse_guide_event(line, timestamp)
             parse_sdi_event(line, timestamp)
             parse_parking_lot_event(line, timestamp)
+            parse_route_request_points(line)
 
             tvas_header_info = parse_tvas_header_info(line, last_tvas_header_info)
             if tvas_header_info is not None:
@@ -563,6 +584,13 @@ def parse_log(log_file_path=None):
                         )
                         COORDINATES[coord_type].append(request_coordinate)
                         pending_route_request_coords.append(request_coordinate)
+                        # Start a provisional per-request session so subsequent
+                        # setRouteInformation dumps group under THIS request even
+                        # when the TVAS session-id line is absent from the log.
+                        # A real session id (if logged) overrides this via backfill.
+                        current_route_session_id = f"REQ_{extra_info['group_1']}"
+                        current_route_session_index = 0
+                        request_coordinate.extra["route_session_id"] = current_route_session_id
 
                 # Do not stop at first match. One physical line can contain
                 # multiple embedded DLT records in this log format.
@@ -1149,6 +1177,67 @@ def parse_route_session_info(line):
     }
 
 
+def parse_route_request_points(line):
+    """Collect per-request depart/waypoint/destination points (SK coordinates)."""
+    match = ROUTE_REQ_WAYPOINT_PATTERN.search(line)
+    if match:
+        entry = ROUTE_REQUEST_POINTS.setdefault(match.group(1), {"waypoints": {}})
+        entry.setdefault("waypoints", {})[int(match.group(2))] = {
+            "name": match.group(4).strip(),
+            "sk_x": int(match.group(5)),
+            "sk_y": int(match.group(6)),
+        }
+        return True
+
+    match = ROUTE_REQ_DEPART_PATTERN.search(line)
+    if match:
+        entry = ROUTE_REQUEST_POINTS.setdefault(match.group(1), {"waypoints": {}})
+        entry["depart"] = {
+            "name": match.group(2).strip(),
+            "sk_x": int(match.group(3)),
+            "sk_y": int(match.group(4)),
+        }
+        return True
+
+    match = ROUTE_REQ_DEST_PATTERN.search(line)
+    if match:
+        entry = ROUTE_REQUEST_POINTS.setdefault(match.group(1), {"waypoints": {}})
+        entry["dest"] = {
+            "name": match.group(2).strip(),
+            "sk_x": int(match.group(3)),
+            "sk_y": int(match.group(4)),
+        }
+        return True
+
+    return False
+
+
+def attach_route_points_to_requests(coords):
+    """Attach ordered [출발지, 경유지..., 목적지] set to each Request coordinate."""
+    if not ROUTE_REQUEST_POINTS:
+        return
+
+    for coord in coords:
+        if coord.get('type') != 'Request':
+            continue
+
+        content_id = str(coord.get('extra', {}).get('group_1') or '')
+        points = ROUTE_REQUEST_POINTS.get(content_id)
+        if not points:
+            continue
+
+        ordered = []
+        if points.get('depart'):
+            ordered.append({"role": "출발지", **points['depart']})
+        for idx in sorted(points.get('waypoints', {})):
+            ordered.append({"role": "경유지", "waypoint_index": idx, **points['waypoints'][idx]})
+        if points.get('dest'):
+            ordered.append({"role": "목적지", **points['dest']})
+
+        if ordered:
+            coord['extra']['route_points'] = ordered
+
+
 def parse_gnss_mode_info(line):
     event_match = GNSS_MODE_EVENT_PATTERN.search(line)
     if event_match:
@@ -1418,6 +1507,9 @@ def build_runtime_payload():
 
     # Attach parking lot state information to DR-based coordinates
     attach_parking_state_to_coords(all_coords)
+
+    # Attach [출발지, 경유지..., 목적지] point sets to Request coordinates
+    attach_route_points_to_requests(all_coords)
 
     # Extract parking lot state markers from DR-based coordinates with parking state
     parking_lot_state_markers = build_parking_lot_state_markers(all_coords)
