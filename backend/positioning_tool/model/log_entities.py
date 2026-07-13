@@ -9,7 +9,7 @@ GOOD_MATCH_STATES = ["MATCH_OK_TRANSIENT", "MATCH_OK_GOOD"]
 class CoordType(Enum):
     GNSS1 = (
         "Filtered GNSS",
-        "yellow",
+        "#14b8a6",  # 청록(teal) — DR 계열(빨강/주황/검정)과 구분
         re.compile(r"\[GPS\] (\d+\.\d+), (\d+\.\d+), (\d+\.\d+), [^,]+, (\d+\.\d+).*?DR : (\d+\.\d+), (\d+\.\d+)")
     )
     GNSS2 = (
@@ -57,9 +57,9 @@ class CoordType(Enum):
                 return "#22c55e"
             gnss_mode = str(coord.extra.get("gnss_mode", "")).strip()
             if gnss_mode == "BusSleep":
-                return "#f97316"
+                return "#d946ef"  # 마젠타 — 기존 주황은 DR(isDRGps=0)과 겹침
             if gnss_mode == "Normal":
-                return "#facc15"
+                return "#14b8a6"  # 청록 — 기존 노랑은 DR 주황과 혼동
         if self == CoordType.DR:
             if coord.extra.get("mm_feedback"):
                 return "black"

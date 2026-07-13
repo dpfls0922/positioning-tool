@@ -5716,7 +5716,7 @@ function getLayerSwatchColor(name) {
     const swatches = {
         'Road Link Vertex': '#f8fafc',
         'Raw GNSS': '#a855f7',
-        'Filtered GNSS': '#facc15',
+        'Filtered GNSS': '#14b8a6',
         'DR-based': '#ef4444',
         'Road Match': '#22d3ee',
         'Route Match': '#84cc16',
