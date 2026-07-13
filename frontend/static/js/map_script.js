@@ -3,11 +3,6 @@ const highlightLayer = L.layerGroup().addTo(map);
 const roadCanvasRenderer = L.canvas({ padding: 0.25 });
 const roadCanvasRendererNode = L.canvas({ padding: 0.25 });
 
-// Dedicated pane for Parking Lot State markers: separate canvas above the default
-// overlayPane (z-index 400), so these markers always render on top of DR-based etc.
-map.createPane('parkingLotPane');
-map.getPane('parkingLotPane').style.zIndex = 650;
-const parkingLotRenderer = L.canvas({ padding: 0.25, pane: 'parkingLotPane' });
 
 const baseLayers = {
     "Google Maps": L.tileLayer('http://mt0.google.com/vt/lyrs=m&hl=ko&x={x}&y={y}&z={z}', {
@@ -4277,6 +4272,7 @@ function drawMarkers(coordinates) {
             drawRequestGroupMarkers(requestGroups, markers);
             refreshDrSelectionStyles();
             addOverlayLayers(featureGroups);
+            bringParkingLotMarkersToFront();
         }
     }
 
@@ -4286,6 +4282,7 @@ function drawMarkers(coordinates) {
         drawRequestGroupMarkers(requestGroups, markers);
         refreshDrSelectionStyles();
         addOverlayLayers(featureGroups);
+        bringParkingLotMarkersToFront();
     }
 }
 
@@ -4323,8 +4320,6 @@ function drawParkingLotStateMarkers(coordsData) {
                 weight: 1,
                 fill: true,
                 fillOpacity: 0.8,
-                pane: 'parkingLotPane',  // Dedicated pane (z-index 650) above default overlayPane (400)
-                renderer: parkingLotRenderer,
                 bubblingMouseEvents: false
             });
 
@@ -4361,6 +4356,7 @@ function drawParkingLotStateMarkers(coordsData) {
             requestAnimationFrame(() => processBatch(endIndex));
         } else {
             addOverlayLayers(featureGroups);
+            bringParkingLotMarkersToFront();
         }
     }
 
@@ -4369,6 +4365,18 @@ function drawParkingLotStateMarkers(coordsData) {
     } else {
         addOverlayLayers(featureGroups);
     }
+}
+
+// Re-order the shared canvas draw list so Parking Lot State markers paint last
+// (= on top). Called after each batched render completes; whichever of
+// drawMarkers / drawParkingLotStateMarkers finishes last wins, so parking
+// markers always end up above DR-based / Road Match markers.
+function bringParkingLotMarkersToFront() {
+    parkingLotStateMarkers.forEach((marker) => {
+        if (marker._map && typeof marker.bringToFront === 'function') {
+            marker.bringToFront();
+        }
+    });
 }
 
 function drawRequestGroupMarkers(requestGroups, markers) {
