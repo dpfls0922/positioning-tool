@@ -133,7 +133,12 @@ def create_log_controller() -> Blueprint:
 
     @bp.get("/")
     def index():
-        return render_html([], [])
+        # map_script.js is inlined into this HTML at render time; forbid caching
+        # so the browser always gets the latest frontend code on reload.
+        response = Response(render_html([], []), mimetype="text/html")
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        return response
 
     @bp.post("/api/parse-log")
     def parse_log_api():
