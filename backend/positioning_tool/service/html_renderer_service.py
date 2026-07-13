@@ -602,12 +602,17 @@ def add_legend():
                 </label>
             </div>
             <div><i style="background:purple; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> Raw GNSS</div>
-            <div><i style="background:yellow; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> Filtered GNSS</div>
-            <div><i style="background:orange; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> GNSS-based</div>
+            <div><i style="background:#14b8a6; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> Filtered GNSS (일반)</div>
+            <div><i style="background:#d946ef; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> Filtered GNSS (BusSleep)</div>
+            <div><i style="background:#22c55e; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> Filtered GNSS (모드 전환)</div>
             <div><i style="background:red; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> DR-based</div>
+            <div><i style="background:orange; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> DR-based (isDRGps=0)</div>
+            <div><i style="background:black; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> DR-based (MM Feedback)</div>
             <div><i style="background:cyan; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> Road Match</div>
             <div><i style="background:lime; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> Route Match</div>
             <div><i style="background:blue; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> VPM</div>
+            <div><i style="background:#808080; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> 주차장 상태 (ParkingLot)</div>
+            <div><i style="background:#ff1493; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> 주차장 상태 (진입 평가/준비)</div>
             <div><img src="https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-grey.png" style="width:10px; height:15px; display:inline-block;"> Request</div>
         </div>
     </div>
