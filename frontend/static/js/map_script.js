@@ -426,40 +426,64 @@ function renderRouteInfoMarkers(lines) {
     });
 
     sessionMap.forEach((sessionLines, routeLayerName) => {
-        const markerLayerName = getRouteInfoMarkerLayerName(routeLayerName);
-        const group = ensureTmapFeatureGroup(markerLayerName);
-        group.clearLayers();
+        // Route point markers live INSIDE the same "Route Info N" layer as the
+        // route polylines — one layer per request, toggled together.
+        const group = ensureTmapFeatureGroup(routeLayerName);
+        removeRoutePointMarkersFromGroup(group);
 
         const firstLine = sessionLines[0];
         const lastLine = sessionLines[sessionLines.length - 1];
 
         // Prefer the request's own [출발지, 경유지..., 목적지] set when available
         const request = findRequestForRouteSession(sessionLines[0]?.extra?.route_session_id);
-        const routePointMarkers = buildRoutePointSetMarkers(request, routeLayerName);
+        let routePointMarkers = buildRoutePointSetMarkers(request, routeLayerName);
 
-        if (routePointMarkers.length > 0) {
-            routePointMarkers.forEach((marker) => group.addLayer(marker));
-            return;
+        if (routePointMarkers.length === 0) {
+            // Fallback: first/last parsed segment endpoints
+            routePointMarkers = [
+                L.marker(firstLine.start, { icon: buildRoutePointIcon('S', '#16a34a', '출발') })
+                    .bindPopup(
+                        `<b>${routeLayerName} Start</b><br>` +
+                        `Lat: ${Number(firstLine.start[0]).toFixed(7)}<br>` +
+                        `Lon: ${Number(firstLine.start[1]).toFixed(7)}`
+                    ),
+                L.marker(lastLine.end, { icon: buildRoutePointIcon('E', '#dc2626', '도착') })
+                    .bindPopup(
+                        `<b>${routeLayerName} End</b><br>` +
+                        `Lat: ${Number(lastLine.end[0]).toFixed(7)}<br>` +
+                        `Lon: ${Number(lastLine.end[1]).toFixed(7)}`
+                    )
+            ];
         }
 
-        // Fallback: first/last parsed segment endpoints
-        const startMarker = L.marker(firstLine.start, {
-            icon: buildTmapWaypointIcon('S', '#16a34a', '출발')
-        }).bindPopup(
-            `<b>${routeLayerName} Start</b><br>` +
-            `Lat: ${Number(firstLine.start[0]).toFixed(7)}<br>` +
-            `Lon: ${Number(firstLine.start[1]).toFixed(7)}`
-        );
-        group.addLayer(startMarker);
+        routePointMarkers.forEach((marker) => {
+            marker._isRoutePointMarker = true;
+            group.addLayer(marker);
+        });
+    });
+}
 
-        const endMarker = L.marker(lastLine.end, {
-            icon: buildTmapWaypointIcon('E', '#dc2626', '도착')
-        }).bindPopup(
-            `<b>${routeLayerName} End</b><br>` +
-            `Lat: ${Number(lastLine.end[0]).toFixed(7)}<br>` +
-            `Lon: ${Number(lastLine.end[1]).toFixed(7)}`
-        );
-        group.addLayer(endMarker);
+function removeRoutePointMarkersFromGroup(group) {
+    if (!group) return;
+    const stale = [];
+    group.eachLayer((layer) => {
+        if (layer._isRoutePointMarker) stale.push(layer);
+    });
+    stale.forEach((layer) => group.removeLayer(layer));
+}
+
+// Compact circular waypoint icon for route point sets (smaller than the
+// Tmap route planner icons so parsed routes stay readable at a glance)
+function buildRoutePointIcon(label, bgColor, subLabel) {
+    return L.divIcon({
+        className: '',
+        iconSize: [22, 32],
+        iconAnchor: [11, 11],
+        html:
+            `<div style="display:flex;flex-direction:column;align-items:center">` +
+            `<div style="width:22px;height:22px;line-height:22px;text-align:center;background:${bgColor};color:#fff;border-radius:50%;font-size:11px;font-weight:700;box-shadow:0 2px 6px rgba(0,0,0,.25);border:2px solid #fff">${label}</div>` +
+            `<div style="margin-top:1px;padding:0 4px;background:rgba(15,23,42,0.75);color:#fff;font-size:8px;font-weight:600;border-radius:6px;white-space:nowrap">${subLabel}</div>` +
+            `</div>`
     });
 }
 
@@ -496,12 +520,12 @@ function buildRoutePointSetMarkers(request, layerLabel) {
 
         let icon;
         if (point.role === '출발지') {
-            icon = buildTmapWaypointIcon('S', '#16a34a', '출발');
+            icon = buildRoutePointIcon('S', '#16a34a', '출발');
         } else if (point.role === '목적지') {
-            icon = buildTmapWaypointIcon('E', '#dc2626', '도착');
+            icon = buildRoutePointIcon('E', '#dc2626', '도착');
         } else {
             viaCounter += 1;
-            icon = buildTmapWaypointIcon(String(viaCounter), '#f59e0b', `경유${viaCounter}`);
+            icon = buildRoutePointIcon(String(viaCounter), '#f59e0b', `경유${viaCounter}`);
         }
 
         const nameRow = point.name ? `<br>이름: ${escapeHtml(point.name)}` : '';
@@ -6380,7 +6404,7 @@ function handleRequestIdSearch() {
             const destLon = lastRoute.extra?.route_end_lon;
             if (destLat !== undefined && destLon !== undefined) {
                 L.marker([destLat, destLon], {
-                    icon: buildTmapWaypointIcon('E', '#dc2626', '도착'),
+                    icon: buildRoutePointIcon('E', '#dc2626', '도착'),
                     interactive: false
                 }).addTo(highlightLayer);
             }
