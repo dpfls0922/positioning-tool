@@ -32,6 +32,7 @@ route_session_sequence = {}
 current_gnss_mode = None
 pending_gnss_mode_transition = None
 ROUTE_REQUEST_POINTS = {}  # content_id(str) -> {depart, waypoints{idx: point}, dest}
+ROUTE_SESSION_CONTENT_IDS = {}  # route_session_id -> request content_id(str)
 DLT_RELEVANT_BYTE_KEYWORDS = [
     b"[GPS]",
     b"[GNSS]",
@@ -157,7 +158,7 @@ def reset_runtime_state():
     global current_route_session_id, current_route_session_index, route_session_indices, route_session_sequence
     global current_gnss_mode, pending_gnss_mode_transition
 
-    global ROUTE_REQUEST_POINTS
+    global ROUTE_REQUEST_POINTS, ROUTE_SESSION_CONTENT_IDS
 
     COORDINATES = {coord_type: [] for coord_type in CoordType}
     LINES = {line_type: [] for line_type in LineType}
@@ -165,6 +166,7 @@ def reset_runtime_state():
     SDI_EVENTS = []
     PARKING_LOT_EVENTS = []
     ROUTE_REQUEST_POINTS = {}
+    ROUTE_SESSION_CONTENT_IDS = {}
     last_gnss_coordinate = None
     min_timestamp = datetime.max
     max_timestamp = datetime.min
@@ -254,6 +256,7 @@ def parse_log(log_file_path=None):
                 # to any pending Request coordinates so they can be matched later.
                 for pending_request in pending_route_request_coords:
                     pending_request.extra["route_session_id"] = current_route_session_id
+                    ROUTE_SESSION_CONTENT_IDS[current_route_session_id] = pending_request.extra.get("group_1")
                 pending_route_request_coords = []
 
             # Parse Guide Events (C2X, Accident), SDI Events, and Parking Lot Events
@@ -284,7 +287,13 @@ def parse_log(log_file_path=None):
                 route_session_sequence[session_id] = route_session_sequence.get(session_id, 0) + 1
                 route_info["extra"]["route_session_id"] = session_id
                 route_info["extra"]["route_session_index"] = session_index
-                route_info["extra"]["route_session_name"] = f"Route Info {session_index}"
+                # Name route layers by the request content id (e.g. 'Route Info 10000013')
+                # so each layer is directly identifiable; fall back to session index.
+                request_content_id = ROUTE_SESSION_CONTENT_IDS.get(session_id)
+                route_info["extra"]["request_content_id"] = request_content_id
+                route_info["extra"]["route_session_name"] = (
+                    f"Route Info {request_content_id}" if request_content_id else f"Route Info {session_index}"
+                )
                 route_info["extra"]["route_sequence"] = route_session_sequence[session_id]
                 if last_tvas_header_info:
                     route_info["extra"]["tvas_header"] = dict(last_tvas_header_info)
@@ -591,6 +600,7 @@ def parse_log(log_file_path=None):
                         current_route_session_id = f"REQ_{extra_info['group_1']}"
                         current_route_session_index = 0
                         request_coordinate.extra["route_session_id"] = current_route_session_id
+                        ROUTE_SESSION_CONTENT_IDS[current_route_session_id] = extra_info["group_1"]
 
                 # Do not stop at first match. One physical line can contain
                 # multiple embedded DLT records in this log format.

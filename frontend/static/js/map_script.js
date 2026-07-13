@@ -4267,6 +4267,9 @@ function drawMarkers(coordinates) {
         for (let i = startIndex; i < endIndex; i++) {
             const coord = coordinates[i];
             const coordtype = coord.type;
+            // 'Route Info' coords exist only for request-route search; the route
+            // itself is drawn as polylines — never as circle markers.
+            if (coordtype === 'Route Info') continue;
             const latitude = coord.latitude;
             const longitude = coord.longitude;
             if (latitude === undefined || longitude === undefined) continue;
