@@ -4485,6 +4485,17 @@ function drawRequestGroupMarkers(requestGroups, markers) {
             })
         });
 
+        // Same-position requests are merged into one marker; show how many
+        // are stacked here so multiple requests from one spot stay visible.
+        if (members.length > 1) {
+            marker.bindTooltip(`×${members.length}`, {
+                permanent: true,
+                direction: 'right',
+                offset: [10, -18],
+                className: 'request-count-badge'
+            });
+        }
+
         if (members.length === 1) {
             const coord = members[0];
             marker.dlt_id = coord.dlt_id;

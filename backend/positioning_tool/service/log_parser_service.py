@@ -536,7 +536,22 @@ def parse_log(log_file_path=None):
                         )
 
                 elif coord_type == CoordType.REQUEST:
-                    if last_vpm_coordinate:
+                    # Anchor the request marker to the best-known position.
+                    # Fall back to DR / raw GNSS so requests fired before the
+                    # first map-matched (VPM) fix are not silently dropped.
+                    request_anchor = last_vpm_coordinate or last_dr_coordinate
+                    if request_anchor is not None:
+                        anchor_lat = request_anchor.latitude
+                        anchor_lon = request_anchor.longitude
+                        anchor_heading = request_anchor.heading
+                    elif last_gnss_coordinate:
+                        anchor_lat = last_gnss_coordinate.get("latitude")
+                        anchor_lon = last_gnss_coordinate.get("longitude")
+                        anchor_heading = None
+                    else:
+                        anchor_lat = anchor_lon = anchor_heading = None
+
+                    if anchor_lat is not None and anchor_lon is not None:
                         group2_value = int(match.group(2))
                         group2_enum = RouteRequestType.get_type_by_value(group2_value)
                         extra_info = {
@@ -585,9 +600,9 @@ def parse_log(log_file_path=None):
                             id=current_id - 1,
                             dlt_id=dlt_id,
                             type=coord_type,
-                            latitude=last_vpm_coordinate.latitude,
-                            longitude=last_vpm_coordinate.longitude,
-                            heading=last_vpm_coordinate.heading,
+                            latitude=anchor_lat,
+                            longitude=anchor_lon,
+                            heading=anchor_heading,
                             extra=extra_info,
                             timestamp=timestamp,
                         )

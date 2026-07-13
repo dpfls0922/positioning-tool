@@ -1330,3 +1330,18 @@ html, body {
         top: 58%;
     }
 }
+
+/* Count badge for merged same-position Request markers */
+.request-count-badge {
+    background: #475569;
+    color: #fff;
+    border: 1px solid #fff;
+    border-radius: 8px;
+    padding: 0 4px;
+    font-size: 10px;
+    font-weight: 700;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, .3);
+}
+.request-count-badge::before {
+    display: none;
+}
