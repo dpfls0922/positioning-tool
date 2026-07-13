@@ -1524,8 +1524,8 @@ def build_route_info_markers(lines):
             "heading": None,
             "color": "#e91e63",  # Deep pink for route info
             "fill": False,
-            "timestamp_ms": 0,
-            "timestamp_str": "",
+            "timestamp_ms": line.get('timestamp_ms'),
+            "timestamp_str": line.get('timestamp_str', ''),
             "extra": {
                 "route_session_id": line.get('extra', {}).get('route_session_id'),
                 "link_id": line.get('extra', {}).get('link_id'),
@@ -1534,6 +1534,7 @@ def build_route_info_markers(lines):
                 "route_end_lat": end_lat,
                 "route_end_lon": end_lon,
                 "route_session_index": line.get('extra', {}).get('route_session_index'),
+                "route_sequence": line.get('extra', {}).get('route_sequence'),
             }
         }
         markers.append(marker)

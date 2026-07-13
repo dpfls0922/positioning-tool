@@ -6209,37 +6209,50 @@ function handleRequestIdSearch() {
         return;
     }
 
-    // Find request by ID, DLT ID, or Content ID (group_1)
+    // Find request: Content ID (group_1) match first, then marker ID / DLT ID
     const searchNum = Number(searchValue);
-    const request = markersData.find(m =>
-        m.type === 'Request' &&
-        (m.id === searchNum ||
-         m.dlt_id === searchNum ||
-         m.extra?.group_1 === searchValue)
-    );
+    const requestMarkers = markersData.filter(m => m.type === 'Request');
+    const request =
+        requestMarkers.find(m => String(m.extra?.group_1 ?? '').trim() === searchValue) ||
+        requestMarkers.find(m => m.id === searchNum || m.dlt_id === searchNum);
 
     if (!request) {
-        showInfoMessage('Request 경로 검색', `Request ID ${escapeHtml(searchValue)}를 찾지 못했습니다.`);
+        showInfoMessage('Request 경로 검색', `Content ID/Request ID ${escapeHtml(searchValue)} 에 해당하는 Request를 찾지 못했습니다.`);
         return;
     }
 
-    // Get route session ID from request
+    const allRouteInfos = markersData.filter(m => m.type === 'Route Info');
+
+    // Primary: match by the route session linked to this request during parsing
     const routeSessionId = request.extra?.route_session_id;
-    if (!routeSessionId) {
-        showInfoMessage('Request 경로 검색', '해당 Request의 경로 정보가 없습니다.');
-        return;
-    }
+    let routeInfos = routeSessionId
+        ? allRouteInfos.filter(m => m.extra?.route_session_id === routeSessionId)
+        : [];
 
-    // Find all route info markers with this session ID
-    const routeInfos = markersData.filter(m =>
-        m.type === 'Route Info' &&
-        m.extra?.route_session_id === routeSessionId
-    );
+    // Fallback: if no session was linked (e.g. session-id log line missing),
+    // use the first route session parsed AFTER this request's timestamp
+    if (routeInfos.length === 0 && Number.isFinite(request.timestamp_ms)) {
+        const nextRoute = allRouteInfos
+            .filter(m => Number.isFinite(m.timestamp_ms) && m.timestamp_ms >= request.timestamp_ms)
+            .sort((a, b) => a.timestamp_ms - b.timestamp_ms)[0];
+        if (nextRoute) {
+            const sessionIndex = nextRoute.extra?.route_session_index;
+            routeInfos = allRouteInfos.filter(m => m.extra?.route_session_index === sessionIndex);
+        }
+    }
 
     if (routeInfos.length === 0) {
-        showInfoMessage('Request 경로 검색', '해당 Request의 경로를 찾지 못했습니다.');
+        showInfoMessage(
+            'Request 경로 검색',
+            `Request는 찾았지만 (Content ID: ${escapeHtml(String(request.extra?.group_1 ?? '-'))}, ` +
+            `타입: ${escapeHtml(String(request.extra?.group_2_text ?? '-'))}) ` +
+            `연결된 경로(setRouteInformation) 파싱 결과가 없습니다.`
+        );
         return;
     }
+
+    // Keep segments in route order
+    routeInfos.sort((a, b) => (a.extra?.route_sequence ?? 0) - (b.extra?.route_sequence ?? 0));
 
     // Clear previous highlights
     highlightLayer.clearLayers();
