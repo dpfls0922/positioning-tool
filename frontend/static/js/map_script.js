@@ -505,7 +505,15 @@ function getRouteInfoLineStyle(line) {
 function applyRouteInfoPolylineStyle(polyline) {
     const line = polyline?.lineData;
     if (!line || line.type !== 'Route Info') return;
-    polyline.setStyle(getRouteInfoLineStyle(line));
+    const style = getRouteInfoLineStyle(line);
+    // Keep base style in sync so timeline unhide restores the correct look
+    polyline._baseStyle = { opacity: style.opacity, weight: style.weight };
+    if (polyline._isVisible === false) {
+        // Respect timeline filtering: stay hidden, only remember the new base style
+        polyline.setStyle({ ...style, opacity: 0, weight: 0 });
+    } else {
+        polyline.setStyle(style);
+    }
 }
 
 function refreshRouteInfoPolylineStyles() {

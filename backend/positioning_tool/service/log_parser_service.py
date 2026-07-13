@@ -172,6 +172,8 @@ def parse_log(log_file_path=None):
     temp_gnss2_coord = None
     last_dr_coordinate = None
     pending_mm_feedback_reason = None
+    # Requests waiting for their TVAS session id (which arrives later in the log)
+    pending_route_request_coords = []
     last_vpm_coordinate = None
     last_road_match_coord = None
     last_route_match_coord = None
@@ -228,6 +230,11 @@ def parse_log(log_file_path=None):
                 )
                 route_session_sequence.setdefault(current_route_session_id, 0)
                 last_tvas_header_info = None
+                # The session id arrives after the request in the log; link it back
+                # to any pending Request coordinates so they can be matched later.
+                for pending_request in pending_route_request_coords:
+                    pending_request.extra["route_session_id"] = current_route_session_id
+                pending_route_request_coords = []
 
             # Parse Guide Events (C2X, Accident), SDI Events, and Parking Lot Events
             parse_guide_event(line, timestamp)
@@ -505,7 +512,8 @@ def parse_log(log_file_path=None):
                         extra_info = {
                             "group_1": match.group(1),
                             "group_2_text": group2_enum.label,
-                            "route_session_id": current_route_session_id,
+                            # Filled in when the TVAS session id for this request arrives
+                            "route_session_id": None,
                         }
 
                         if (
@@ -554,6 +562,7 @@ def parse_log(log_file_path=None):
                             timestamp=timestamp,
                         )
                         COORDINATES[coord_type].append(request_coordinate)
+                        pending_route_request_coords.append(request_coordinate)
 
                 # Do not stop at first match. One physical line can contain
                 # multiple embedded DLT records in this log format.
