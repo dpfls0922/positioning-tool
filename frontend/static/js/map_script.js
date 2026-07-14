@@ -39,6 +39,14 @@ let layerOrder = [];
 let cullTotalCounts = {};
 let visibleRefreshScheduled = false;
 const VIEWPORT_CULL_PAD = 0.5;
+// Below this zoom, thin out markers that overlap within the same pixel cell;
+// at closer zooms every marker is shown for precise inspection.
+const MARKER_DECIMATION_MAX_ZOOM = 18;
+const MARKER_DECIMATION_CELL_PX = 6;
+// Reference zoom for cached world-pixel projections used by decimation
+const CULL_PROJ_ZOOM = 10;
+// Last cull inputs; refresh is skipped while the view stays inside them
+let lastCullState = null;
 
 // rAF stalls entirely while the tab is hidden — fall back to setTimeout so
 // batched rendering keeps progressing in background tabs.
@@ -4234,6 +4242,7 @@ function resetVisualization() {
     polylines = [];
     requestGroups = {};
     cullTotalCounts = {};
+    lastCullState = null;
     Object.keys(layerCountOverride).forEach((key) => {
         if (key === ROAD_LINK_LAYER || key === ROAD_NODE_LAYER || key === ROAD_LINK_VERTEX_LAYER) return;
         delete layerCountOverride[key];
@@ -4278,7 +4287,10 @@ function drawMarkers(coordinates) {
     markers = [];
     requestGroups = {};
 
-    const BATCH_SIZE = 200;
+    // Markers are created detached (viewport culling attaches them later),
+    // so batches are pure JS work: large batches are safe. Hidden tabs have
+    // no frame budget at all, so process even bigger chunks there.
+    const BATCH_SIZE = (typeof document !== 'undefined' && document.hidden) ? 20000 : 2000;
     let processedCount = 0;
     const totalCount = coordinates.length;
 
@@ -4382,6 +4394,7 @@ function drawMarkers(coordinates) {
             drawRequestGroupMarkers(requestGroups, markers);
             refreshDrSelectionStyles();
             addOverlayLayers(featureGroups);
+            lastCullState = null;
             scheduleVisibleMarkerRefresh();
             renderLayerControls();
         }
@@ -4393,6 +4406,7 @@ function drawMarkers(coordinates) {
         drawRequestGroupMarkers(requestGroups, markers);
         refreshDrSelectionStyles();
         addOverlayLayers(featureGroups);
+        lastCullState = null;
         scheduleVisibleMarkerRefresh();
     }
 }
@@ -4409,7 +4423,10 @@ function drawParkingLotStateMarkers(coordsData) {
     parkingLotLayer.clearLayers();
     parkingLotStateMarkers = [];
 
-    const BATCH_SIZE = 200;
+    // Markers are created detached (viewport culling attaches them later),
+    // so batches are pure JS work: large batches are safe. Hidden tabs have
+    // no frame budget at all, so process even bigger chunks there.
+    const BATCH_SIZE = (typeof document !== 'undefined' && document.hidden) ? 20000 : 2000;
     let processedCount = 0;
     const totalCount = coordsData.length;
 
@@ -4469,6 +4486,7 @@ function drawParkingLotStateMarkers(coordsData) {
         } else {
             layerCountOverride['Parking Lot State'] = parkingLotStateMarkers.length;
             addOverlayLayers(featureGroups);
+            lastCullState = null;
             scheduleVisibleMarkerRefresh();
         }
     }
@@ -5072,6 +5090,7 @@ function drawPolylines(lines) {
         polylines.push(polyline);
     });
     addOverlayLayers(featureGroups);
+    lastCullState = null;
     scheduleVisibleMarkerRefresh();
 }
 
@@ -5848,9 +5867,49 @@ function refreshVisibleMarkers() {
     if (slider.noUiSlider) {
         [minVal, maxVal] = slider.noUiSlider.get().map(Number);
     }
-    const bounds = map.getBounds().pad(VIEWPORT_CULL_PAD);
+    const view = map.getBounds();
+    const zoom = map.getZoom();
+    const activeKey = Array.from(activeGroups).sort().join('|');
+
+    // Skip entirely when the last computed attach-set still covers this view:
+    // small pans inside the padded viewport with unchanged zoom/time/layers
+    // need no work at all.
+    if (lastCullState &&
+        lastCullState.zoom === zoom &&
+        lastCullState.minVal === minVal && lastCullState.maxVal === maxVal &&
+        lastCullState.activeKey === activeKey &&
+        lastCullState.bounds.contains(view)) {
+        return;
+    }
+
+    const bounds = view.pad(VIEWPORT_CULL_PAD);
+    lastCullState = { zoom, minVal, maxVal, activeKey, bounds };
     const south = bounds.getSouth(), north = bounds.getNorth();
     const west = bounds.getWest(), east = bounds.getEast();
+
+    // Screen-space decimation: below the cutoff zoom, markers that would land
+    // in the same ~cellPx pixel cell are indistinguishable — draw only the
+    // first one per cell (deterministic by array order, so stable across
+    // refreshes). Grid is anchored to world pixels, so panning doesn't
+    // reshuffle which markers are shown.
+    const decimate = zoom <= MARKER_DECIMATION_MAX_ZOOM;
+    const cellPx = MARKER_DECIMATION_CELL_PX;
+    // Per-group Sets with packed numeric cell keys (much faster than string keys)
+    const claimedByGroup = decimate ? Object.create(null) : null;
+    const CELL_PACK = 1 << 26;
+    // World-pixel positions are cached once at a reference zoom and rescaled
+    // (2^dz) instead of re-projecting every element on every refresh.
+    const projScale = Math.pow(2, zoom - CULL_PROJ_ZOOM) / cellPx;
+
+    const setAttached = (layer, group, show) => {
+        if (show && !layer._culledOnMap) {
+            group.addLayer(layer);
+            layer._culledOnMap = true;
+        } else if (!show && layer._culledOnMap) {
+            group.removeLayer(layer);
+            layer._culledOnMap = false;
+        }
+    };
 
     const cullPoint = (layer) => {
         const group = featureGroups[layer._groupName];
@@ -5860,15 +5919,22 @@ function refreshVisibleMarkers() {
         if (show) {
             if (!layer._cullLatLng && layer.getLatLng) layer._cullLatLng = layer.getLatLng();
             const ll = layer._cullLatLng;
-            show = !ll || (ll.lat >= south && ll.lat <= north && ll.lng >= west && ll.lng <= east);
+            if (ll) {
+                show = ll.lat >= south && ll.lat <= north && ll.lng >= west && ll.lng <= east;
+                if (show && decimate) {
+                    if (!layer._cullPx) layer._cullPx = map.project(ll, CULL_PROJ_ZOOM);
+                    const key = ((layer._cullPx.x * projScale) | 0) * CELL_PACK + ((layer._cullPx.y * projScale) | 0);
+                    let cells = claimedByGroup[layer._groupName];
+                    if (!cells) cells = claimedByGroup[layer._groupName] = new Set();
+                    if (cells.has(key)) {
+                        show = false;
+                    } else {
+                        cells.add(key);
+                    }
+                }
+            }
         }
-        if (show && !layer._culledOnMap) {
-            group.addLayer(layer);
-            layer._culledOnMap = true;
-        } else if (!show && layer._culledOnMap) {
-            group.removeLayer(layer);
-            layer._culledOnMap = false;
-        }
+        setAttached(layer, group, show);
     };
 
     const cullLine = (layer) => {
@@ -5879,14 +5945,28 @@ function refreshVisibleMarkers() {
         if (show) {
             if (!layer._cullBounds && layer.getLatLngs) layer._cullBounds = L.latLngBounds(layer.getLatLngs());
             show = !layer._cullBounds || bounds.intersects(layer._cullBounds);
+            if (show && decimate && layer._cullBounds) {
+                // Sub-pixel lines: draw one representative per cell
+                if (!layer._cullPx1) {
+                    layer._cullPx1 = map.project(layer._cullBounds.getSouthWest(), CULL_PROJ_ZOOM);
+                    layer._cullPx2 = map.project(layer._cullBounds.getNorthEast(), CULL_PROJ_ZOOM);
+                }
+                const x1 = layer._cullPx1.x * projScale, y1 = layer._cullPx1.y * projScale;
+                const x2 = layer._cullPx2.x * projScale, y2 = layer._cullPx2.y * projScale;
+                if (Math.abs(x1 - x2) < 1 && Math.abs(y1 - y2) < 1) {
+                    const key = (((x1 + x2) / 2) | 0) * CELL_PACK + (((y1 + y2) / 2) | 0);
+                    const cellGroup = layer._groupName + ':L';
+                    let cells = claimedByGroup[cellGroup];
+                    if (!cells) cells = claimedByGroup[cellGroup] = new Set();
+                    if (cells.has(key)) {
+                        show = false;
+                    } else {
+                        cells.add(key);
+                    }
+                }
+            }
         }
-        if (show && !layer._culledOnMap) {
-            group.addLayer(layer);
-            layer._culledOnMap = true;
-        } else if (!show && layer._culledOnMap) {
-            group.removeLayer(layer);
-            layer._culledOnMap = false;
-        }
+        setAttached(layer, group, show);
     };
 
     markers.forEach(cullPoint);
