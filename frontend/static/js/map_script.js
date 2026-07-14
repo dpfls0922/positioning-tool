@@ -35,6 +35,20 @@ let polylines = [];
 let requestGroups = {};
 let activeGroups = new Set();
 let layerOrder = [];
+// Viewport culling: total per-group element counts (attached subset varies)
+let cullTotalCounts = {};
+let visibleRefreshScheduled = false;
+const VIEWPORT_CULL_PAD = 0.5;
+
+// rAF stalls entirely while the tab is hidden — fall back to setTimeout so
+// batched rendering keeps progressing in background tabs.
+function scheduleFrame(fn) {
+    if (typeof document !== 'undefined' && document.hidden) {
+        setTimeout(fn, 0);
+    } else {
+        requestAnimationFrame(fn);
+    }
+}
 let draggedLayerName = null;
 let currentResultName = 'result';
 const layerCountOverride = {};
@@ -223,6 +237,8 @@ function init() {
     map.on('overlayremove', handleOverlayRemove);
     map.on('zoomend', handleRoadZoomChanged);
     map.on('moveend', handleRoadZoomChanged);
+    map.on('zoomend', scheduleVisibleMarkerRefresh);
+    map.on('moveend', scheduleVisibleMarkerRefresh);
     map.on('popupopen', (event) => {
         makePopupDraggable(event?.popup);
     });
@@ -4217,6 +4233,11 @@ function resetVisualization() {
     parkingLotStateMarkers = [];
     polylines = [];
     requestGroups = {};
+    cullTotalCounts = {};
+    Object.keys(layerCountOverride).forEach((key) => {
+        if (key === ROAD_LINK_LAYER || key === ROAD_NODE_LAYER || key === ROAD_LINK_VERTEX_LAYER) return;
+        delete layerCountOverride[key];
+    });
     selectedCandidateLinkIds = new Set();
     activeGroups = new Set([...activeGroups].filter((name) => name === ROAD_LINK_LAYER || name === ROAD_NODE_LAYER || name === ROAD_LINK_VERTEX_LAYER));
     layerOrder = layerOrder.filter((name) => name === ROAD_LINK_LAYER || name === ROAD_NODE_LAYER || name === ROAD_LINK_VERTEX_LAYER);
@@ -4349,19 +4370,20 @@ function drawMarkers(coordinates) {
                     }
                 });
 
-                addLayerToGroup(coordtype, marker);
+                addLayerToGroup(coordtype, marker, { defer: true });
                 markers.push(marker);
             }
         }
 
         processedCount = endIndex;
         if (endIndex < totalCount) {
-            requestAnimationFrame(() => processBatch(endIndex));
+            scheduleFrame(() => processBatch(endIndex));
         } else {
             drawRequestGroupMarkers(requestGroups, markers);
             refreshDrSelectionStyles();
             addOverlayLayers(featureGroups);
-            bringParkingLotMarkersToFront();
+            scheduleVisibleMarkerRefresh();
+            renderLayerControls();
         }
     }
 
@@ -4371,7 +4393,7 @@ function drawMarkers(coordinates) {
         drawRequestGroupMarkers(requestGroups, markers);
         refreshDrSelectionStyles();
         addOverlayLayers(featureGroups);
-        bringParkingLotMarkersToFront();
+        scheduleVisibleMarkerRefresh();
     }
 }
 
@@ -4436,16 +4458,18 @@ function drawParkingLotStateMarkers(coordsData) {
                 if (e) L.DomEvent.stopPropagation(e);
             });
 
-            parkingLotLayer.addLayer(marker);
+            marker._groupName = 'Parking Lot State';
+            marker._culledOnMap = false;
             parkingLotStateMarkers.push(marker);
         }
 
         processedCount = endIndex;
         if (endIndex < totalCount) {
-            requestAnimationFrame(() => processBatch(endIndex));
+            scheduleFrame(() => processBatch(endIndex));
         } else {
+            layerCountOverride['Parking Lot State'] = parkingLotStateMarkers.length;
             addOverlayLayers(featureGroups);
-            bringParkingLotMarkersToFront();
+            scheduleVisibleMarkerRefresh();
         }
     }
 
@@ -4543,7 +4567,7 @@ function drawRequestGroupMarkers(requestGroups, markers) {
         marker._isIconMarker = true;
         requestGroups[key].marker = marker;
         attachMarkerDistancePick(marker);
-        addLayerToGroup('Request', marker);
+        addLayerToGroup('Request', marker, { defer: true });
         markers.push(marker);
     });
 }
@@ -5044,10 +5068,11 @@ function drawPolylines(lines) {
         });
 
         const layerName = type === 'Route Info' ? getRouteInfoLayerName(line) : type;
-        addLayerToGroup(layerName, polyline);
+        addLayerToGroup(layerName, polyline, { defer: true });
         polylines.push(polyline);
     });
     addOverlayLayers(featureGroups);
+    scheduleVisibleMarkerRefresh();
 }
 
 function highlightEndpoints(start, end, color) {
@@ -5173,7 +5198,7 @@ function drawPolygons() {
     });
 }
 
-function addLayerToGroup(type, layer) {
+function addLayerToGroup(type, layer, options = {}) {
     if (!featureGroups[type]) {
         featureGroups[type] = L.featureGroup();
         featureGroups[type].addTo(map);
@@ -5188,6 +5213,16 @@ function addLayerToGroup(type, layer) {
         layer.options.pane = 'tooltipPane';
     } else {
         layer.options.pane = 'markerPane';
+    }
+    layer._groupName = type;
+
+    if (options.defer) {
+        // Viewport culling manages the actual attach/detach; only register
+        // the group membership metadata and the display count here.
+        layer._culledOnMap = false;
+        cullTotalCounts[type] = (cullTotalCounts[type] || 0) + 1;
+        layerCountOverride[type] = cullTotalCounts[type];
+        return;
     }
     featureGroups[type].addLayer(layer);
 }
@@ -5791,29 +5826,81 @@ function applyLayerOrderZIndex() {
     });
 }
 
+// Viewport + time-range culling.
+// Instead of hiding markers with opacity 0 (which keeps every layer attached
+// to the canvas renderer — every zoom/pan re-projects and redraws all of
+// them, and every mousemove hit-tests the full list), only the markers that
+// are inside the padded viewport AND the selected time range are attached to
+// the map. Everything else is detached entirely, so interaction cost scales
+// with what is visible, not with the size of the log.
+function scheduleVisibleMarkerRefresh() {
+    if (visibleRefreshScheduled) return;
+    visibleRefreshScheduled = true;
+    scheduleFrame(() => {
+        visibleRefreshScheduled = false;
+        refreshVisibleMarkers();
+    });
+}
+
+function refreshVisibleMarkers() {
+    let minVal = -Infinity;
+    let maxVal = Infinity;
+    if (slider.noUiSlider) {
+        [minVal, maxVal] = slider.noUiSlider.get().map(Number);
+    }
+    const bounds = map.getBounds().pad(VIEWPORT_CULL_PAD);
+    const south = bounds.getSouth(), north = bounds.getNorth();
+    const west = bounds.getWest(), east = bounds.getEast();
+
+    const cullPoint = (layer) => {
+        const group = featureGroups[layer._groupName];
+        if (!group) return;
+        let show = activeGroups.has(layer._groupName) &&
+            isInSelectedRange(layer.timestamp_ms, minVal, maxVal);
+        if (show) {
+            if (!layer._cullLatLng && layer.getLatLng) layer._cullLatLng = layer.getLatLng();
+            const ll = layer._cullLatLng;
+            show = !ll || (ll.lat >= south && ll.lat <= north && ll.lng >= west && ll.lng <= east);
+        }
+        if (show && !layer._culledOnMap) {
+            group.addLayer(layer);
+            layer._culledOnMap = true;
+        } else if (!show && layer._culledOnMap) {
+            group.removeLayer(layer);
+            layer._culledOnMap = false;
+        }
+    };
+
+    const cullLine = (layer) => {
+        const group = featureGroups[layer._groupName];
+        if (!group) return;
+        let show = activeGroups.has(layer._groupName) &&
+            isInSelectedRange(layer.timestamp_ms, minVal, maxVal);
+        if (show) {
+            if (!layer._cullBounds && layer.getLatLngs) layer._cullBounds = L.latLngBounds(layer.getLatLngs());
+            show = !layer._cullBounds || bounds.intersects(layer._cullBounds);
+        }
+        if (show && !layer._culledOnMap) {
+            group.addLayer(layer);
+            layer._culledOnMap = true;
+        } else if (!show && layer._culledOnMap) {
+            group.removeLayer(layer);
+            layer._culledOnMap = false;
+        }
+    };
+
+    markers.forEach(cullPoint);
+    parkingLotStateMarkers.forEach(cullPoint);
+    polylines.forEach(cullLine);
+
+    // Keep parking-lot markers painted above other canvas markers
+    bringParkingLotMarkersToFront();
+}
+
 function updateMap() {
     if (!slider.noUiSlider) return;
     const [minVal, maxVal] = slider.noUiSlider.get().map(Number);
-
-    markers.forEach(marker => {
-        const groupActive = activeGroups.has(getLayerGroupName(marker));
-        const visibleByTime = isInSelectedRange(marker.timestamp_ms, minVal, maxVal);
-        applyTimeVisibility(marker, groupActive && visibleByTime);
-    });
-
-    // Apply timeline visibility to Parking Lot State markers
-    parkingLotStateMarkers.forEach(marker => {
-        const groupActive = activeGroups.has('Parking Lot State');
-        const visibleByTime = isInSelectedRange(marker.timestamp_ms, minVal, maxVal);
-        applyTimeVisibility(marker, groupActive && visibleByTime);
-    });
-
-    polylines.forEach(layer => {
-        const groupActive = activeGroups.has(getLayerGroupName(layer));
-        const visibleByTime = isInSelectedRange(layer.timestamp_ms, minVal, maxVal);
-        applyTimeVisibility(layer, groupActive && visibleByTime);
-    });
-
+    scheduleVisibleMarkerRefresh();
     handleRoadZoomChanged();
     updateRangeLabel(minVal, maxVal);
 }
