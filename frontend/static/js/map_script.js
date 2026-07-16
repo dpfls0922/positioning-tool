@@ -199,7 +199,12 @@ const ROAD_SHAPE_MANIFEST_SUFFIX = '.manifest.json';
 const ROAD_LINK_BASE_STYLE_STORAGE_KEY = 'road_link_base_style_v1';
 let roadShapeCacheDirHandlePromise = null;
 
+// Bumped on perf-relevant frontend changes; logged at startup so a stale
+// cached page is immediately identifiable from the console.
+const FRONTEND_BUILD = 'perf-cull-v3';
+
 function init() {
+    console.log(`[positioning-tool] frontend build: ${FRONTEND_BUILD}`);
     // Initialize data variables
     if (typeof markersData === 'undefined') markersData = [];
     if (typeof parkingLotStateMarkersData === 'undefined') parkingLotStateMarkersData = [];
@@ -4921,6 +4926,12 @@ function focusMarkerFromTableRow(row) {
     }).addTo(highlightLayer);
 }
 
+// Rendering every row of a large log creates a huge DOM (tens of thousands
+// of <tr>) that slows down ALL browser painting — including map zoom/pan.
+// Cap the rendered rows; search/type filters narrow into the cap.
+const MARKER_TABLE_MAX_RENDER_ROWS = 1000;
+let markerTableRenderedRows = [];
+
 function renderMarkerTable() {
     const summary = document.getElementById('markerTableSummary');
     const head = document.getElementById('markerTableHead');
@@ -4932,8 +4943,13 @@ function renderMarkerTable() {
     const rows = getMarkerTableFilteredRows();
     const columns = getMarkerTableColumns(rows.length > 0 ? rows : allRows);
 
+    const truncated = rows.length > MARKER_TABLE_MAX_RENDER_ROWS;
+    const visibleRows = truncated ? rows.slice(0, MARKER_TABLE_MAX_RENDER_ROWS) : rows;
+    markerTableRenderedRows = visibleRows;
+
     summary.textContent = rows.length > 0
-        ? `${markerTableSelectedType === 'all' ? '전체' : markerTableSelectedType} ${rows.length.toLocaleString()}건`
+        ? `${markerTableSelectedType === 'all' ? '전체' : markerTableSelectedType} ${rows.length.toLocaleString()}건` +
+          (truncated ? ` (상위 ${MARKER_TABLE_MAX_RENDER_ROWS.toLocaleString()}건만 표시 — 검색/타입으로 좁혀보세요)` : '')
         : '표시할 데이터 없음';
 
     head.innerHTML = `<tr>${columns.map((column) => `<th>${escapeHtml(column.label)}</th>`).join('')}</tr>`;
@@ -4943,17 +4959,22 @@ function renderMarkerTable() {
         return;
     }
 
-    body.innerHTML = rows.map((row) => `
-        <tr data-row-id="${escapeHtml(String(row.id ?? ''))}" data-row-type="${escapeHtml(String(row.type || ''))}">
+    body.innerHTML = visibleRows.map((row, index) => `
+        <tr data-row-index="${index}">
             ${columns.map((column) => `<td>${escapeHtml(formatMarkerTableCellValue(row, column.key))}</td>`).join('')}
         </tr>
     `).join('');
 
-    Array.from(body.querySelectorAll('tr[data-row-id]')).forEach((tr, index) => {
-        tr.addEventListener('click', () => {
-            focusMarkerFromTableRow(rows[index]);
+    // One delegated listener instead of a listener per row
+    if (!body._delegatedClickBound) {
+        body._delegatedClickBound = true;
+        body.addEventListener('click', (e) => {
+            const tr = e.target?.closest?.('tr[data-row-index]');
+            if (!tr) return;
+            const row = markerTableRenderedRows[Number(tr.dataset.rowIndex)];
+            if (row) focusMarkerFromTableRow(row);
         });
-    });
+    }
 }
 
 function buildDrHeadingIcon(heading, color = '#ef4444') {
