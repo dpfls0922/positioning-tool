@@ -80,6 +80,19 @@ def render_simple_export_html(markers_data: list[dict], lines_data: list[dict], 
             #timeslider {{ margin: 2px 6px 8px; height: 8px; }}
             #timeslider .noUi-connect {{ background: #38bdf8; }}
             #rangeLabel {{ font-size: 11px; text-align: center; display: block; }}
+            .time-fine-controls {{ margin-top: 8px; display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; }}
+            .time-fine-row {{ display: flex; align-items: center; gap: 4px; }}
+            .time-fine-name {{ font-size: 11px; font-weight: 600; }}
+            .time-fine-btn {{
+              font-size: 10px; padding: 2px 5px; cursor: pointer;
+              border: 1px solid #475569; border-radius: 4px; background: #1e293b; color: #e2e8f0;
+            }}
+            .time-fine-btn:hover {{ background: #334155; }}
+            .time-fine-input {{
+              width: 110px; font-size: 11px; padding: 2px 6px; text-align: center;
+              border: 1px solid #475569; border-radius: 4px; background: #0f172a; color: #e2e8f0;
+            }}
+            .time-fine-input-error {{ border-color: #ef4444; }}
           </style>
         </head>
         <body>
@@ -87,6 +100,24 @@ def render_simple_export_html(markers_data: list[dict], lines_data: list[dict], 
           <div id="timebar" style="display:none;">
             <div id="timeslider"></div>
             <span id="rangeLabel"></span>
+            <div class="time-fine-controls">
+              <div class="time-fine-row">
+                <span class="time-fine-name">시작</span>
+                <button type="button" class="time-fine-btn" data-handle="0" data-delta="-1000">-1s</button>
+                <button type="button" class="time-fine-btn" data-handle="0" data-delta="-100">-0.1s</button>
+                <input id="timeStartInput" class="time-fine-input" placeholder="HH:MM:SS.mmm">
+                <button type="button" class="time-fine-btn" data-handle="0" data-delta="100">+0.1s</button>
+                <button type="button" class="time-fine-btn" data-handle="0" data-delta="1000">+1s</button>
+              </div>
+              <div class="time-fine-row">
+                <span class="time-fine-name">끝</span>
+                <button type="button" class="time-fine-btn" data-handle="1" data-delta="-1000">-1s</button>
+                <button type="button" class="time-fine-btn" data-handle="1" data-delta="-100">-0.1s</button>
+                <input id="timeEndInput" class="time-fine-input" placeholder="HH:MM:SS.mmm">
+                <button type="button" class="time-fine-btn" data-handle="1" data-delta="100">+0.1s</button>
+                <button type="button" class="time-fine-btn" data-handle="1" data-delta="1000">+1s</button>
+              </div>
+            </div>
           </div>
           <script>
             const map = L.map('map').setView([37.5665, 126.9780], 15);
@@ -320,7 +351,51 @@ def render_simple_export_html(markers_data: list[dict], lines_data: list[dict], 
                 start: [minTs, maxTs],
                 connect: true,
                 range: {{ min: minTs, max: maxTs }},
-                step: 1
+                step: 1,
+                keyboardSupport: true,
+                keyboardDefaultStep: 100
+              }});
+
+              // Fine controls: ±nudge buttons and direct time entry
+              const setHandle = (handleIndex, valueMs) => {{
+                sliderEl.noUiSlider.set(handleIndex === 0 ? [valueMs, null] : [null, valueMs]);
+              }};
+              document.querySelectorAll('.time-fine-btn').forEach((btn) => {{
+                btn.addEventListener('click', () => {{
+                  const handleIndex = Number(btn.dataset.handle);
+                  const values = sliderEl.noUiSlider.get().map(Number);
+                  setHandle(handleIndex, values[handleIndex] + Number(btn.dataset.delta));
+                }});
+              }});
+              const parseTimeInput = (text, referenceMs) => {{
+                const trimmed = String(text || '').trim();
+                let m = trimmed.match(/^(\\d{{4}})\\/(\\d{{1,2}})\\/(\\d{{1,2}})[ T](\\d{{1,2}}):(\\d{{2}}):(\\d{{2}})(?:\\.(\\d{{1,3}}))?$/);
+                if (m) {{
+                  return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6],
+                    +String(m[7] || '0').padEnd(3, '0')).getTime();
+                }}
+                m = trimmed.match(/^(\\d{{1,2}}):(\\d{{2}}):(\\d{{2}})(?:\\.(\\d{{1,3}}))?$/);
+                if (m && Number.isFinite(referenceMs)) {{
+                  const d = new Date(referenceMs);
+                  d.setHours(+m[1], +m[2], +m[3], +String(m[4] || '0').padEnd(3, '0'));
+                  return d.getTime();
+                }}
+                return NaN;
+              }};
+              [['timeStartInput', 0], ['timeEndInput', 1]].forEach(([inputId, handleIndex]) => {{
+                const input = document.getElementById(inputId);
+                input.addEventListener('keydown', (e) => {{
+                  if (e.key !== 'Enter') return;
+                  const values = sliderEl.noUiSlider.get().map(Number);
+                  const parsed = parseTimeInput(input.value, values[handleIndex]);
+                  if (!Number.isFinite(parsed)) {{
+                    input.classList.add('time-fine-input-error');
+                    setTimeout(() => input.classList.remove('time-fine-input-error'), 800);
+                    return;
+                  }}
+                  setHandle(handleIndex, parsed);
+                  input.blur();
+                }});
               }});
 
               let pendingRange = null;
@@ -339,10 +414,20 @@ def render_simple_export_html(markers_data: list[dict], lines_data: list[dict], 
                 else requestAnimationFrame(fn);
               }};
 
+              const timeOnly = (ms) => {{
+                const d = new Date(ms);
+                const pad = (n, w = 2) => String(n).padStart(w, '0');
+                return `${{pad(d.getHours())}}:${{pad(d.getMinutes())}}:${{pad(d.getSeconds())}}.${{pad(d.getMilliseconds(), 3)}}`;
+              }};
+
               sliderEl.noUiSlider.on('update', (values) => {{
                 const lo = Number(values[0]);
                 const hi = Number(values[1]);
                 label.textContent = `${{fmt(lo)}} ~ ${{fmt(hi)}}`;
+                const startInput = document.getElementById('timeStartInput');
+                const endInput = document.getElementById('timeEndInput');
+                if (startInput && document.activeElement !== startInput) startInput.value = timeOnly(lo);
+                if (endInput && document.activeElement !== endInput) endInput.value = timeOnly(hi);
                 const shouldSchedule = pendingRange === null;
                 pendingRange = [lo, hi];
                 if (shouldSchedule) {{

@@ -348,6 +348,24 @@ def add_playback_tool():
             <div class="playback-controls">
                 <div id="slider"></div>
                 <span id="rangeLabel">00:00:00.000 ~ 00:00:00.000</span>
+                <div class="time-fine-controls">
+                    <div class="time-fine-row">
+                        <span class="time-fine-name">시작</span>
+                        <button type="button" class="time-fine-btn" data-handle="0" data-delta="-1000">-1s</button>
+                        <button type="button" class="time-fine-btn" data-handle="0" data-delta="-100">-0.1s</button>
+                        <input id="timeStartInput" class="time-fine-input" placeholder="HH:MM:SS.mmm" title="시간 입력 후 Enter (HH:MM:SS.mmm)">
+                        <button type="button" class="time-fine-btn" data-handle="0" data-delta="100">+0.1s</button>
+                        <button type="button" class="time-fine-btn" data-handle="0" data-delta="1000">+1s</button>
+                    </div>
+                    <div class="time-fine-row">
+                        <span class="time-fine-name">끝</span>
+                        <button type="button" class="time-fine-btn" data-handle="1" data-delta="-1000">-1s</button>
+                        <button type="button" class="time-fine-btn" data-handle="1" data-delta="-100">-0.1s</button>
+                        <input id="timeEndInput" class="time-fine-input" placeholder="HH:MM:SS.mmm" title="시간 입력 후 Enter (HH:MM:SS.mmm)">
+                        <button type="button" class="time-fine-btn" data-handle="1" data-delta="100">+0.1s</button>
+                        <button type="button" class="time-fine-btn" data-handle="1" data-delta="1000">+1s</button>
+                    </div>
+                </div>
             </div>
         </div>
     </div>

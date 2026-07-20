@@ -405,10 +405,72 @@ function initSlider(min, max) {
         start: [startMin, startMax],
         connect: true,
         range: { min: startMin, max: startMax },
-        step: 100
+        step: 100,
+        keyboardSupport: true,
+        keyboardDefaultStep: 1  // arrow keys move by 1 step (100ms) per press
     });
     slider.noUiSlider.on('update', updateMap);
     updateRangeLabel(startMin, startMax);
+    initTimeFineControls();
+}
+
+// Fine-grained timeline filtering: ±1s / ±0.1s nudge buttons per handle and
+// direct time entry (HH:MM:SS.mmm or full YYYY/MM/DD HH:MM:SS.mmm).
+let timeFineControlsBound = false;
+
+function initTimeFineControls() {
+    if (timeFineControlsBound) return;
+    const container = document.querySelector('.time-fine-controls');
+    if (!container) return;
+    timeFineControlsBound = true;
+
+    container.addEventListener('click', (e) => {
+        const btn = e.target.closest('.time-fine-btn');
+        if (!btn || !slider.noUiSlider) return;
+        nudgeTimeHandle(Number(btn.dataset.handle), Number(btn.dataset.delta));
+    });
+
+    [['timeStartInput', 0], ['timeEndInput', 1]].forEach(([id, handleIndex]) => {
+        document.getElementById(id)?.addEventListener('keydown', (e) => {
+            if (e.key !== 'Enter' || !slider.noUiSlider) return;
+            const values = slider.noUiSlider.get().map(Number);
+            const parsed = parseTimeInputToMs(e.target.value, values[handleIndex]);
+            if (!Number.isFinite(parsed)) {
+                e.target.classList.add('time-fine-input-error');
+                setTimeout(() => e.target.classList.remove('time-fine-input-error'), 800);
+                return;
+            }
+            setTimeHandle(handleIndex, parsed);
+            e.target.blur();
+        });
+    });
+}
+
+function nudgeTimeHandle(handleIndex, deltaMs) {
+    const values = slider.noUiSlider.get().map(Number);
+    setTimeHandle(handleIndex, values[handleIndex] + deltaMs);
+}
+
+function setTimeHandle(handleIndex, valueMs) {
+    // noUiSlider clamps to the range and keeps handle order automatically
+    slider.noUiSlider.set(handleIndex === 0 ? [valueMs, null] : [null, valueMs]);
+}
+
+function parseTimeInputToMs(text, referenceMs) {
+    const trimmed = String(text || '').trim();
+    let m = trimmed.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})[ T](\d{1,2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?$/);
+    if (m) {
+        return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6],
+            +String(m[7] || '0').padEnd(3, '0')).getTime();
+    }
+    // Time-only: reuse the date of the current handle value
+    m = trimmed.match(/^(\d{1,2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?$/);
+    if (m && Number.isFinite(referenceMs)) {
+        const d = new Date(referenceMs);
+        d.setHours(+m[1], +m[2], +m[3], +String(m[4] || '0').padEnd(3, '0'));
+        return d.getTime();
+    }
+    return NaN;
 }
 
 function renderFromCurrentData() {
@@ -6076,6 +6138,15 @@ function updateRangeLabel(minVal, maxVal) {
     };
 
     label.textContent = `${formatTs(d1)} ~ ${formatTs(d2)}`;
+
+    // Keep fine-control inputs in sync (unless the user is typing in them)
+    const timeOnly = (d) =>
+        `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:` +
+        `${String(d.getSeconds()).padStart(2, '0')}.${String(d.getMilliseconds()).padStart(3, '0')}`;
+    const startInput = document.getElementById('timeStartInput');
+    const endInput = document.getElementById('timeEndInput');
+    if (startInput && document.activeElement !== startInput) startInput.value = timeOnly(d1);
+    if (endInput && document.activeElement !== endInput) endInput.value = timeOnly(d2);
 }
 
 function handleOverlayAdd(e) {
