@@ -38,6 +38,8 @@ def render_simple_export_html(markers_data: list[dict], lines_data: list[dict], 
           <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css" />
           <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/Leaflet.awesome-markers/2.0.2/leaflet.awesome-markers.css" />
           <script src="https://cdnjs.cloudflare.com/ajax/libs/Leaflet.awesome-markers/2.0.2/leaflet.awesome-markers.min.js"></script>
+          <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/nouislider@15.7.1/dist/nouislider.min.css">
+          <script src="https://cdn.jsdelivr.net/npm/nouislider@15.7.1/dist/nouislider.min.js"></script>
           <style>
             html, body {{ margin: 0; height: 100%; font-family: Pretendard, sans-serif; }}
             #map {{ width: 100%; height: 100%; }}
@@ -48,10 +50,44 @@ def render_simple_export_html(markers_data: list[dict], lines_data: list[dict], 
             .leaflet-control-layers label {{
               font-size: 12px;
             }}
+            .layer-bulk-btns {{
+              background: #fff;
+              padding: 4px;
+              display: flex;
+              gap: 4px;
+              border-radius: 6px;
+            }}
+            .layer-bulk-btns button {{
+              font-size: 11px;
+              padding: 2px 8px;
+              cursor: pointer;
+              border: 1px solid #cbd5e1;
+              border-radius: 4px;
+              background: #f8fafc;
+            }}
+            .layer-bulk-btns button:hover {{ background: #e2e8f0; }}
+            #timebar {{
+              position: fixed;
+              left: 16px;
+              right: 16px;
+              bottom: 12px;
+              z-index: 1000;
+              background: rgba(15, 23, 42, 0.85);
+              border-radius: 10px;
+              padding: 12px 18px 8px;
+              color: #e2e8f0;
+            }}
+            #timeslider {{ margin: 2px 6px 8px; height: 8px; }}
+            #timeslider .noUi-connect {{ background: #38bdf8; }}
+            #rangeLabel {{ font-size: 11px; text-align: center; display: block; }}
           </style>
         </head>
         <body>
           <div id="map"></div>
+          <div id="timebar" style="display:none;">
+            <div id="timeslider"></div>
+            <span id="rangeLabel"></span>
+          </div>
           <script>
             const map = L.map('map').setView([37.5665, 126.9780], 15);
             const baseLayers = {{
@@ -147,6 +183,9 @@ def render_simple_export_html(markers_data: list[dict], lines_data: list[dict], 
               return text;
             }}
 
+            // Every rendered layer with its group and timestamp for time filtering
+            const timeEntries = [];
+
             markersData.forEach((coord) => {{
               const type = coord.type || 'Unknown';
               if (!overlayGroups[type]) overlayGroups[type] = L.featureGroup();
@@ -155,34 +194,37 @@ def render_simple_export_html(markers_data: list[dict], lines_data: list[dict], 
 
               const color = coord.color || '#334155';
               const popup = makePopupText(coord);
+              let layer;
 
               if (type === 'Request') {{
-                L.marker([lat, lon], {{
+                layer = L.marker([lat, lon], {{
                   icon: L.AwesomeMarkers.icon({{
                     icon: 'info-circle',
                     markerColor: 'gray',
                     prefix: 'fa'
                   }})
-                }}).bindPopup(popup).addTo(overlayGroups[type]);
+                }});
               }} else {{
                 const highlightKey = Number.isFinite(coord.id)
                   ? `id:${{coord.id}}`
                   : `ts:${{coord.timestamp_ms ?? ''}}:${{coord.latitude ?? ''}}:${{coord.longitude ?? ''}}`;
                 const isTransitionHighlight = highlightedFilteredGnssIds.has(highlightKey);
-                L.circleMarker([lat, lon], {{
+                layer = L.circleMarker([lat, lon], {{
                   radius: isTransitionHighlight ? 7 : 4,
                   color: isTransitionHighlight ? '#22c55e' : color,
                   fillColor: isTransitionHighlight ? '#22c55e' : color,
                   fillOpacity: 0.85,
                   weight: isTransitionHighlight ? 3 : 1
-                }}).bindPopup(popup).addTo(overlayGroups[type]);
+                }});
               }}
+              layer.bindPopup(popup).addTo(overlayGroups[type]);
+              timeEntries.push({{ layer, group: overlayGroups[type], ts: Number(coord.timestamp_ms) }});
             }});
 
             linesData.forEach((line) => {{
               const type = line.type || 'Unknown Line';
               // Requested line overlays
-              if (!(type === 'GNSS to DR' || type === 'DR to VPM')) return;
+              if (!(type === 'GNSS to DR' || type === 'DR to VPM' || type === 'DR Correction')) return;
               if (!overlayGroups[type]) overlayGroups[type] = L.featureGroup();
 
               const start = line.start || [];
@@ -197,14 +239,21 @@ def render_simple_export_html(markers_data: list[dict], lines_data: list[dict], 
               }} else if (type === 'DR to VPM') {{
                 color = '#9ca3af';
                 weight = 1;
+              }} else if (type === 'DR Correction') {{
+                color = 'orange';
+                weight = 3;
               }}
 
-              const popup = `TYPE: ${{type}}<br>ID: ${{line.id ?? '-'}}<br>TS: ${{line.timestamp_str ?? '-'}}`;
-              L.polyline([start, end], {{
+              let popup = `TYPE: ${{type}}<br>ID: ${{line.id ?? '-'}}<br>TS: ${{line.timestamp_str ?? '-'}}`;
+              if (type === 'DR Correction' && line.extra?.reason) {{
+                popup += `<br>reason: ${{line.extra.reason}}`;
+              }}
+              const layer = L.polyline([start, end], {{
                 color,
                 weight,
                 opacity: 0.85
               }}).bindPopup(popup).addTo(overlayGroups[type]);
+              timeEntries.push({{ layer, group: overlayGroups[type], ts: Number(line.timestamp_ms) }});
             }});
 
             Object.keys(overlayGroups).forEach((type) => {{
@@ -213,8 +262,98 @@ def render_simple_export_html(markers_data: list[dict], lines_data: list[dict], 
 
             L.control.layers(baseLayers, overlayGroups, {{ collapsed: true }}).addTo(map);
 
+            // Select-all / clear-all buttons for the overlay layers
+            const BulkLayerControl = L.Control.extend({{
+              options: {{ position: 'topright' }},
+              onAdd: function () {{
+                const div = L.DomUtil.create('div', 'layer-bulk-btns');
+                const addBtn = (label, fn) => {{
+                  const btn = L.DomUtil.create('button', '', div);
+                  btn.type = 'button';
+                  btn.textContent = label;
+                  L.DomEvent.on(btn, 'click', (e) => {{
+                    L.DomEvent.stop(e);
+                    fn();
+                  }});
+                }};
+                addBtn('전체선택', () => {{
+                  Object.values(overlayGroups).forEach((group) => map.addLayer(group));
+                }});
+                addBtn('전체해제', () => {{
+                  Object.values(overlayGroups).forEach((group) => map.removeLayer(group));
+                }});
+                L.DomEvent.disableClickPropagation(div);
+                return div;
+              }}
+            }});
+            map.addControl(new BulkLayerControl());
+
             const all = L.featureGroup(Object.values(overlayGroups));
             if (all.getLayers().length > 0) map.fitBounds(all.getBounds().pad(0.1));
+
+            // ---- Timestamp range slider -----------------------------------
+            (function initTimeSlider() {{
+              if (!window.noUiSlider) return;
+              let minTs = Infinity, maxTs = -Infinity;
+              timeEntries.forEach((entry) => {{
+                if (Number.isFinite(entry.ts)) {{
+                  if (entry.ts < minTs) minTs = entry.ts;
+                  if (entry.ts > maxTs) maxTs = entry.ts;
+                }}
+              }});
+              if (!Number.isFinite(minTs) || !Number.isFinite(maxTs)) return;
+              if (maxTs <= minTs) maxTs = minTs + 1;
+
+              const bar = document.getElementById('timebar');
+              const sliderEl = document.getElementById('timeslider');
+              const label = document.getElementById('rangeLabel');
+              bar.style.display = 'block';
+
+              const fmt = (ms) => {{
+                const d = new Date(ms);
+                const pad = (n, w = 2) => String(n).padStart(w, '0');
+                return `${{d.getFullYear()}}/${{pad(d.getMonth() + 1)}}/${{pad(d.getDate())}} ` +
+                  `${{pad(d.getHours())}}:${{pad(d.getMinutes())}}:${{pad(d.getSeconds())}}.${{pad(d.getMilliseconds(), 3)}}`;
+              }};
+
+              noUiSlider.create(sliderEl, {{
+                start: [minTs, maxTs],
+                connect: true,
+                range: {{ min: minTs, max: maxTs }},
+                step: 1
+              }});
+
+              let pendingRange = null;
+              const applyTimeFilter = (lo, hi) => {{
+                timeEntries.forEach((entry) => {{
+                  const show = !Number.isFinite(entry.ts) || (entry.ts >= lo && entry.ts <= hi);
+                  const attached = entry.group.hasLayer(entry.layer);
+                  if (show && !attached) entry.group.addLayer(entry.layer);
+                  else if (!show && attached) entry.group.removeLayer(entry.layer);
+                }});
+              }};
+
+              // rAF stalls in hidden tabs — fall back to setTimeout there
+              const scheduleFrame = (fn) => {{
+                if (document.hidden) setTimeout(fn, 0);
+                else requestAnimationFrame(fn);
+              }};
+
+              sliderEl.noUiSlider.on('update', (values) => {{
+                const lo = Number(values[0]);
+                const hi = Number(values[1]);
+                label.textContent = `${{fmt(lo)}} ~ ${{fmt(hi)}}`;
+                const shouldSchedule = pendingRange === null;
+                pendingRange = [lo, hi];
+                if (shouldSchedule) {{
+                  scheduleFrame(() => {{
+                    const range = pendingRange;
+                    pendingRange = null;
+                    applyTimeFilter(range[0], range[1]);
+                  }});
+                }}
+              }});
+            }})();
           </script>
         </body>
         </html>

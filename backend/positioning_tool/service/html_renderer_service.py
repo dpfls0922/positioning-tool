@@ -607,7 +607,8 @@ def add_legend():
             <div><i style="background:#22c55e; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> Filtered GNSS (모드 전환)</div>
             <div><i style="background:red; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> DR-based</div>
             <div><i style="background:orange; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> DR-based (isDRGps=0)</div>
-            <div><i style="background:black; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> DR-based (MM Feedback)</div>
+            <div><i style="background:black; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> DR-based (MM Feedback 위치보정)</div>
+            <div><i style="background:#9e9e9e; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> DR-based (Heading Update)</div>
             <div><i style="background:cyan; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> Road Match</div>
             <div><i style="background:lime; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> Route Match</div>
             <div><i style="background:blue; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> VPM</div>

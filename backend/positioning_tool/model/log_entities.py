@@ -62,6 +62,12 @@ class CoordType(Enum):
                 return "#14b8a6"  # 청록 — 기존 노랑은 DR 주황과 혼동
         if self == CoordType.DR:
             if coord.extra.get("mm_feedback"):
+                reason = str(coord.extra.get("mm_feedback_reason", "")).lower()
+                # 'correction normal' only applies the heading (no position
+                # correction) — plain heading updates render gray; actual
+                # position corrections (force / lane-edge clamp) stay black.
+                if "correction normal" in reason:
+                    return "#9e9e9e"
                 return "black"
             if coord.extra.get("isDRGps") == 0:
                 return "orange"
