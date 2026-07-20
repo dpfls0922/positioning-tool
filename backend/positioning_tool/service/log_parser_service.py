@@ -624,6 +624,7 @@ def parse_log(log_file_path=None):
     flush_pending_raw_gnss()
     normalize_sequential_ids()
     fill_missing_timestamps()
+    sanitize_outlier_timestamps()
     recompute_timestamp_range_from_coords()
     return True
 
@@ -891,6 +892,30 @@ def fill_missing_timestamps():
             else:
                 coord.timestamp = last_seen + timedelta(milliseconds=1)
         last_seen = coord.timestamp
+
+
+def sanitize_outlier_timestamps(max_deviation=timedelta(days=1)):
+    """Repair corrupt record timestamps (e.g. zeroed DLT storage headers that
+    decode to 1970). A single outlier would otherwise stretch the timeline
+    slider across decades, making the actual log span an unusable sliver.
+    Timestamps deviating more than max_deviation from the median are treated
+    as missing and re-filled from their neighbors."""
+    known = [c.timestamp for coords in COORDINATES.values() for c in coords if c.timestamp is not None]
+    if len(known) < 3:
+        return
+
+    known.sort()
+    median = known[len(known) // 2]
+
+    changed = False
+    for coords in COORDINATES.values():
+        for coord in coords:
+            if coord.timestamp is not None and abs(coord.timestamp - median) > max_deviation:
+                coord.timestamp = None
+                changed = True
+
+    if changed:
+        fill_missing_timestamps()
 
 
 def recompute_timestamp_range_from_coords():
