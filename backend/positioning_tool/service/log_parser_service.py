@@ -844,27 +844,33 @@ def normalize_sequential_ids():
     all_coords = [coord for coords in COORDINATES.values() for coord in coords]
     all_lines = [line for lines in LINES.values() for line in lines]
 
-    # Keep marker ids stable in original DLT log order.
-    # Timestamp can be noisy/missing in some logs, which causes ID jumps.
-    all_coords.sort(
-        key=lambda coord: (
-            coord.dlt_id is None,
-            coord.dlt_id if coord.dlt_id is not None else 10**15,
-            coord.timestamp if coord.timestamp else datetime.min,
-        )
-    )
-    all_lines.sort(key=lambda line: (line.timestamp if line.timestamp else datetime.min))
-
-    # Coordinate IDs are per-type sequential IDs (1..N) in DLT order.
-    # This keeps each layer's ID progression intuitive.
-    per_type_counters = {coord_type: 0 for coord_type in CoordType}
+    # One positioning cycle (Filtered GNSS -> DR -> Road Match -> Route Match
+    # -> VPM -> Request) shares a single parse-time id. Renumber per cycle
+    # GROUP so every layer keeps the SAME index for the same cycle — cross-
+    # layer debugging (e.g. comparing DR #250 with Road Match #250) relies on
+    # this alignment. Per-type 1..N renumbering would drift immediately once
+    # any layer skips a cycle (e.g. Road Match while unmatched).
+    groups = {}
     for coord in all_coords:
-        coord_type = coord.type
-        if coord_type not in per_type_counters:
-            continue
-        per_type_counters[coord_type] += 1
-        coord.id = per_type_counters[coord_type]
+        groups.setdefault(coord.id, []).append(coord)
 
+    def group_order_key(item):
+        group_coords = item[1]
+        dlt_ids = [c.dlt_id for c in group_coords if c.dlt_id is not None]
+        timestamps = [c.timestamp for c in group_coords if c.timestamp is not None]
+        return (
+            len(dlt_ids) == 0,
+            min(dlt_ids) if dlt_ids else 10**15,
+            min(timestamps) if timestamps else datetime.min,
+        )
+
+    for new_id, (_, group_coords) in enumerate(sorted(groups.items(), key=group_order_key), start=1):
+        for coord in group_coords:
+            coord.id = new_id
+
+    # Lines stay individually numbered: route-info selection highlighting
+    # relies on unique line ids (one cycle can dump hundreds of route lines).
+    all_lines.sort(key=lambda line: (line.timestamp if line.timestamp else datetime.min))
     for index, line in enumerate(all_lines, start=1):
         line.id = index
 
