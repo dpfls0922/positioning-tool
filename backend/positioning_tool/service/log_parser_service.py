@@ -317,11 +317,16 @@ def parse_log(log_file_path=None):
 
             # MM feedback correction: capture the reason so the next DR coordinate
             # can be highlighted and show what triggered the correction.
-            # "skipped" cases mean no correction was applied -> do not highlight.
+            # Only actual correction events count:
+            #   'correction clamped to lane edge, ...' / 'Force correction' -> black
+            #   'correction normal' (heading-only)                           -> gray
+            # Informational lines like 'timegap: ...' and 'skipped' cases must
+            # NOT mark the next DR coordinate as feedback-corrected.
             mm_feedback_match = MM_FEEDBACK_PATTERN.search(line)
             if mm_feedback_match:
                 reason = mm_feedback_match.group(1).strip()
-                if "skip" not in reason.lower():
+                reason_lower = reason.lower()
+                if "correction" in reason_lower and "skip" not in reason_lower:
                     pending_mm_feedback_reason = reason
 
             for coord_type in CoordType:
