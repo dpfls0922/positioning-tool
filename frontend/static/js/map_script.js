@@ -4415,6 +4415,8 @@ function drawMarkers(coordinates) {
                 marker.id = coord.id || 0;
                 marker.data = coord;
                 marker._isIconMarker = useDrHeadingArrow;
+                // MM feedback-corrected DR points must never be decimated away
+                marker._alwaysShow = coordtype === 'DR-based' && !!coord.extra?.mm_feedback;
                 marker._baseStyle = {
                     opacity: 1,
                     fillOpacity: useDrHeadingArrow ? 1 : 0.8,
@@ -6004,7 +6006,12 @@ function refreshVisibleMarkers() {
             const ll = layer._cullLatLng;
             if (ll) {
                 show = ll.lat >= south && ll.lat <= north && ll.lng >= west && ll.lng <= east;
-                if (show && decimate) {
+                // MM feedback-corrected DR points are diagnostically important
+                // (heading-only=gray / lane-width=black) — never decimate them,
+                // otherwise a gray point sharing a pixel cell with a black one
+                // gets culled and the feedback looks all-black.
+                const skipDecimation = layer._alwaysShow;
+                if (show && decimate && !skipDecimation) {
                     if (!layer._cullPx) layer._cullPx = map.project(ll, CULL_PROJ_ZOOM);
                     const key = ((layer._cullPx.x * projScale) | 0) * CELL_PACK + ((layer._cullPx.y * projScale) | 0);
                     let cells = claimedByGroup[layer._groupName];
