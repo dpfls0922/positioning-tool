@@ -6212,7 +6212,7 @@ function handleDltSearch() {
                     <div class="info-row"><span class="info-key">Lon</span><span>${(data.longitude ?? 0).toFixed(6)}</span></div>
                 </div>`;
             div.onclick = () => {
-                map.setView(item.obj.getLatLng(), 18);
+                // Do not change zoom/view on result click — just open the popup
                 item.obj.openPopup();
             };
         } else {
@@ -6227,7 +6227,7 @@ function handleDltSearch() {
                     <div class="info-row"><span class="info-key">End</span><span>${data.end}</span></div>
                 </div>`;
             div.onclick = () => {
-                map.fitBounds(item.obj.getBounds());
+                // Do not change zoom/view on result click — just open the popup
                 item.obj.openPopup();
             };
         }

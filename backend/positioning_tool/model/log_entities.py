@@ -63,10 +63,12 @@ class CoordType(Enum):
         if self == CoordType.DR:
             if coord.extra.get("mm_feedback"):
                 reason = str(coord.extra.get("mm_feedback_reason", "")).lower()
-                # 'correction normal' only applies the heading (no position
-                # correction) — plain heading updates render gray; actual
-                # position corrections (force / lane-edge clamp) stay black.
-                if "correction normal" in reason:
+                # Heading-only feedback ('heading only: ...' / legacy
+                # 'correction normal') applies just the heading -> gray.
+                # Lane-width feedback ('clamped: ...' / legacy 'Force
+                # correction' / 'correction clamped ...') moves the DR
+                # position -> black.
+                if "heading only" in reason or "correction normal" in reason:
                     return "#9e9e9e"
                 return "black"
             if coord.extra.get("isDRGps") == 0:
