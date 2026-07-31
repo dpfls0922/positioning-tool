@@ -445,6 +445,7 @@ def add_upload_panel():
             </div>
             <div id="linkStyleRuleList" class="style-rule-list"></div>
             <div id="linkBaseRuleEditor" class="style-rule-list"></div>
+            <div id="laneWidthEditor" class="style-rule-list"></div>
         </div>
         <div id="layerCtxNodeSection">
             <div class="layer-ctx-subtitle">노드 스타일</div>
