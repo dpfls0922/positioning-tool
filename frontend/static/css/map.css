@@ -1266,6 +1266,47 @@ html, body {
     font-size: 11px;
 }
 
+.lane-width-inline {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin: 2px 0 4px 22px;
+}
+
+.lane-width-inline-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.lane-width-inline-row .layer-ctx-color {
+    width: 28px;
+    min-width: 28px;
+    height: 20px;
+    padding: 0;
+}
+
+.lane-width-inline-row .layer-ctx-weight {
+    width: 52px;
+    height: 20px;
+    padding: 0 5px;
+    font-size: 11px;
+}
+
+.lane-width-inline-label {
+    flex: 1;
+    font-size: 11px;
+    color: #cbd5e1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.lane-width-inline-unit {
+    font-size: 10px;
+    color: #94a3b8;
+}
+
 .layer-rule-base-style-expr-row {
     display: grid;
     grid-template-columns: 30px minmax(96px, 1fr) 14px minmax(60px, 1fr);

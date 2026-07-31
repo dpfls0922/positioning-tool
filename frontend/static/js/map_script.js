@@ -6140,9 +6140,67 @@ function appendRoadRuleControls(parent, layerName) {
         laneItem.appendChild(laneText);
 
         ruleWrap.appendChild(laneItem);
+
+        // 차로폭 값/색을 레이어 패널에서 바로 튜닝 (기본 / 확장 각각), 즉시 반영
+        ruleWrap.appendChild(buildLaneWidthInlineControls(laneSwatch));
     }
 
     parent.appendChild(ruleWrap);
+}
+
+// Road Link 하위 차로폭 인라인 튜닝 컨트롤(기본/확장 폭·색). laneSwatch는 기본색 반영용.
+function buildLaneWidthInlineControls(laneSwatch) {
+    const wrap = document.createElement('div');
+    wrap.className = 'lane-width-inline';
+
+    const makeRow = (labelText, widthKey, colorKey) => {
+        const row = document.createElement('div');
+        row.className = 'lane-width-inline-row';
+
+        const colorInput = document.createElement('input');
+        colorInput.type = 'color';
+        colorInput.className = 'layer-ctx-color';
+        colorInput.value = laneWidthConfig[colorKey];
+        colorInput.title = `${labelText} 색상`;
+        colorInput.addEventListener('input', () => {
+            laneWidthConfig[colorKey] = colorInput.value;
+            if (colorKey === 'normalColor' && laneSwatch) laneSwatch.style.background = colorInput.value;
+            refreshLaneWidthLayer();
+        });
+        row.appendChild(colorInput);
+
+        const name = document.createElement('span');
+        name.className = 'lane-width-inline-label';
+        name.textContent = labelText;
+        row.appendChild(name);
+
+        const widthInput = document.createElement('input');
+        widthInput.type = 'number';
+        widthInput.min = '0.1';
+        widthInput.max = '50';
+        widthInput.step = '0.1';
+        widthInput.className = 'layer-ctx-weight';
+        widthInput.value = String(laneWidthConfig[widthKey]);
+        widthInput.title = `${labelText} (m)`;
+        widthInput.addEventListener('change', () => {
+            const next = clampLaneWidthValue(widthInput.value, laneWidthConfig[widthKey]);
+            laneWidthConfig[widthKey] = next;
+            widthInput.value = String(next);
+            refreshLaneWidthLayer();
+        });
+        row.appendChild(widthInput);
+
+        const unit = document.createElement('span');
+        unit.className = 'lane-width-inline-unit';
+        unit.textContent = 'm';
+        row.appendChild(unit);
+
+        return row;
+    };
+
+    wrap.appendChild(makeRow('기본', 'normal', 'normalColor'));
+    wrap.appendChild(makeRow('확장(roadCate≤1)', 'extended', 'extendedColor'));
+    return wrap;
 }
 
 function getLayerSwatchColor(name) {
