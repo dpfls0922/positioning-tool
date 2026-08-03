@@ -1175,6 +1175,43 @@ html, body {
     width: 100%;
 }
 
+.road-popup-table th,
+.road-popup-table td {
+    border-bottom: 1px solid #e5e7eb;
+    padding: 3px 6px;
+    font-size: 11px;
+    text-align: center;
+    white-space: nowrap;
+}
+
+.road-popup-table th {
+    color: #4b5563;
+    font-weight: 600;
+}
+
+.candidate-weight-table-scroll {
+    overflow-x: auto;
+    max-width: 100%;
+}
+
+.candidate-weight-table thead th.weight-group-mul {
+    background: #ede9fe;
+    color: #6d28d9;
+}
+
+.candidate-weight-table thead th.weight-group-add {
+    background: #dbeafe;
+    color: #1e3a8a;
+}
+
+.candidate-weight-table td.weight-cell-mul {
+    background: #f5f3ff;
+}
+
+.candidate-weight-table td.weight-cell-add {
+    background: #eff6ff;
+}
+
 .layer-rule-list {
     margin: 2px 0 6px 24px;
     padding-left: 8px;
