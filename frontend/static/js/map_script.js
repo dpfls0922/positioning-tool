@@ -84,7 +84,7 @@ const LANE_WIDTH_MIN_ZOOM = 17;
 // 링크에서 유도한 차로폭(한 차선 폭) 시각화 설정.
 // C 상수: LANE_WIDTH 3.0 / EXTENDED_LANE_WIDTH 3.5 (roadCate <= 1 이면 확장폭).
 // 실제 박스 반폭 = ceil(max(1, 차선수)/2) * (타입별 한 차선 폭).
-let laneWidthConfig = {
+const DEFAULT_LANE_WIDTH_CONFIG = {
     normal: 3.0,
     extended: 3.5,
     normalColor: '#38bdf8',
@@ -92,13 +92,15 @@ let laneWidthConfig = {
     fillOpacity: 0.28
 };
 // 차로폭2 — 주차장/피드백 등 다른 기준용 별도 레이어(기본 OFF, 색/폭 독립 튜닝).
-let laneWidthConfig2 = {
+const DEFAULT_LANE_WIDTH_CONFIG_2 = {
     normal: 2.75,
     extended: 3.25,
     normalColor: '#22c55e',
     extendedColor: '#a855f7',
     fillOpacity: 0.28
 };
+let laneWidthConfig = { ...DEFAULT_LANE_WIDTH_CONFIG };
+let laneWidthConfig2 = { ...DEFAULT_LANE_WIDTH_CONFIG_2 };
 // 마지막으로 렌더된(뷰포트 내) 링크 피처 캐시 — 차로폭 값 변경 시 워커 재조회 없이 즉시 다시 그림.
 let lastRenderedRoadLinks = [];
 let roadLinkFeatureCount = 0;
@@ -167,18 +169,20 @@ let roadCustomLinkRules = [];
 let roadLinkFieldNames = DEFAULT_ROAD_LINK_STYLE_FIELDS.slice();
 let roadShapeLocalGroupsByKind = { link: [], node: [] };
 let roadLinkBaseStyles = createDefaultRoadLinkBaseStyles();
-let roadNodeStyleConfig = {
+const DEFAULT_ROAD_NODE_STYLE = {
     radius: 3.4,
     color: '#38bdf8',
     stroke: '#075985',
     weight: 1.1
 };
-let roadVertexStyleConfig = {
+const DEFAULT_ROAD_VERTEX_STYLE = {
     radius: 2.2,
     color: '#f8fafc',
     stroke: '#0f172a',
     weight: 1.0
 };
+let roadNodeStyleConfig = { ...DEFAULT_ROAD_NODE_STYLE };
+let roadVertexStyleConfig = { ...DEFAULT_ROAD_VERTEX_STYLE };
 let roadStyleContextLayerName = ROAD_NODE_LAYER;
 let selectedRoadFeatureRef = { kind: null, shpIndex: null };
 let routeInfoLinkIds = new Set();
@@ -186,6 +190,8 @@ let selectedRouteInfoLineId = null;
 let selectedRouteInfoNextLineId = null;
 let selectedDrCoordinate = null;
 let selectedCandidateLinkIds = new Set();
+// 클릭으로 선택된 DR 마커 — 다음 선택 시 이 마커만 원복하면 되므로 전체 마커 재도색을 피한다.
+let lastSelectedDrMarker = null;
 let vertexWasActiveBeforeNodeDisabled = false;  // Road Node 끄기 전 Vertex 상태 기억
 let tmapRouteResult = null;
 let tmapRouteRequesting = false;
@@ -226,7 +232,32 @@ let lastRoadLayerInteractionTs = 0;
 const ROAD_SHAPE_CACHE_DIR = 'road_shape_cache_v1';
 const ROAD_SHAPE_MANIFEST_SUFFIX = '.manifest.json';
 const ROAD_LINK_BASE_STYLE_STORAGE_KEY = 'road_link_base_style_v1';
+const ROAD_CUSTOM_LINK_RULES_STORAGE_KEY = 'road_custom_link_rules_v1';
+const ROAD_POINT_STYLE_STORAGE_KEY = 'road_point_style_v1';
+const LANE_WIDTH_CONFIG_STORAGE_KEY = 'lane_width_config_v1';
+const ROAD_LINK_ID_LABEL_STORAGE_KEY = 'road_link_id_label_v1';
 let roadShapeCacheDirHandlePromise = null;
+
+// 브라우저 새로고침 후에도 유지되는 레이어 스타일 설정을 위한 공용 localStorage 헬퍼.
+function readJsonSetting(key, fallback) {
+    try {
+        if (typeof localStorage === 'undefined') return fallback;
+        const raw = localStorage.getItem(key);
+        if (!raw) return fallback;
+        return JSON.parse(raw);
+    } catch (_) {
+        return fallback;
+    }
+}
+
+function writeJsonSetting(key, value) {
+    try {
+        if (typeof localStorage === 'undefined') return;
+        localStorage.setItem(key, JSON.stringify(value));
+    } catch (_) {
+        // Ignore quota/storage errors.
+    }
+}
 
 // Bumped on perf-relevant frontend changes; logged at startup so a stale
 // cached page is immediately identifiable from the console.
@@ -2123,6 +2154,7 @@ function initUploadPanel() {
     bind('addLinkStyleRuleButton', 'click', handleAddLinkStyleRule);
     bind('applyNodeStyleButton', 'click', applyRoadNodeStyleConfig);
     bind('layerCtxClose', 'click', closeLayerContextMenu);
+    initLayerContextMenuDrag();
 
     bindFileSelectionSummary('logFileInput', 'logFileNameText', false);
     bindFileSelectionSummary('linkShpFolderInput', 'linkShpFileText', true);
@@ -2134,6 +2166,10 @@ function initUploadPanel() {
     setupDragAndDrop('nodeDropZone', 'nodeShpFolderInput');
 
     loadRoadLinkBaseStylesFromStorage();
+    loadRoadCustomLinkRulesFromStorage();
+    loadRoadPointStylesFromStorage();
+    loadLaneWidthConfigsFromStorage();
+    loadRoadLinkIdLabelFromStorage();
 
     const nodeColorInput = document.getElementById('nodeColorInput');
     const nodeStrokeInput = document.getElementById('nodeStrokeInput');
@@ -2219,6 +2255,66 @@ function saveRoadLinkBaseStylesToStorage() {
     } catch (_) {
         // Ignore quota/storage errors.
     }
+}
+
+function normalizeRoadPointStyle(raw, fallback) {
+    if (!raw || typeof raw !== 'object') return { ...fallback };
+    const radiusRaw = Number(raw.radius);
+    const weightRaw = Number(raw.weight);
+    return {
+        color: normalizeRoadColor(raw.color, fallback.color),
+        stroke: normalizeRoadColor(raw.stroke, fallback.stroke),
+        radius: Number.isFinite(radiusRaw) ? Math.max(1, Math.min(12, radiusRaw)) : fallback.radius,
+        weight: Number.isFinite(weightRaw) ? Math.max(0, Math.min(5, weightRaw)) : fallback.weight
+    };
+}
+
+// roadNodeStyleConfig/roadVertexStyleConfig는 이미 렌더 함수들이 이 객체 참조를 직접 읽으므로,
+// 재할당 대신 in-place로 값을 덮어써 참조가 어긋나는 일이 없게 한다.
+function loadRoadPointStylesFromStorage() {
+    const raw = readJsonSetting(ROAD_POINT_STYLE_STORAGE_KEY, null);
+    Object.assign(roadNodeStyleConfig, normalizeRoadPointStyle(raw?.node, DEFAULT_ROAD_NODE_STYLE));
+    Object.assign(roadVertexStyleConfig, normalizeRoadPointStyle(raw?.vertex, DEFAULT_ROAD_VERTEX_STYLE));
+}
+
+function saveRoadPointStylesToStorage() {
+    writeJsonSetting(ROAD_POINT_STYLE_STORAGE_KEY, {
+        node: { ...roadNodeStyleConfig },
+        vertex: { ...roadVertexStyleConfig }
+    });
+}
+
+function normalizeLaneWidthConfig(raw, fallback) {
+    if (!raw || typeof raw !== 'object') return { ...fallback };
+    return {
+        normal: clampLaneWidthValue(raw.normal, fallback.normal),
+        extended: clampLaneWidthValue(raw.extended, fallback.extended),
+        normalColor: normalizeRoadColor(raw.normalColor, fallback.normalColor),
+        extendedColor: normalizeRoadColor(raw.extendedColor, fallback.extendedColor),
+        fillOpacity: clampLaneOpacityValue(raw.fillOpacity, fallback.fillOpacity)
+    };
+}
+
+function loadLaneWidthConfigsFromStorage() {
+    const raw = readJsonSetting(LANE_WIDTH_CONFIG_STORAGE_KEY, null);
+    Object.assign(laneWidthConfig, normalizeLaneWidthConfig(raw?.lane1, DEFAULT_LANE_WIDTH_CONFIG));
+    Object.assign(laneWidthConfig2, normalizeLaneWidthConfig(raw?.lane2, DEFAULT_LANE_WIDTH_CONFIG_2));
+}
+
+function saveLaneWidthConfigsToStorage() {
+    writeJsonSetting(LANE_WIDTH_CONFIG_STORAGE_KEY, {
+        lane1: { ...laneWidthConfig },
+        lane2: { ...laneWidthConfig2 }
+    });
+}
+
+function loadRoadLinkIdLabelFromStorage() {
+    const raw = readJsonSetting(ROAD_LINK_ID_LABEL_STORAGE_KEY, null);
+    roadLinkIdLabelEnabled = raw === null ? true : !!raw;
+}
+
+function saveRoadLinkIdLabelToStorage() {
+    writeJsonSetting(ROAD_LINK_ID_LABEL_STORAGE_KEY, roadLinkIdLabelEnabled);
 }
 
 function ensureRoadLinkBaseStyle(ruleKey) {
@@ -2541,6 +2637,35 @@ function normalizeRuleMatchValue(value) {
     return str.toLowerCase();
 }
 
+function normalizeCustomLinkRule(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const propKey = String(raw.propKey || '').trim();
+    const rawValue = String(raw.rawValue ?? '').trim();
+    if (!propKey || rawValue === '') return null;
+    const seqNum = Number(raw.seq);
+    return {
+        seq: Number.isFinite(seqNum) ? seqNum : 0,
+        propKey,
+        rawValue,
+        normalizedValue: normalizeRuleMatchValue(rawValue),
+        color: normalizeRoadColor(raw.color, '#8b5cf6'),
+        weight: clampRoadLinkWeight(raw.weight ?? 2.1),
+        customName: String(raw.customName || '').trim()
+    };
+}
+
+function loadRoadCustomLinkRulesFromStorage() {
+    const raw = readJsonSetting(ROAD_CUSTOM_LINK_RULES_STORAGE_KEY, []);
+    const list = Array.isArray(raw) ? raw.map(normalizeCustomLinkRule).filter(Boolean) : [];
+    roadCustomLinkRules = list;
+    const maxSeq = list.reduce((max, rule) => Math.max(max, rule.seq || 0), 0);
+    roadCustomLinkRuleSeq = maxSeq + 1;
+}
+
+function saveRoadCustomLinkRulesToStorage() {
+    writeJsonSetting(ROAD_CUSTOM_LINK_RULES_STORAGE_KEY, roadCustomLinkRules);
+}
+
 function matchesCustomLinkRule(rule, props) {
     if (!rule || !props) return false;
     const propValue = findRoadPropValue(props, rule.propKey);
@@ -2717,9 +2842,10 @@ function renderCustomLinkRuleList() {
     roadCustomLinkRules.forEach((rule, index) => {
         const row = document.createElement('div');
         row.className = 'style-rule-item';
+        const nameLabel = rule.customName ? `${rule.customName} (${rule.propKey} = ${rule.rawValue})` : `${rule.propKey} = ${rule.rawValue}`;
         row.innerHTML = `
             <span class="style-rule-chip" style="background:${escapeHtml(rule.color)};"></span>
-            <span class="style-rule-text">${escapeHtml(`${index + 1}. ${rule.propKey} = ${rule.rawValue} / ${rule.weight}px`)}</span>
+            <span class="style-rule-text">${escapeHtml(`${index + 1}. ${nameLabel} / ${rule.weight}px`)}</span>
             <button type="button" class="style-rule-remove">삭제</button>
         `;
 
@@ -2727,6 +2853,7 @@ function renderCustomLinkRuleList() {
         if (removeBtn) {
             removeBtn.addEventListener('click', () => {
                 roadCustomLinkRules = roadCustomLinkRules.filter((item) => item.seq !== rule.seq);
+                saveRoadCustomLinkRulesToStorage();
                 syncRoadLinkRuleEnabledState();
                 renderCustomLinkRuleList();
                 renderLinkStyleFieldOptions();
@@ -2741,11 +2868,13 @@ function renderCustomLinkRuleList() {
 }
 
 function handleAddLinkStyleRule() {
+    const nameInput = document.getElementById('linkStyleNameInput');
     const propInput = document.getElementById('linkStylePropSelect');
     const valueInput = document.getElementById('linkStyleValueInput');
     const colorInput = document.getElementById('linkStyleColorInput');
     const weightInput = document.getElementById('linkStyleWeightInput');
 
+    const customName = String(nameInput?.value || '').trim();
     const propKey = String(propInput?.value || '').trim();
     const rawValue = String(valueInput?.value || '').trim();
     const color = String(colorInput?.value || '#8b5cf6').trim() || '#8b5cf6';
@@ -2764,8 +2893,10 @@ function handleAddLinkStyleRule() {
         rawValue,
         normalizedValue,
         color,
-        weight
+        weight,
+        customName
     });
+    saveRoadCustomLinkRulesToStorage();
     syncRoadLinkRuleEnabledState();
     renderCustomLinkRuleList();
     renderLinkStyleFieldOptions(propKey);
@@ -2773,7 +2904,8 @@ function handleAddLinkStyleRule() {
     refreshRoadLayerStyles();
     renderLayerControls();
     if (roadShapeLoaded) scheduleRoadViewportQuery();
-    setUploadProgress(100, `링크 스타일 규칙 추가: ${propKey}=${rawValue}`, false);
+    if (nameInput) nameInput.value = '';
+    setUploadProgress(100, `링크 스타일 규칙 추가: ${customName || `${propKey}=${rawValue}`}`, false);
 }
 
 function applyRoadNodeStyleConfig() {
@@ -2794,10 +2926,11 @@ function applyRoadNodeStyleConfig() {
         weight: Number.isFinite(weightRaw) ? Math.max(0, Math.min(5, weightRaw)) : 1
     };
     if (roadStyleContextLayerName === ROAD_LINK_VERTEX_LAYER) {
-        roadVertexStyleConfig = nextStyle;
+        Object.assign(roadVertexStyleConfig, nextStyle);
     } else {
-        roadNodeStyleConfig = nextStyle;
+        Object.assign(roadNodeStyleConfig, nextStyle);
     }
+    saveRoadPointStylesToStorage();
     refreshRoadLayerStyles();
     if (roadShapeLoaded) scheduleRoadViewportQuery();
     setUploadProgress(100, `${roadStyleContextLayerName === ROAD_LINK_VERTEX_LAYER ? 'Vertex' : '노드'} 스타일 적용 완료`, false);
@@ -3579,7 +3712,7 @@ function getRoadLinkResolvedRule(props) {
             const customKey = getCustomRoadLinkRuleKey(customRule);
             return {
                 key: customKey || 'default',
-                label: `${customRule.propKey}=${customRule.rawValue}`,
+                label: customRule.customName || `${customRule.propKey}=${customRule.rawValue}`,
                 color: customRule.color || '#8b5cf6',
                 weight: Number(customRule.weight) || 2.1,
                 isCustom: true
@@ -4666,7 +4799,7 @@ function drawMarkers(coordinates) {
                     if (coordtype === 'DR-based') {
                         selectedDrCoordinate = coord;
                         selectedCandidateLinkIds = extractCandidateLinkIdSet(coord?.extra);
-                        refreshDrSelectionStyles();
+                        refreshDrSelectionStyles(marker);
                         if (roadLinkGeoLayer) {
                             roadLinkGeoLayer.setStyle((feature) => getRoadLinkStyle({
                                 ...(feature?.properties || {}),
@@ -4674,7 +4807,7 @@ function drawMarkers(coordinates) {
                             }));
                         }
                     }
-                    L.popup().setLatLng([latitude, longitude]).setContent(marker._popupContent).openOn(map);
+                    L.popup({ maxWidth: 480 }).setLatLng([latitude, longitude]).setContent(marker._popupContent).openOn(map);
                     if (e) {
                         L.DomEvent.stopPropagation(e);
                     }
@@ -5052,6 +5185,16 @@ function formatCandidateCell(value) {
     return escapeHtml(value);
 }
 
+// anglePenalty처럼 기본점수에서 "빼지는" 항을 음수로 표시한다(Base = distancePenalty - anglePenalty + laneBonus).
+function formatSubtractedCandidateCell(value) {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return formatCandidateCell(value);
+    return `-${formatCandidateCell(Math.abs(num))}`;
+}
+
+// 로그의 "Candidate Link[...] ... | Base: base = distancePenalty - anglePenalty + laneBonus | Adj: adjustment |
+// Dist(... laneW: laneWeight fB: facilityBonus) | ..." 형식에서, 기본점수(base)에 곱해지는 항(laneWeight)과
+// 더해지는 항(distancePenalty/laneBonus/facilityBonus/adjustment, anglePenalty는 빼지는 항)을 분리해서 보여준다.
 function buildCandidateLinkPopupHtml(extra) {
     const entries = normalizeCandidateLinkEntries(extra).slice(0, 12);
     if (entries.length === 0) return '';
@@ -5059,18 +5202,24 @@ function buildCandidateLinkPopupHtml(extra) {
     const rows = entries.map((entry, index) => {
         const linkId = pickCandidateField(entry, ['link_id', 'linkId', 'rid', 'RID', 'candidate_link_id']);
         const base = pickCandidateField(entry, ['base', 'baseScore', 'base_score']);
-        const distanceScore = pickCandidateField(entry, ['distanceScore', 'distance_score']);
+        const total = pickCandidateField(entry, ['total', 'totalScore', 'score']);
+        const laneWeight = pickCandidateField(entry, ['laneWeight', 'lane_weight']);
+        const distancePenalty = pickCandidateField(entry, ['distancePenalty', 'distance_penalty']);
         const anglePenalty = pickCandidateField(entry, ['anglePenalty', 'angle_penalty']);
         const laneBonus = pickCandidateField(entry, ['laneBonus', 'lane_bonus']);
-        const total = pickCandidateField(entry, ['total', 'totalScore', 'score']);
+        const facilityBonus = pickCandidateField(entry, ['facilityBonus', 'facility_bonus']);
+        const adjustment = pickCandidateField(entry, ['adjustment']);
         return `
             <tr>
                 <td>${index + 1}</td>
                 <td>${formatCandidateCell(linkId)}</td>
                 <td>${formatCandidateCell(base)}</td>
-                <td>${formatCandidateCell(distanceScore)}</td>
-                <td>${formatCandidateCell(anglePenalty)}</td>
-                <td>${formatCandidateCell(laneBonus)}</td>
+                <td class="weight-cell-mul">${formatCandidateCell(laneWeight)}</td>
+                <td class="weight-cell-add">${formatCandidateCell(distancePenalty)}</td>
+                <td class="weight-cell-add">${formatSubtractedCandidateCell(anglePenalty)}</td>
+                <td class="weight-cell-add">${formatCandidateCell(laneBonus)}</td>
+                <td class="weight-cell-add">${formatCandidateCell(facilityBonus)}</td>
+                <td class="weight-cell-add">${formatCandidateCell(adjustment)}</td>
                 <td>${formatCandidateCell(total)}</td>
             </tr>
         `;
@@ -5078,28 +5227,29 @@ function buildCandidateLinkPopupHtml(extra) {
 
     return `
         <div class="road-popup-subtitle" style="margin-top:8px;">후보 링크 정보</div>
-        <div style="font-size:11px;color:#666;margin-bottom:4px;">각 링크의 매칭 점수 정보</div>
         <div class="road-popup-summary">
-            <table class="road-popup-table">
-                <thead>
-                    <tr>
-                        <th>#</th>
-                        <th>Link ID</th>
-                        <th>기본점수</th>
-                        <th>거리점수</th>
-                        <th>각도페널티</th>
-                        <th>차선보너스</th>
-                        <th>총점</th>
-                    </tr>
-                </thead>
-                <tbody>${rows}</tbody>
-            </table>
-            <div style="font-size:10px;color:#888;margin-top:6px;">
-                <div>• 기본점수: 후보 링크의 기본 매칭 점수</div>
-                <div>• 거리점수: 현재 위치와의 거리에 따른 점수</div>
-                <div>• 각도페널티: 진행 방향과의 각도 차이에 의한 감점</div>
-                <div>• 차선보너스: 차선 정보 일치도에 따른 가산점</div>
-                <div>• 총점: 모든 요소를 합산한 최종 점수 (높을수록 좋음)</div>
+            <div class="candidate-weight-table-scroll">
+                <table class="road-popup-table candidate-weight-table">
+                    <thead>
+                        <tr>
+                            <th rowspan="2">#</th>
+                            <th rowspan="2">Link ID</th>
+                            <th rowspan="2">기본점수</th>
+                            <th class="weight-group-mul">곱해진 가중치</th>
+                            <th colspan="5" class="weight-group-add">더해진 가중치</th>
+                            <th rowspan="2">총점</th>
+                        </tr>
+                        <tr>
+                            <th class="weight-group-mul">차선가중치</th>
+                            <th class="weight-group-add">거리보정</th>
+                            <th class="weight-group-add">각도페널티</th>
+                            <th class="weight-group-add">차선보너스</th>
+                            <th class="weight-group-add">시설보너스</th>
+                            <th class="weight-group-add">조정값</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>
             </div>
         </div>
     `;
@@ -5294,32 +5444,53 @@ function isSelectedDrCoordinate(coord) {
     return coord === selectedDrCoordinate;
 }
 
-function refreshDrSelectionStyles() {
-    markers.forEach((marker) => {
-        const coord = marker?.data;
-        if (!coord || coord.type !== 'DR-based') return;
-        const selected = isSelectedDrCoordinate(coord);
-        if (marker._isIconMarker) {
-            marker.setIcon(buildDrHeadingIcon(
-                coord.heading,
-                selected ? '#2563eb' : (coord.color || '#ef4444')
-            ));
-            if (typeof marker.setZIndexOffset === 'function') {
-                marker.setZIndexOffset(selected ? 1200 : 0);
-            }
-            return;
+// 마커 하나에만 선택/비선택 스타일을 적용한다(heading 아이콘 모드는 setIcon으로 DOM을 새로 만듦).
+function applyDrMarkerSelectionStyle(marker, selected) {
+    const coord = marker?.data;
+    if (!coord) return;
+    if (marker._isIconMarker) {
+        marker.setIcon(buildDrHeadingIcon(
+            coord.heading,
+            selected ? '#2563eb' : (coord.color || '#ef4444')
+        ));
+        if (typeof marker.setZIndexOffset === 'function') {
+            marker.setZIndexOffset(selected ? 1200 : 0);
         }
-        if (typeof marker.setStyle === 'function') {
-            marker.setStyle({
-                color: selected ? '#2563eb' : (coord.color || 'black'),
-                fillColor: selected ? '#60a5fa' : (coord.color || 'black'),
-                weight: selected ? 3 : 1
-            });
-            if (typeof marker.setRadius === 'function') {
-                marker.setRadius(selected ? 6 : (marker._baseStyle?.radius ?? 3));
-            }
+        return;
+    }
+    if (typeof marker.setStyle === 'function') {
+        marker.setStyle({
+            color: selected ? '#2563eb' : (coord.color || 'black'),
+            fillColor: selected ? '#60a5fa' : (coord.color || 'black'),
+            weight: selected ? 3 : 1
+        });
+        if (typeof marker.setRadius === 'function') {
+            marker.setRadius(selected ? 6 : (marker._baseStyle?.radius ?? 3));
         }
-    });
+    }
+}
+
+// clickedMarker를 넘기면 그 마커와 이전 선택 마커 딱 2개만 갱신한다(O(1)).
+// 인자 없이 부르면(전체 다시 그린 직후) 현재 selectedDrCoordinate와 일치하는 마커 하나만 찾아 복원한다.
+// heading 아이콘 모드에서 markers.forEach로 전체를 setIcon하면 DR 마커 수만큼 DOM을 통째로
+// 새로 만들어 클릭 이벤트 처리 중에 클릭된 마커 자신의 DOM까지 교체되어 팝업이 열리지 않는 문제가 있었다.
+function refreshDrSelectionStyles(clickedMarker) {
+    if (clickedMarker) {
+        if (lastSelectedDrMarker && lastSelectedDrMarker !== clickedMarker) {
+            applyDrMarkerSelectionStyle(lastSelectedDrMarker, false);
+        }
+        applyDrMarkerSelectionStyle(clickedMarker, true);
+        lastSelectedDrMarker = clickedMarker;
+        return;
+    }
+
+    lastSelectedDrMarker = null;
+    if (!selectedDrCoordinate) return;
+    const match = markers.find((marker) => marker?.data?.type === 'DR-based' && isSelectedDrCoordinate(marker.data));
+    if (match) {
+        applyDrMarkerSelectionStyle(match, true);
+        lastSelectedDrMarker = match;
+    }
 }
 
 function drawPolylines(lines) {
@@ -5649,7 +5820,6 @@ function openLayerContextMenu(layerName, anchorEl) {
     if (isLink) {
         renderLinkStyleFieldOptions();
         renderLinkBaseRuleEditorForContextMenu();
-        renderLaneWidthEditor();
     }
     renderCustomLinkRuleList();
     menu.classList.remove('hidden');
@@ -5732,92 +5902,50 @@ function clampLaneOpacityValue(value, fallback) {
     return Math.min(Math.max(num, 0), 1);
 }
 
-// 차로폭 값/색/투명도를 바꾸면 즉시 다시 그리는 컨텍스트 메뉴 에디터.
-function renderLaneWidthEditor() {
-    const container = document.getElementById('laneWidthEditor');
-    if (!container) return;
-    container.innerHTML = '';
-
-    const wrap = document.createElement('div');
-    wrap.className = 'layer-rule-base-style-wrap layer-rule-base-style-wrap-panel';
-
-    const title = document.createElement('div');
-    title.className = 'layer-rule-base-style-title';
-    title.textContent = '차로폭 시각화 (링크 기반)';
-    wrap.appendChild(title);
-
-    const makeWidthRow = (labelText, widthKey, colorKey) => {
-        const row = document.createElement('div');
-        row.className = 'layer-rule-base-style-row';
-
-        const name = document.createElement('span');
-        name.className = 'layer-rule-base-style-name';
-        name.textContent = labelText;
-        row.appendChild(name);
-
-        const colorInput = document.createElement('input');
-        colorInput.type = 'color';
-        colorInput.className = 'layer-ctx-color';
-        colorInput.value = laneWidthConfig[colorKey];
-        colorInput.title = `${labelText} 색상`;
-        colorInput.addEventListener('change', () => {
-            laneWidthConfig[colorKey] = colorInput.value;
-            refreshLaneWidthLayer();
-            renderLayerControls();
-        });
-        row.appendChild(colorInput);
-
-        const widthInput = document.createElement('input');
-        widthInput.type = 'number';
-        widthInput.min = '0.1';
-        widthInput.max = '50';
-        widthInput.step = '0.1';
-        widthInput.className = 'layer-ctx-weight';
-        widthInput.value = String(laneWidthConfig[widthKey]);
-        widthInput.title = `${labelText} (m)`;
-        widthInput.addEventListener('change', () => {
-            const next = clampLaneWidthValue(widthInput.value, laneWidthConfig[widthKey]);
-            laneWidthConfig[widthKey] = next;
-            widthInput.value = String(next);
-            refreshLaneWidthLayer();
-        });
-        row.appendChild(widthInput);
-
-        wrap.appendChild(row);
-    };
-
-    makeWidthRow('기본 차로폭', 'normal', 'normalColor');
-    makeWidthRow('확장 차로폭(roadCate≤1)', 'extended', 'extendedColor');
-
-    const opacityRow = document.createElement('div');
-    opacityRow.className = 'layer-rule-base-style-row';
-    const opacityName = document.createElement('span');
-    opacityName.className = 'layer-rule-base-style-name';
-    opacityName.textContent = '채우기 투명도';
-    opacityRow.appendChild(opacityName);
-    const opacityInput = document.createElement('input');
-    opacityInput.type = 'number';
-    opacityInput.min = '0';
-    opacityInput.max = '1';
-    opacityInput.step = '0.05';
-    opacityInput.className = 'layer-ctx-weight';
-    opacityInput.value = String(laneWidthConfig.fillOpacity);
-    opacityInput.title = '채우기 투명도 (0~1)';
-    opacityInput.addEventListener('change', () => {
-        const next = clampLaneOpacityValue(opacityInput.value, laneWidthConfig.fillOpacity);
-        laneWidthConfig.fillOpacity = next;
-        opacityInput.value = String(next);
-        refreshLaneWidthLayer();
-    });
-    opacityRow.appendChild(opacityInput);
-    wrap.appendChild(opacityRow);
-
-    container.appendChild(wrap);
-}
-
 function closeLayerContextMenu() {
     const menu = document.getElementById('layerContextMenu');
     if (menu) menu.classList.add('hidden');
+}
+
+// 레이어 스타일 팝업(#layerContextMenu)을 제목 표시줄(#layerCtxTitle)로 드래그해서 옮길 수 있게 한다.
+// 패널은 position:fixed이므로 getBoundingClientRect()의 뷰포트 좌표가 곧 left/top 값과 같다.
+function initLayerContextMenuDrag() {
+    const menu = document.getElementById('layerContextMenu');
+    const handle = document.getElementById('layerCtxTitle');
+    if (!menu || !handle) return;
+
+    let dragging = false;
+    let startX = 0;
+    let startY = 0;
+    let startLeft = 0;
+    let startTop = 0;
+
+    const onMouseMove = (e) => {
+        if (!dragging) return;
+        const nextLeft = startLeft + (e.clientX - startX);
+        const nextTop = startTop + (e.clientY - startY);
+        const maxLeft = Math.max(4, window.innerWidth - menu.offsetWidth - 4);
+        const maxTop = Math.max(4, window.innerHeight - menu.offsetHeight - 4);
+        menu.style.left = `${Math.min(Math.max(nextLeft, 4), maxLeft)}px`;
+        menu.style.top = `${Math.min(Math.max(nextTop, 4), maxTop)}px`;
+    };
+
+    const onMouseUp = () => {
+        dragging = false;
+    };
+
+    handle.addEventListener('mousedown', (e) => {
+        dragging = true;
+        const rect = menu.getBoundingClientRect();
+        startX = e.clientX;
+        startY = e.clientY;
+        startLeft = rect.left;
+        startTop = rect.top;
+        e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
 }
 
 function isRoadShapeLayerName(name) {
@@ -6058,7 +6186,7 @@ function appendRoadRuleControls(parent, layerName) {
             const customKey = getCustomRoadLinkRuleKey(rule);
             return {
                 key: customKey,
-                label: `커스텀 ${rule.propKey}=${rule.rawValue}`,
+                label: rule.customName || `커스텀 ${rule.propKey}=${rule.rawValue}`,
                 color: rule.color || '#8b5cf6',
                 count: Number(roadLinkRenderedRuleCounts?.[customKey] || 0)
             };
@@ -6147,6 +6275,7 @@ function appendRoadRuleControls(parent, layerName) {
         labelCheckbox.checked = roadLinkIdLabelEnabled;
         labelCheckbox.onchange = () => {
             roadLinkIdLabelEnabled = labelCheckbox.checked;
+            saveRoadLinkIdLabelToStorage();
             if (roadShapeLoaded) {
                 scheduleRoadViewportQuery();
             }
@@ -6235,6 +6364,7 @@ function buildLaneWidthInlineControls(config, laneSwatch) {
             config[colorKey] = colorInput.value;
             if (colorKey === 'normalColor' && laneSwatch) laneSwatch.style.background = colorInput.value;
             refreshLaneWidthLayer();
+            saveLaneWidthConfigsToStorage();
         });
         row.appendChild(colorInput);
 
@@ -6256,6 +6386,7 @@ function buildLaneWidthInlineControls(config, laneSwatch) {
             config[widthKey] = next;
             widthInput.value = String(next);
             refreshLaneWidthLayer();
+            saveLaneWidthConfigsToStorage();
         });
         row.appendChild(widthInput);
 
@@ -6269,6 +6400,35 @@ function buildLaneWidthInlineControls(config, laneSwatch) {
 
     wrap.appendChild(makeRow('기본', 'normal', 'normalColor'));
     wrap.appendChild(makeRow('확장(roadCate≤1)', 'extended', 'extendedColor'));
+
+    const opacityRow = document.createElement('div');
+    opacityRow.className = 'lane-width-inline-row';
+    const opacitySpacer = document.createElement('span');
+    opacitySpacer.className = 'layer-ctx-color';
+    opacitySpacer.style.visibility = 'hidden';
+    opacityRow.appendChild(opacitySpacer);
+    const opacityLabel = document.createElement('span');
+    opacityLabel.className = 'lane-width-inline-label';
+    opacityLabel.textContent = '투명도';
+    opacityRow.appendChild(opacityLabel);
+    const opacityInput = document.createElement('input');
+    opacityInput.type = 'number';
+    opacityInput.min = '0';
+    opacityInput.max = '1';
+    opacityInput.step = '0.05';
+    opacityInput.className = 'layer-ctx-weight';
+    opacityInput.value = String(config.fillOpacity);
+    opacityInput.title = '채우기 투명도 (0~1)';
+    opacityInput.addEventListener('change', () => {
+        const next = clampLaneOpacityValue(opacityInput.value, config.fillOpacity);
+        config.fillOpacity = next;
+        opacityInput.value = String(next);
+        refreshLaneWidthLayer();
+        saveLaneWidthConfigsToStorage();
+    });
+    opacityRow.appendChild(opacityInput);
+    wrap.appendChild(opacityRow);
+
     return wrap;
 }
 

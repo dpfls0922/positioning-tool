@@ -209,6 +209,7 @@ def build_html_head(static_version):
         .layer-ctx-title {{
             font-size: 12px; font-weight: 700; color: #1f2937;
             margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid #dbe3ef;
+            cursor: move; user-select: none;
         }}
         .layer-ctx-subtitle {{
             font-size: 10px; font-weight: 600; color: #475569;
@@ -433,6 +434,9 @@ def add_upload_panel():
         <div id="layerCtxLinkSection">
             <div class="layer-ctx-subtitle">링크 스타일 규칙 추가</div>
             <div class="layer-ctx-row">
+                <input id="linkStyleNameInput" type="text" placeholder="이름 (선택, 예: 터널)" class="layer-ctx-input">
+            </div>
+            <div class="layer-ctx-row">
                 <select id="linkStylePropSelect" class="layer-ctx-input">
                     <option value="">필드 선택</option>
                 </select>
@@ -445,7 +449,6 @@ def add_upload_panel():
             </div>
             <div id="linkStyleRuleList" class="style-rule-list"></div>
             <div id="linkBaseRuleEditor" class="style-rule-list"></div>
-            <div id="laneWidthEditor" class="style-rule-list"></div>
         </div>
         <div id="layerCtxNodeSection">
             <div class="layer-ctx-subtitle">노드 스타일</div>
