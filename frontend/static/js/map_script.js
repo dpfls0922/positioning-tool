@@ -4,6 +4,7 @@ const roadCanvasRenderer = L.canvas({ padding: 0.25 });
 const roadCanvasRendererNode = L.canvas({ padding: 0.25 });
 // 차로폭 박스 전용 렌더러 — 링크 중심선보다 아래(낮은 z-index 팬)에 그리기 위해 별도 팬에 고정.
 const roadCanvasRendererLane = L.canvas({ padding: 0.25, pane: 'roadLaneWidthPane' });
+const roadCanvasRendererLane2 = L.canvas({ padding: 0.25, pane: 'roadLaneWidth2Pane' });
 
 
 const baseLayers = {
@@ -67,6 +68,7 @@ const ROAD_LINK_LAYER = 'Road Link';
 const ROAD_NODE_LAYER = 'Road Node';
 const ROAD_LINK_VERTEX_LAYER = 'Road Link Vertex';
 const LANE_WIDTH_LAYER = 'Lane Width';
+const LANE_WIDTH_LAYER_2 = 'Lane Width 2';
 const ROUTE_INFO_MARKER_LAYER = 'Route Info Markers';
 const TMAP_ROUTE_LAYER = 'Tmap Route';
 const TMAP_WAYPOINT_LAYER = 'Tmap Waypoints';
@@ -76,15 +78,25 @@ let roadLinkGeoLayer = null;
 let roadNodeGeoLayer = null;
 let roadLinkVertexGeoLayer = null;
 let roadLaneWidthGeoLayer = null;
+let roadLaneWidth2GeoLayer = null;
 // 차로폭 박스는 이 줌 이상에서만 그린다.
 const LANE_WIDTH_MIN_ZOOM = 17;
-// 링크에서 유도한 차로폭 시각화 설정.
+// 링크에서 유도한 차로폭(한 차선 폭) 시각화 설정.
 // C 상수: LANE_WIDTH 3.0 / EXTENDED_LANE_WIDTH 3.5 (roadCate <= 1 이면 확장폭).
+// 실제 박스 반폭 = ceil(max(1, 차선수)/2) * (타입별 한 차선 폭).
 let laneWidthConfig = {
     normal: 3.0,
     extended: 3.5,
     normalColor: '#38bdf8',
     extendedColor: '#f97316',
+    fillOpacity: 0.28
+};
+// 차로폭2 — 주차장/피드백 등 다른 기준용 별도 레이어(기본 OFF, 색/폭 독립 튜닝).
+let laneWidthConfig2 = {
+    normal: 2.75,
+    extended: 3.25,
+    normalColor: '#22c55e',
+    extendedColor: '#a855f7',
     fillOpacity: 0.28
 };
 // 마지막으로 렌더된(뷰포트 내) 링크 피처 캐시 — 차로폭 값 변경 시 워커 재조회 없이 즉시 다시 그림.
@@ -3679,6 +3691,7 @@ function ensureRoadInteractionPanes() {
     // Keep road-shape layers below markerPane so parsed marker popups remain clickable.
     // Lane-width boxes sit below the link canvas (overlayPane, z=400) so the centerline stays on top.
     ensurePane('roadLaneWidthPane', 350);
+    ensurePane('roadLaneWidth2Pane', 351);
     ensurePane('roadLinkPane', 550);
     ensurePane('roadNodePane', 551);
     ensurePane('roadLinkVertexPane', 552);
@@ -3690,6 +3703,7 @@ function getRoadPaneName(layerName) {
     if (layerName === ROAD_LINK_VERTEX_LAYER) return 'roadLinkVertexPane';
     if (layerName === ROAD_NODE_LAYER) return 'roadNodePane';
     if (layerName === LANE_WIDTH_LAYER) return 'roadLaneWidthPane';
+    if (layerName === LANE_WIDTH_LAYER_2) return 'roadLaneWidth2Pane';
     return null;
 }
 
@@ -3811,9 +3825,23 @@ function ensureRoadShapeLayers() {
             pane: 'roadLaneWidthPane',
             renderer: roadCanvasRendererLane,
             interactive: false,
-            style: (feature) => getLaneWidthStyle(feature?.properties || {})
+            style: (feature) => getLaneWidthStyle(feature?.properties || {}, laneWidthConfig)
         });
         addLayerToGroup(LANE_WIDTH_LAYER, roadLaneWidthGeoLayer);
+    }
+
+    if (!roadLaneWidth2GeoLayer) {
+        roadLaneWidth2GeoLayer = L.geoJSON(null, {
+            pane: 'roadLaneWidth2Pane',
+            renderer: roadCanvasRendererLane2,
+            interactive: false,
+            style: (feature) => getLaneWidthStyle(feature?.properties || {}, laneWidthConfig2)
+        });
+        addLayerToGroup(LANE_WIDTH_LAYER_2, roadLaneWidth2GeoLayer);
+        // 차로폭2는 기본 OFF (필요할 때만 선택적으로 켬)
+        activeGroups.delete(LANE_WIDTH_LAYER_2);
+        const g2 = featureGroups[LANE_WIDTH_LAYER_2];
+        if (g2 && map.hasLayer(g2)) map.removeLayer(g2);
     }
 
     if (!roadNodeGeoLayer) {
@@ -3863,29 +3891,49 @@ function ensureRoadShapeLayers() {
     if (!layerOrder.includes(ROAD_NODE_LAYER)) layerOrder.push(ROAD_NODE_LAYER);
     if (!layerOrder.includes(ROAD_LINK_VERTEX_LAYER)) layerOrder.push(ROAD_LINK_VERTEX_LAYER);
     if (!layerOrder.includes(LANE_WIDTH_LAYER)) layerOrder.push(LANE_WIDTH_LAYER);
+    if (!layerOrder.includes(LANE_WIDTH_LAYER_2)) layerOrder.push(LANE_WIDTH_LAYER_2);
     activeGroups.add(ROAD_LINK_LAYER);
     activeGroups.add(ROAD_NODE_LAYER);
     activeGroups.add(ROAD_LINK_VERTEX_LAYER);
     activeGroups.add(LANE_WIDTH_LAYER);
+    // LANE_WIDTH_LAYER_2 는 기본 OFF — activeGroups에 추가하지 않음
 }
 
-// roadCate <= 1 이면 확장 차로폭(EXTENDED_LANE_WIDTH), 그 외 기본(LANE_WIDTH).
-function laneWidthForProps(props) {
+// 렌더 대상 차로폭 레이어 목록(각자 geoLayer/설정/활성상태 보유).
+function laneLayerEntries() {
+    return [
+        { name: LANE_WIDTH_LAYER, layer: roadLaneWidthGeoLayer, config: laneWidthConfig },
+        { name: LANE_WIDTH_LAYER_2, layer: roadLaneWidth2GeoLayer, config: laneWidthConfig2 }
+    ];
+}
+
+// 링크의 차선수(LANE, 최소 1). 파싱 불가 시 1로 간주.
+function laneCountForProps(props) {
+    const raw = toRoadInt(findRoadPropValue(props, 'LANE'));
+    return (raw !== null && raw >= 1) ? raw : 1;
+}
+
+// 박스 반폭(중심선→가장자리) = ceil(max(1, 차선수)/2) * (타입별 한 차선 폭).
+// roadCate <= 1 이면 확장(EXTENDED_LANE_WIDTH), 그 외 기본(LANE_WIDTH). 차선수/2는 올림.
+function laneWidthForProps(props, config) {
     const roadCate = toRoadInt(findRoadPropValue(props, 'ROAD_CATE'));
     const extended = roadCate !== null && roadCate <= 1;
-    const width = extended ? Number(laneWidthConfig.extended) : Number(laneWidthConfig.normal);
-    return { width, extended };
+    const oneLaneWidth = extended ? Number(config.extended) : Number(config.normal);
+    const laneCount = laneCountForProps(props);
+    const halfLaneCount = Math.ceil(laneCount / 2); // 소수점 올림
+    const halfWidth = halfLaneCount * oneLaneWidth;  // 미터
+    return { halfWidth, oneLaneWidth, laneCount, extended };
 }
 
-function getLaneWidthStyle(props = {}) {
+function getLaneWidthStyle(props = {}, config = laneWidthConfig) {
     const extended = props.__laneExtended === true;
-    const color = extended ? laneWidthConfig.extendedColor : laneWidthConfig.normalColor;
+    const color = extended ? config.extendedColor : config.normalColor;
     return {
         color,
         weight: 0.6,
         opacity: 0.7,
         fillColor: color,
-        fillOpacity: Number(laneWidthConfig.fillOpacity)
+        fillOpacity: Number(config.fillOpacity)
     };
 }
 
@@ -3927,8 +3975,8 @@ function laneRectCornersForSegment(a, b, halfWidthMeters) {
     ];
 }
 
-// 링크 폴리라인들을 세그먼트별 차로폭 사각형 폴리곤 피처로 변환.
-function buildLaneWidthFeatures(linkFeatures) {
+// 링크 폴리라인들을 세그먼트별 차로폭 사각형 폴리곤 피처로 변환(주어진 config 기준).
+function buildLaneWidthFeatures(linkFeatures, config) {
     const out = [];
     const sourceLinks = Array.isArray(linkFeatures) ? linkFeatures : [];
 
@@ -3936,16 +3984,15 @@ function buildLaneWidthFeatures(linkFeatures) {
         const geometry = feature?.geometry;
         const props = feature?.properties || {};
         if (!geometry) return;
-        const { width, extended } = laneWidthForProps(props);
-        const half = width / 2;
-        if (!Number.isFinite(half) || half <= 0) return;
+        const { halfWidth, oneLaneWidth, laneCount, extended } = laneWidthForProps(props, config);
+        if (!Number.isFinite(halfWidth) || halfWidth <= 0) return;
 
         const linkId = pickRoadLinkId(props);
 
         const emitLine = (coords) => {
             if (!Array.isArray(coords)) return;
             for (let i = 0; i < coords.length - 1; i += 1) {
-                const corners = laneRectCornersForSegment(coords[i], coords[i + 1], half);
+                const corners = laneRectCornersForSegment(coords[i], coords[i + 1], halfWidth);
                 if (!corners) continue;
                 out.push({
                     type: 'Feature',
@@ -3955,7 +4002,9 @@ function buildLaneWidthFeatures(linkFeatures) {
                     },
                     properties: {
                         LINK_ID: linkId,
-                        LANE_WIDTH_M: width,
+                        LANE: laneCount,
+                        ONE_LANE_WIDTH_M: oneLaneWidth,
+                        HALF_WIDTH_M: halfWidth,
                         __laneExtended: extended
                     }
                 });
@@ -3972,18 +4021,19 @@ function buildLaneWidthFeatures(linkFeatures) {
     return out;
 }
 
-// 캐시된 뷰포트 링크로부터 차로폭 레이어를 다시 채운다(zoom 17+에서만).
+// 캐시된 뷰포트 링크로부터 차로폭 레이어들(차로폭/차로폭2)을 다시 채운다(zoom 17+에서만).
 function refreshLaneWidthLayer() {
-    if (!roadLaneWidthGeoLayer) return;
-    roadLaneWidthGeoLayer.clearLayers();
-    if (!activeGroups.has(LANE_WIDTH_LAYER)) return;
-    if (map.getZoom() < LANE_WIDTH_MIN_ZOOM) return;
-    if (!Array.isArray(lastRenderedRoadLinks) || lastRenderedRoadLinks.length === 0) return;
-
-    const features = buildLaneWidthFeatures(lastRenderedRoadLinks);
-    if (features.length > 0) {
-        roadLaneWidthGeoLayer.addData({ type: 'FeatureCollection', features });
-    }
+    const belowZoom = map.getZoom() < LANE_WIDTH_MIN_ZOOM;
+    const noLinks = !Array.isArray(lastRenderedRoadLinks) || lastRenderedRoadLinks.length === 0;
+    laneLayerEntries().forEach(({ name, layer, config }) => {
+        if (!layer) return;
+        layer.clearLayers();
+        if (!activeGroups.has(name) || belowZoom || noLinks) return;
+        const features = buildLaneWidthFeatures(lastRenderedRoadLinks, config);
+        if (features.length > 0) {
+            layer.addData({ type: 'FeatureCollection', features });
+        }
+    });
 }
 
 function queryRoadViewport() {
@@ -3995,6 +4045,7 @@ function queryRoadViewport() {
         if (roadNodeGeoLayer) roadNodeGeoLayer.clearLayers();
         if (roadLinkVertexGeoLayer) roadLinkVertexGeoLayer.clearLayers();
         if (roadLaneWidthGeoLayer) roadLaneWidthGeoLayer.clearLayers();
+        if (roadLaneWidth2GeoLayer) roadLaneWidth2GeoLayer.clearLayers();
         lastRenderedRoadLinks = [];
         roadLinkRenderCount = 0;
         roadNodeRenderCount = 0;
@@ -4008,7 +4059,7 @@ function queryRoadViewport() {
         type: 'query',
         requestId: ++roadShapeQueryRequestId,
         bounds: [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()],
-        includeLinks: activeGroups.has(ROAD_LINK_LAYER) || activeGroups.has(ROAD_LINK_VERTEX_LAYER) || activeGroups.has(LANE_WIDTH_LAYER),
+        includeLinks: activeGroups.has(ROAD_LINK_LAYER) || activeGroups.has(ROAD_LINK_VERTEX_LAYER) || activeGroups.has(LANE_WIDTH_LAYER) || activeGroups.has(LANE_WIDTH_LAYER_2),
         includeNodes: activeGroups.has(ROAD_NODE_LAYER),
         linkPropKeys: getRoadWorkerRequestedLinkProps(),
         maxLinks: limits.maxLinks,
@@ -4050,6 +4101,7 @@ function renderRoadViewportFeatures(linkFeatures, nodeFeatures) {
         if (roadNodeGeoLayer) roadNodeGeoLayer.clearLayers();
         if (roadLinkVertexGeoLayer) roadLinkVertexGeoLayer.clearLayers();
         if (roadLaneWidthGeoLayer) roadLaneWidthGeoLayer.clearLayers();
+        if (roadLaneWidth2GeoLayer) roadLaneWidth2GeoLayer.clearLayers();
         lastRenderedRoadLinks = [];
         roadLinkRenderCount = 0;
         roadNodeRenderCount = 0;
@@ -4167,24 +4219,32 @@ function removeRoadShapeLayers() {
         map.removeLayer(featureGroups[LANE_WIDTH_LAYER]);
         delete featureGroups[LANE_WIDTH_LAYER];
     }
+    if (featureGroups[LANE_WIDTH_LAYER_2]) {
+        map.removeLayer(featureGroups[LANE_WIDTH_LAYER_2]);
+        delete featureGroups[LANE_WIDTH_LAYER_2];
+    }
     delete overlays[ROAD_LINK_LAYER];
     delete overlays[ROAD_NODE_LAYER];
     delete overlays[ROAD_LINK_VERTEX_LAYER];
     delete overlays[LANE_WIDTH_LAYER];
+    delete overlays[LANE_WIDTH_LAYER_2];
     delete layerCountOverride[ROAD_LINK_LAYER];
     delete layerCountOverride[ROAD_NODE_LAYER];
     delete layerCountOverride[ROAD_LINK_VERTEX_LAYER];
     delete layerCountOverride[LANE_WIDTH_LAYER];
+    delete layerCountOverride[LANE_WIDTH_LAYER_2];
     activeGroups.delete(ROAD_LINK_LAYER);
     activeGroups.delete(ROAD_NODE_LAYER);
     activeGroups.delete(ROAD_LINK_VERTEX_LAYER);
     activeGroups.delete(LANE_WIDTH_LAYER);
-    layerOrder = layerOrder.filter((name) => name !== ROAD_LINK_LAYER && name !== ROAD_NODE_LAYER && name !== ROAD_LINK_VERTEX_LAYER && name !== LANE_WIDTH_LAYER);
+    activeGroups.delete(LANE_WIDTH_LAYER_2);
+    layerOrder = layerOrder.filter((name) => name !== ROAD_LINK_LAYER && name !== ROAD_NODE_LAYER && name !== ROAD_LINK_VERTEX_LAYER && name !== LANE_WIDTH_LAYER && name !== LANE_WIDTH_LAYER_2);
 
     roadLinkGeoLayer = null;
     roadNodeGeoLayer = null;
     roadLinkVertexGeoLayer = null;
     roadLaneWidthGeoLayer = null;
+    roadLaneWidth2GeoLayer = null;
     lastRenderedRoadLinks = [];
     roadLinkFeatureCount = 0;
     roadNodeFeatureCount = 0;
@@ -4217,6 +4277,7 @@ function handleRoadZoomChanged() {
         if (roadNodeGeoLayer) roadNodeGeoLayer.clearLayers();
         if (roadLinkVertexGeoLayer) roadLinkVertexGeoLayer.clearLayers();
         if (roadLaneWidthGeoLayer) roadLaneWidthGeoLayer.clearLayers();
+        if (roadLaneWidth2GeoLayer) roadLaneWidth2GeoLayer.clearLayers();
         lastRenderedRoadLinks = [];
         roadLinkRenderCount = 0;
         roadNodeRenderCount = 0;
@@ -5760,7 +5821,7 @@ function closeLayerContextMenu() {
 }
 
 function isRoadShapeLayerName(name) {
-    return name === ROAD_LINK_LAYER || name === ROAD_NODE_LAYER || name === ROAD_LINK_VERTEX_LAYER || name === LANE_WIDTH_LAYER;
+    return name === ROAD_LINK_LAYER || name === ROAD_NODE_LAYER || name === ROAD_LINK_VERTEX_LAYER || name === LANE_WIDTH_LAYER || name === LANE_WIDTH_LAYER_2;
 }
 
 function appendLayerRows(childWrap, groups) {
@@ -5963,7 +6024,7 @@ function renderLayerControls() {
 
     const resultGroups = layerOrder.filter((name) => !isRoadShapeLayerName(name));
     // Lane Width는 최상위 행이 아니라 Road Link 하위 체크박스로 노출한다(Vertex와 동일한 패턴).
-    const roadGroups = layerOrder.filter((name) => isRoadShapeLayerName(name) && name !== ROAD_LINK_VERTEX_LAYER && name !== LANE_WIDTH_LAYER);
+    const roadGroups = layerOrder.filter((name) => isRoadShapeLayerName(name) && name !== ROAD_LINK_VERTEX_LAYER && name !== LANE_WIDTH_LAYER && name !== LANE_WIDTH_LAYER_2);
     const roadShapeVisibilityGroups = layerOrder.filter((name) => isRoadShapeLayerName(name));
 
     if (resultGroups.length > 0) {
@@ -6105,51 +6166,59 @@ function appendRoadRuleControls(parent, layerName) {
 
         ruleWrap.appendChild(labelItem);
 
-        // 차로폭(Lane Width) 토글 — Road Link 하위 체크박스로 노출
-        const laneItem = document.createElement('label');
-        laneItem.className = 'layer-rule-item';
-
-        const laneCheckbox = document.createElement('input');
-        laneCheckbox.type = 'checkbox';
-        laneCheckbox.className = 'layer-control-check';
-        laneCheckbox.checked = activeGroups.has(LANE_WIDTH_LAYER);
-        laneCheckbox.onchange = () => {
-            const group = featureGroups[LANE_WIDTH_LAYER];
-            if (laneCheckbox.checked) {
-                if (group && !map.hasLayer(group)) map.addLayer(group);
-                activeGroups.add(LANE_WIDTH_LAYER);
-            } else {
-                if (group && map.hasLayer(group)) map.removeLayer(group);
-                activeGroups.delete(LANE_WIDTH_LAYER);
-            }
-            if (roadShapeLoaded) {
-                scheduleRoadViewportQuery();
-            }
-            renderLayerControls();
-        };
-        laneItem.appendChild(laneCheckbox);
-
-        const laneSwatch = document.createElement('span');
-        laneSwatch.className = 'layer-rule-swatch';
-        laneSwatch.style.background = laneWidthConfig.normalColor;
-        laneItem.appendChild(laneSwatch);
-
-        const laneText = document.createElement('span');
-        laneText.className = 'layer-rule-label';
-        laneText.textContent = '차로폭 (zoom 17+)';
-        laneItem.appendChild(laneText);
-
-        ruleWrap.appendChild(laneItem);
-
-        // 차로폭 값/색을 레이어 패널에서 바로 튜닝 (기본 / 확장 각각), 즉시 반영
-        ruleWrap.appendChild(buildLaneWidthInlineControls(laneSwatch));
+        // 차로폭 / 차로폭2 토글 + 인라인 튜닝 — Road Link 하위에 노출
+        [
+            { layerKey: LANE_WIDTH_LAYER, config: laneWidthConfig, label: '차로폭 (zoom 17+)' },
+            { layerKey: LANE_WIDTH_LAYER_2, config: laneWidthConfig2, label: '차로폭2 (zoom 17+)' }
+        ].forEach((spec) => appendLaneWidthControl(ruleWrap, spec));
     }
 
     parent.appendChild(ruleWrap);
 }
 
-// Road Link 하위 차로폭 인라인 튜닝 컨트롤(기본/확장 폭·색). laneSwatch는 기본색 반영용.
-function buildLaneWidthInlineControls(laneSwatch) {
+// Road Link 하위 차로폭 레이어 토글 + 인라인 튜닝(기본/확장 폭·색) 한 세트를 붙인다.
+function appendLaneWidthControl(ruleWrap, spec) {
+    const { layerKey, config, label } = spec;
+
+    const laneItem = document.createElement('label');
+    laneItem.className = 'layer-rule-item';
+
+    const laneCheckbox = document.createElement('input');
+    laneCheckbox.type = 'checkbox';
+    laneCheckbox.className = 'layer-control-check';
+    laneCheckbox.checked = activeGroups.has(layerKey);
+    laneCheckbox.onchange = () => {
+        const group = featureGroups[layerKey];
+        if (laneCheckbox.checked) {
+            if (group && !map.hasLayer(group)) map.addLayer(group);
+            activeGroups.add(layerKey);
+        } else {
+            if (group && map.hasLayer(group)) map.removeLayer(group);
+            activeGroups.delete(layerKey);
+        }
+        if (roadShapeLoaded) {
+            scheduleRoadViewportQuery();
+        }
+        renderLayerControls();
+    };
+    laneItem.appendChild(laneCheckbox);
+
+    const laneSwatch = document.createElement('span');
+    laneSwatch.className = 'layer-rule-swatch';
+    laneSwatch.style.background = config.normalColor;
+    laneItem.appendChild(laneSwatch);
+
+    const laneText = document.createElement('span');
+    laneText.className = 'layer-rule-label';
+    laneText.textContent = label;
+    laneItem.appendChild(laneText);
+
+    ruleWrap.appendChild(laneItem);
+    ruleWrap.appendChild(buildLaneWidthInlineControls(config, laneSwatch));
+}
+
+// 차로폭 인라인 튜닝 컨트롤(기본/확장 한 차선 폭·색). laneSwatch는 기본색 반영용.
+function buildLaneWidthInlineControls(config, laneSwatch) {
     const wrap = document.createElement('div');
     wrap.className = 'lane-width-inline';
 
@@ -6160,10 +6229,10 @@ function buildLaneWidthInlineControls(laneSwatch) {
         const colorInput = document.createElement('input');
         colorInput.type = 'color';
         colorInput.className = 'layer-ctx-color';
-        colorInput.value = laneWidthConfig[colorKey];
+        colorInput.value = config[colorKey];
         colorInput.title = `${labelText} 색상`;
         colorInput.addEventListener('input', () => {
-            laneWidthConfig[colorKey] = colorInput.value;
+            config[colorKey] = colorInput.value;
             if (colorKey === 'normalColor' && laneSwatch) laneSwatch.style.background = colorInput.value;
             refreshLaneWidthLayer();
         });
@@ -6180,11 +6249,11 @@ function buildLaneWidthInlineControls(laneSwatch) {
         widthInput.max = '50';
         widthInput.step = '0.1';
         widthInput.className = 'layer-ctx-weight';
-        widthInput.value = String(laneWidthConfig[widthKey]);
-        widthInput.title = `${labelText} (m)`;
+        widthInput.value = String(config[widthKey]);
+        widthInput.title = `${labelText} 한 차선 폭 (m)`;
         widthInput.addEventListener('change', () => {
-            const next = clampLaneWidthValue(widthInput.value, laneWidthConfig[widthKey]);
-            laneWidthConfig[widthKey] = next;
+            const next = clampLaneWidthValue(widthInput.value, config[widthKey]);
+            config[widthKey] = next;
             widthInput.value = String(next);
             refreshLaneWidthLayer();
         });
@@ -6216,6 +6285,9 @@ function getLayerSwatchColor(name) {
     }
     if (name === LANE_WIDTH_LAYER) {
         return laneWidthConfig.normalColor;
+    }
+    if (name === LANE_WIDTH_LAYER_2) {
+        return laneWidthConfig2.normalColor;
     }
     const swatches = {
         'Road Link Vertex': '#f8fafc',
