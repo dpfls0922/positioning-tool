@@ -3,7 +3,7 @@ import os
 import time
 from textwrap import dedent
 
-from backend.positioning_tool.service.paths import PATHS
+from backend.positioning_tool.service.paths import PATHS, JS_MAP_PART_FILES
 
 
 def render_html(markers_data=None, lines_data=None):
@@ -12,7 +12,7 @@ def render_html(markers_data=None, lines_data=None):
 
     head = build_html_head(int(time.time()))
     body = build_html_body()
-    script_content = load_file_content(PATHS.js_file)
+    script_content = load_map_script_content()
     data_vars = init_data_vars(markers_data, lines_data)
 
     html = dedent(
@@ -307,6 +307,22 @@ def build_html_body():
         <div id="toolBackdrop"></div>
         """
     ).strip()
+
+
+def load_map_script_content():
+    """frontend/static/js/map/ 의 조각 파일들을 정해진 순서로 이어붙인다.
+
+    원래 map_script.js 한 파일을 그대로 인라인했었다. 조각들을 하나의
+    <script> 로 합치므로 실행 스코프는 분리 전과 동일하다.
+    """
+    parts = []
+    for file_name in JS_MAP_PART_FILES:
+        content = load_file_content(os.path.join(PATHS.js_map_parts_dir, file_name))
+        if not content:
+            raise FileNotFoundError(f"map script 조각을 찾을 수 없습니다: {file_name}")
+        # 조각 사이에 빈 줄이 끼지 않도록 개행 하나로만 이어붙인다.
+        parts.append(content if content.endswith("\n") else content + "\n")
+    return "".join(parts)
 
 
 def load_file_content(filepath):

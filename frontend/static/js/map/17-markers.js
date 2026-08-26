@@ -1,0 +1,438 @@
+// ===== 마커 렌더(DR/주차장/요청 그룹)와 팝업 텍스트 =====
+// map_script 를 주제별로 나눈 조각. render_html 이 JS_PART_FILES 순서대로 이어붙여 하나의 <script> 로 출력한다.
+function drawMarkers(coordinates) {
+    markers = [];
+    requestGroups = {};
+
+    // Markers are created detached (viewport culling attaches them later),
+    // so batches are pure JS work: large batches are safe. Hidden tabs have
+    // no frame budget at all, so process even bigger chunks there.
+    const BATCH_SIZE = (typeof document !== 'undefined' && document.hidden) ? 20000 : 2000;
+    let processedCount = 0;
+    const totalCount = coordinates.length;
+
+    function processBatch(startIndex) {
+        const endIndex = Math.min(startIndex + BATCH_SIZE, totalCount);
+
+        for (let i = startIndex; i < endIndex; i++) {
+            const coord = coordinates[i];
+            const coordtype = coord.type;
+            // 'Route Info' coords exist only for request-route search; the route
+            // itself is drawn as polylines — never as circle markers.
+            if (coordtype === 'Route Info') continue;
+            // 아래 타입들은 전용 레이어에서만 그린다 (중복 레이어 방지)
+            //   GP*        -> visualizeGpGuideFromLog / visualizeLaneBubblesFromLog
+            //   Guide Event -> C2X Events / Tmap Incidents (MFS)
+            if (coordtype === 'GP Guide' || coordtype === 'GP Lane Color') continue;
+            if (coordtype === 'Guide Event') continue;
+            if (coordtype === 'GP Lane Bubble') continue;
+            const latitude = coord.latitude;
+            const longitude = coord.longitude;
+            if (latitude === undefined || longitude === undefined) continue;
+
+            if (coordtype === 'Request') {
+                const key = `${latitude},${longitude}`;
+                if (!requestGroups[key]) {
+                    requestGroups[key] = {
+                        currentIndex: 0,
+                        latitude: latitude,
+                        longitude: longitude,
+                        members: [],
+                        marker: [],
+                        dlt_id_list: [],
+                        timestamp_ms_list: []
+                    };
+                }
+                requestGroups[key].members.push(coord);
+                requestGroups[key].dlt_id_list.push(coord.dlt_id);
+                requestGroups[key].timestamp_ms_list.push(coord.timestamp_ms);
+            } else {
+                const popupText = makePopupText(coord, coordtype);
+                const isGnssTransitionHighlight = coordtype === 'Filtered GNSS' && !!coord?.extra?.gnss_transition_highlight;
+                const useDrHeadingArrow = coordtype === 'DR-based' && drHeadingArrowEnabled;
+
+                // Use color set by backend based on parking state
+                let markerColor = coord.color || 'black';
+
+                // MM feedback 색상 덮어쓰기: 검정(위치+헤딩 동시보정) / 회색(헤딩보정만)
+                if (coordtype === 'DR-based' && coord.extra?.mm_feedback) {
+                    const reason = (coord.extra.mm_feedback_reason || '').toLowerCase();
+                    markerColor = reason.startsWith('heading only') ? '#888888' : '#000000';
+                }
+
+                const marker = useDrHeadingArrow
+                    ? L.marker([latitude, longitude], {
+                        icon: buildDrHeadingIcon(coord.heading, markerColor)
+                    })
+                    : L.circleMarker([latitude, longitude], {
+                        radius: isGnssTransitionHighlight ? 6 : 3,
+                        color: markerColor,
+                        weight: isGnssTransitionHighlight ? 3 : 1,
+                        fill: coord.fill,
+                        fillOpacity: 0.8
+                    });
+
+                marker.dlt_id = coord.dlt_id;
+                marker.timestamp_ms = coord.timestamp_ms;
+                marker.id = coord.id || 0;
+                marker.data = coord;
+                marker._isIconMarker = useDrHeadingArrow;
+                // MM feedback-corrected DR points must never be decimated away
+                marker._alwaysShow = coordtype === 'DR-based' && !!coord.extra?.mm_feedback;
+                marker._baseStyle = {
+                    opacity: 1,
+                    fillOpacity: useDrHeadingArrow ? 1 : 0.8,
+                    weight: marker.options?.weight ?? 1,
+                    radius: useDrHeadingArrow ? null : (marker.options.radius ?? 3)
+                };
+                attachMarkerDistancePick(marker);
+                marker._popupContent = popupText;
+                marker.on('click', (e) => {
+                    if (inspectMode !== 'marker') {
+                        if (inspectMode === 'road') {
+                            const latlng = e?.latlng || L.latLng(latitude, longitude);
+                            openNearestRoadPopupAt(latlng, getPreferredRoadKinds());
+                        }
+                        if (e) L.DomEvent.stopPropagation(e);
+                        return;
+                    }
+                    if (coordtype === 'DR-based') {
+                        selectedDrCoordinate = coord;
+                        selectedCandidateLinkIds = extractCandidateLinkIdSet(coord?.extra);
+                        refreshDrSelectionStyles(marker);
+                        if (roadLinkGeoLayer) {
+                            roadLinkGeoLayer.setStyle((feature) => getRoadLinkStyle({
+                                ...(feature?.properties || {}),
+                                __featureRef: feature
+                            }));
+                        }
+                    }
+                    L.popup({ maxWidth: 480 }).setLatLng([latitude, longitude]).setContent(marker._popupContent).openOn(map);
+                    if (e) {
+                        L.DomEvent.stopPropagation(e);
+                    }
+                });
+
+                addLayerToGroup(coordtype, marker, { defer: true });
+                markers.push(marker);
+            }
+        }
+
+        processedCount = endIndex;
+        if (endIndex < totalCount) {
+            scheduleFrame(() => processBatch(endIndex));
+        } else {
+            drawRequestGroupMarkers(requestGroups, markers);
+            refreshDrSelectionStyles();
+            addOverlayLayers(featureGroups);
+            lastCullState = null;
+            scheduleVisibleMarkerRefresh();
+            renderLayerControls();
+        }
+    }
+
+    if (totalCount > 0) {
+        processBatch(0);
+    } else {
+        drawRequestGroupMarkers(requestGroups, markers);
+        refreshDrSelectionStyles();
+        addOverlayLayers(featureGroups);
+        lastCullState = null;
+        scheduleVisibleMarkerRefresh();
+    }
+}
+
+function drawParkingLotStateMarkers(coordsData) {
+    console.log('[DEBUG] drawParkingLotStateMarkers called with:', coordsData?.length || 0, 'markers');
+    if (!coordsData || coordsData.length === 0) {
+        console.log('[DEBUG] No parking lot state markers to render');
+        parkingLotStateMarkers = [];
+        return;
+    }
+
+    const parkingLotLayer = ensureTmapFeatureGroup('Parking Lot State');
+    parkingLotLayer.clearLayers();
+    parkingLotStateMarkers = [];
+
+    // Markers are created detached (viewport culling attaches them later),
+    // so batches are pure JS work: large batches are safe. Hidden tabs have
+    // no frame budget at all, so process even bigger chunks there.
+    const BATCH_SIZE = (typeof document !== 'undefined' && document.hidden) ? 20000 : 2000;
+    let processedCount = 0;
+    const totalCount = coordsData.length;
+
+    function processBatch(startIndex) {
+        const endIndex = Math.min(startIndex + BATCH_SIZE, totalCount);
+
+        for (let i = startIndex; i < endIndex; i++) {
+            const coord = coordsData[i];
+            const latitude = coord.latitude;
+            const longitude = coord.longitude;
+            if (latitude === undefined || longitude === undefined) continue;
+
+            const markerColor = coord.color || '#808080';
+            const popupText = makePopupText(coord, 'Parking Lot State');
+
+            const marker = L.circleMarker([latitude, longitude], {
+                radius: 3,
+                color: markerColor,
+                weight: 1,
+                fill: true,
+                fillOpacity: 0.8,
+                bubblingMouseEvents: false
+            });
+
+            marker.dlt_id = coord.dlt_id;
+            marker.timestamp_ms = coord.timestamp_ms;
+            marker.id = coord.id || 0;
+            marker.data = coord;
+            marker._baseStyle = {
+                opacity: 1,
+                fillOpacity: 0.8,
+                weight: 1,
+                radius: 3
+            };
+            marker._popupContent = popupText;
+            marker.on('click', (e) => {
+                if (inspectMode !== 'marker') {
+                    if (inspectMode === 'road') {
+                        const latlng = e?.latlng || L.latLng(latitude, longitude);
+                        openNearestRoadPopupAt(latlng, getPreferredRoadKinds());
+                    }
+                    if (e) L.DomEvent.stopPropagation(e);
+                    return;
+                }
+                L.popup().setLatLng([latitude, longitude]).setContent(marker._popupContent).openOn(map);
+                if (e) L.DomEvent.stopPropagation(e);
+            });
+
+            marker._groupName = 'Parking Lot State';
+            marker._culledOnMap = false;
+            parkingLotStateMarkers.push(marker);
+        }
+
+        processedCount = endIndex;
+        if (endIndex < totalCount) {
+            scheduleFrame(() => processBatch(endIndex));
+        } else {
+            layerCountOverride['Parking Lot State'] = parkingLotStateMarkers.length;
+            addOverlayLayers(featureGroups);
+            lastCullState = null;
+            scheduleVisibleMarkerRefresh();
+        }
+    }
+
+    if (totalCount > 0) {
+        processBatch(0);
+    } else {
+        addOverlayLayers(featureGroups);
+    }
+}
+
+// Re-order the shared canvas draw list so Parking Lot State markers paint last
+// (= on top). Called after each batched render completes; whichever of
+// drawMarkers / drawParkingLotStateMarkers finishes last wins, so parking
+// markers always end up above DR-based / Road Match markers.
+function bringParkingLotMarkersToFront() {
+    parkingLotStateMarkers.forEach((marker) => {
+        if (marker._map && typeof marker.bringToFront === 'function') {
+            marker.bringToFront();
+        }
+    });
+}
+
+function drawRequestGroupMarkers(requestGroups, markers) {
+    Object.keys(requestGroups).forEach(key => {
+        const request = requestGroups[key];
+        const latitude = request.latitude;
+        const longitude = request.longitude;
+        const members = request.members;
+
+        const hasDeviation = members.some(m => m.extra.group_2_text === "이탈");
+        let marker = L.marker([latitude, longitude], {
+            icon: L.AwesomeMarkers.icon({
+                icon: hasDeviation ? 'exclamation' : 'info-circle',
+                markerColor: 'gray',
+                prefix: 'fa',
+                size: 'small'
+            })
+        });
+
+        // Same-position requests are merged into one marker; show how many
+        // are stacked here so multiple requests from one spot stay visible.
+        if (members.length > 1) {
+            marker.bindTooltip(`×${members.length}`, {
+                permanent: true,
+                direction: 'right',
+                offset: [10, -18],
+                className: 'request-count-badge'
+            });
+        }
+
+        if (members.length === 1) {
+            const coord = members[0];
+            marker.dlt_id = coord.dlt_id;
+            marker.timestamp_ms = coord.timestamp_ms;
+            marker.id = coord.id || 0;
+            marker.data = coord;
+            marker._popupContent = makePopupText(coord, 'Request');
+            marker.on('click', (e) => {
+                if (inspectMode !== 'marker') {
+                    if (inspectMode === 'road') {
+                        const latlng = e?.latlng || L.latLng(latitude, longitude);
+                        openNearestRoadPopupAt(latlng, getPreferredRoadKinds());
+                    }
+                    if (e) L.DomEvent.stopPropagation(e);
+                    return;
+                }
+                L.popup().setLatLng([latitude, longitude]).setContent(marker._popupContent).openOn(map);
+                if (e) L.DomEvent.stopPropagation(e);
+            });
+        } else {
+            marker.dlt_id = request.dlt_id_list[0];
+            marker.timestamp_ms = request.timestamp_ms_list[0];
+            marker.id = members[0].id || 0;
+            marker.data = members[0];
+
+            const initialContent = `<div style="min-width:100px;">Request (${1}/${members.length})</div>`;
+            const popup = L.popup({ autoClose: false, closeOnClick: false }).setContent(initialContent);
+            marker.bindPopup(popup);
+            marker.on('click', (e) => {
+                if (inspectMode !== 'marker') {
+                    if (inspectMode === 'road') {
+                        const latlng = e?.latlng || L.latLng(latitude, longitude);
+                        openNearestRoadPopupAt(latlng, getPreferredRoadKinds());
+                    }
+                    if (e) L.DomEvent.stopPropagation(e);
+                    return;
+                }
+                if (!request.currentIndex) request.currentIndex = 0;
+                showRequestGroupPopup(request, marker);
+                if (e) {
+                    L.DomEvent.stopPropagation(e);
+                }
+            });
+        }
+        marker._isIconMarker = true;
+        requestGroups[key].marker = marker;
+        attachMarkerDistancePick(marker);
+        addLayerToGroup('Request', marker, { defer: true });
+        markers.push(marker);
+    });
+}
+
+function showRequestGroupPopup(request, groupMarker) {
+    const members = request.members;
+    if (!members || members.length === 0) return;
+
+    const index = request.currentIndex || 0;
+    const coord = members[index];
+
+    const popupText = makePopupText(coord, 'Request');
+    const content = `
+        <div style="min-width:100px;">
+            <div style="font-weight:600;">Request (${index + 1}/${members.length})</div>
+            ${popupText}
+            <div style="margin-top:8px; display:flex; gap:6px; justify-content:flex-end;">
+                <button id="req-prev">이전</button>
+                <button id="req-next">다음</button>
+            </div>
+        </div>`;
+
+    let popup = groupMarker.getPopup();
+    if (popup) {
+        popup.setContent(content);
+    }
+
+    groupMarker.openPopup();
+
+    setTimeout(() => {
+        const prevBtn = document.getElementById('req-prev');
+        const nextBtn = document.getElementById('req-next');
+        if (prevBtn) prevBtn.onclick = (e) => {
+            e.stopPropagation();
+            request.currentIndex = (request.currentIndex - 1 + members.length) % members.length;
+            showRequestGroupPopup(request, groupMarker);
+        };
+        if (nextBtn) nextBtn.onclick = (e) => {
+            e.stopPropagation();
+            request.currentIndex = (request.currentIndex + 1) % members.length;
+            showRequestGroupPopup(request, groupMarker);
+        };
+    }, 50);
+}
+
+function makePopupText(coordinate, coordtype) {
+    const dltId = Number.isFinite(coordinate?.dlt_id) ? coordinate.dlt_id : 0;
+    const formatted = dltId > 0 ? dltId.toLocaleString() : '-';
+    const markerId = Number.isFinite(coordinate?.id) ? coordinate.id : '-';
+    const lat = Number.isFinite(coordinate?.latitude) ? coordinate.latitude.toFixed(6) : '-';
+    const lon = Number.isFinite(coordinate?.longitude) ? coordinate.longitude.toFixed(6) : '-';
+    const ts = coordinate?.timestamp_str ? coordinate.timestamp_str : '-';
+
+    let text = `DLT: ${formatted}<br>ID: ${markerId}<br>TS: ${ts}<br>${lat}, ${lon}`;
+
+    if (coordinate.heading !== null && coordinate.heading !== undefined) {
+        text += `<br>Heading: ${coordinate.heading.toFixed(2)}°`;
+    }
+
+    if (coordinate.extra && coordinate.extra.Speed !== undefined) {
+        text += `<br>Speed: ${parseFloat(coordinate.extra.Speed).toFixed(2)}`;
+    }
+
+    if (coordtype === "Filtered GNSS") {
+        const gnssMode = coordinate.extra?.gnss_mode;
+        if (gnssMode) {
+            text += `<br>GNSS mode: ${gnssMode}`;
+        }
+        const transition = coordinate.extra?.gnss_mode_transition;
+        if (transition?.from && transition?.to) {
+            text += `<br>Mode transition: ${transition.from} -> ${transition.to}`;
+        }
+    }
+
+    if (coordtype === "DR-based") {
+        text += `<br>isDRGps: ${coordinate.extra?.isDRGps ?? ""}`;
+        if (coordinate.extra?.mm_feedback_reason) {
+            text += `<br><b>MM Feedback:</b> ${coordinate.extra.mm_feedback_reason}`;
+        }
+
+        // Add parking lot state information
+        if (coordinate.extra?.parking_state) {
+            text += `<br><b>주차장 상태:</b> ${coordinate.extra.parking_state}`;
+            if (coordinate.extra.parking_state !== 'ParkingLot') {
+                text += `<br>후보 링크 개수: ${coordinate.extra.parking_candidate_count || 0}`;
+                if (coordinate.extra.parking_best_link_id && coordinate.extra.parking_best_link_id > 0) {
+                    text += `<br>최고 매칭 Link ID: ${coordinate.extra.parking_best_link_id}`;
+                }
+            }
+        }
+
+        text += buildCandidateLinkPopupHtml(coordinate?.extra);
+    }
+    if (coordtype === "Parking Lot State") {
+        if (coordinate.extra?.parking_state) {
+            text += `<br><b>주차장 상태:</b> ${coordinate.extra.parking_state}`;
+            text += `<br>후보 링크 개수: ${coordinate.extra.parking_candidate_count || 0}`;
+            if (coordinate.extra.parking_best_link_id && coordinate.extra.parking_best_link_id > 0) {
+                text += `<br>최고 매칭 Link ID: ${coordinate.extra.parking_best_link_id}`;
+            }
+        }
+
+        text += buildCandidateLinkPopupHtml(coordinate?.extra);
+    }
+
+    if (coordtype === "Request") {
+        text += `<br>Content ID: ${coordinate.extra?.group_1 ?? "-"}`;
+        text += `<br>요청 타입: ${coordinate.extra?.group_2_text ?? ""}`;
+    }
+    if (coordtype === "Route Match" || coordtype === "Road Match") {
+        const state = coordinate.extra?.match_state || "";
+        if (!(state === "MATCH_OK_GOOD" || state === "MATCH_OK_TRANSIENT")) {
+            text += `<br>${state}`;
+        }
+    }
+
+    return text;
+}
+
