@@ -1,15 +1,63 @@
 import csv
 import json
-import math
 import os
 import re
 from datetime import datetime, timedelta
 
 from backend.positioning_tool.service.paths import PATHS
 from backend.positioning_tool.model.log_entities import Coordinate, Line, CoordType, LineType, RouteRequestType
-
-EARTH_RADIUS = 6371000.0
-DEG2RAD = math.pi / 180.0
+from backend.positioning_tool.service.log_parsing.patterns import (
+    CAR2X_CREATE_PATTERN,
+    GP_CROSS_IMAGE_DATA_PATTERN,
+    GP_CROSS_IMAGE_FILTERED_PATTERN,
+    GP_CROSS_IMAGE_RAW_PATTERN,
+    GP_LANE_COLOR_PATTERN,
+    GP_RENDER_DATA_PATTERN,
+    GP_STORE_PATTERN,
+    GP_TYPE_PATTERN,
+    MFS_CONTENT_PATTERN,
+    MM_FEEDBACK_PATTERN,
+    PARKING_LOT_APPLY_PATTERN,
+    PARKING_LOT_STATE_CHANGE_PATTERN,
+    ROUTE_MATCH_LINK_PATTERN,
+    ROUTE_REQ_DEPART_PATTERN,
+    ROUTE_REQ_DEST_PATTERN,
+    ROUTE_REQ_WAYPOINT_PATTERN,
+    SDI_DRIVE_STATUS_PATTERN,
+    SDI_SELECTED_PATTERN,
+    _SCAN_NEXT_TYPE,
+    _STOP_LINE,
+)
+from backend.positioning_tool.service.log_parsing.dlt_records import (
+    iterate_log_records,
+)
+from backend.positioning_tool.service.log_parsing.line_parsers import (
+    infer_initial_timestamp,
+    lat_lon_dist,
+    parse_candidate_link_score,
+    parse_gnss_mode_info,
+    parse_link_extrapoint,
+    parse_road_match_state,
+    parse_route_match_state,
+    parse_route_session_info,
+    parse_set_route_information,
+    parse_threshold_info,
+    parse_tvas_header_info,
+)
+from backend.positioning_tool.service.log_parsing.gp_guide import (
+    LANE_COLOR_HEX,
+    _drive_positions,
+    _merge_gp_records_by_link_ordinal,
+    _nearest_position,
+    _route_links_by_session,
+    build_lane_bubble_markers,
+    decode_gp_type_flags,
+    lane_color_from_voice_code,
+)
+from backend.positioning_tool.service.log_parsing.markers import (
+    build_parking_lot_state_markers,
+    build_route_info_markers,
+)
 
 
 COORDINATES = {coord_type: [] for coord_type in CoordType}
@@ -22,7 +70,6 @@ ROUTE_MATCH_LINKS = []  # (route link index, route vertex index, timestamp) whil
 GP_LANE_EVENTS = []  # Runtime setLaneColor ticks ([LANE_COLOR] linkIndex:...)
 gp_pending = {}  # Per-link scratch built up across the ServiceDataCollect log lines
 PARKING_LOT_EVENTS = []  # ParkingLot detector exit events
-LANE_EXT_LINKS = {}  # link_id(str) -> 확장 차선수([LANE_EXT] 로그) 정보
 last_gnss_coordinate = None  # Track last GNSS position for parking lot events
 min_timestamp = datetime.max
 max_timestamp = datetime.min
@@ -39,242 +86,10 @@ current_gnss_mode = None
 pending_gnss_mode_transition = None
 ROUTE_REQUEST_POINTS = {}  # content_id(str) -> {depart, waypoints{idx: point}, dest}
 ROUTE_SESSION_CONTENT_IDS = {}  # route_session_id -> request content_id(str)
-DLT_RELEVANT_BYTE_KEYWORDS = [
-    b"[GPS]",
-    b"[GNSS]",
-    b"GNSS mode:",
-    b"GNSS rejected:",
-    b"CNaviModule::ReceiveGps pos(",
-    b"Match  Pos",
-    b"Match Pos",
-    b"[MM_RESULT]",
-    b"requestRouting",
-    b"NaviARSupportServer::setRouteInformation",
-    b"Candidate Link[",
-    b"shouldStayRoute distance:",
-    b"[[MM] : 4] State =",
-    b"[MM_FEEDBACK]",
-    b"createCar2XEvent",
-    b"processContents",
-    b"GetSdiSelected select",
-    b"onDriveStatusChanged SDI",
-    b"[LANE_EXT]",
-    b"ApplyParkingLotDetector",
-    b"ParkingLotDetector transition",
-    b"TVAS server route",
-    b"online request [",
-    b"[TVAS Header]",
-    b"ServiceDataCollect",
-    b"Route LinkScore RESULT",
-    b"[LANE_COLOR]",
-    b"GetRenderData pGuidePoint",
-]
-
-SET_ROUTE_INFORMATION_PATTERN = re.compile(
-    r"NaviARSupportServer::setRouteInformation linkID:\s*"
-    r"(-?\d+)\((\-?\d+)\),\s*dir:\s*(\-?\d+),\s*(\-?\d+)"
-    r"(?:,\s*(\-?\d+),\s*(\-?\d+))?,\s*"
-    r"size:\s*(\d+),\s*v\[st\]:\s*(\-?\d+),\s*(\-?\d+),\s*v\[en\]:\s*(\-?\d+),\s*(\-?\d+)"
-)
-TVAS_HEADER_ROUTE_OPT_PATTERN = re.compile(r"navisdk :: \[\[TVAS Header\] : \d+\] RouteOptCode = (\-?\d+)")
-TVAS_HEADER_SERVICE_CNT_PATTERN = re.compile(r"navisdk :: \[\[TVAS Header\] : \d+\] ServiceCnt = (\-?\d+)")
-TVAS_HEADER_TOTAL_TIME_PATTERN = re.compile(r"navisdk :: \[\[TVAS Header\] : \d+\] TotalTime = (\-?\d+)")
-TVAS_HEADER_TOTAL_DIST_PATTERN = re.compile(r"navisdk :: \[\[TVAS Header\] : \d+\] TotalDist = (\-?\d+)")
-TVAS_SERVER_SESSION_PATTERN = re.compile(
-    r"TVAS server route nSessionID\s*:\s*([^,\s]+),\s*errorcode\s*:\s*([^,\s]+)"
-)
-# Route request point logs (SK coordinates; converted to WGS84 on the frontend):
-#   NaviProcessorInternal::online request [10000013]: departName = ..., departXPos = ..., departYPos = ...
-#   NaviProcessorInternal::online request [10000013]: wayPoint 0: fixed = 1, wayPointName = ..., destXPos = ..., destYPos = ...
-#   NaviProcessorInternal::online request [10000013]: destName = ..., destXPos = ..., destYPos = ...
-ROUTE_REQ_DEPART_PATTERN = re.compile(
-    r"online request \[(\d+)\]:\s*departName = (.*?),\s*departXPos = (-?\d+),\s*departYPos = (-?\d+)"
-)
-ROUTE_REQ_WAYPOINT_PATTERN = re.compile(
-    r"online request \[(\d+)\]:\s*wayPoint (\d+):\s*fixed = (-?\d+),\s*wayPointName = (.*?),\s*destXPos = (-?\d+),\s*destYPos = (-?\d+)"
-)
-ROUTE_REQ_DEST_PATTERN = re.compile(
-    r"online request \[(\d+)\]:\s*destName = (.*?),\s*destXPos = (-?\d+),\s*destYPos = (-?\d+)"
-)
-GNSS_MODE_EVENT_PATTERN = re.compile(
-    r"GNSS mode:\s*event=([A-Za-z_]+)\s+from=([A-Za-z_]+)\s+to=([A-Za-z_]+)"
-)
-GNSS_MODE_INLINE_PATTERN = re.compile(r"mode=([A-Za-z_]+)")
-MM_FEEDBACK_PATTERN = re.compile(r"\[MM_FEEDBACK\]\s*([^\r\n\x00]+)")
-CANDIDATE_LINK_PATTERN = re.compile(
-    r"Candidate Link\[\s*(\-?\d+)\]\s*"
-    r"([+\-]?\d+(?:\.\d+)?)\s*\|\s*"
-    r"Base:\s*([+\-]?\d+(?:\.\d+)?)\s*=\s*([+\-]?\d+(?:\.\d+)?)\s*-\s*([+\-]?\d+(?:\.\d+)?)\s*\+\s*([+\-]?\d+(?:\.\d+)?)\s*\|\s*"
-    r"Adj:\s*([+\-]?\d+(?:\.\d+)?)\s*\|\s*"
-    r"Dist\(p:\s*([+\-]?\d+(?:\.\d+)?)\s*d:\s*([+\-]?\d+(?:\.\d+)?)\s*laneW:\s*([+\-]?\d+(?:\.\d+)?)\s*fB:\s*([+\-]?\d+(?:\.\d+)?)\)\s*\|\s*"
-    r"Angle\(g:\s*([+\-]?\d+(?:\.\d+)?)\s*v:\s*([+\-]?\d+(?:\.\d+)?)\)\s*\|\s*"
-    r"Lane:\s*(\-?\d+)"
-)
-
-# Link[ID] base * mul = final / Lane:... — extrapoint 곱셈 가중치 적용 결과
-LINK_EXTRAPOINT_PATTERN = re.compile(
-    r"(?<![Cc]andidate\s)Link\[\s*(\-?\d+)\]\s*"
-    r"([+\-]?\d+(?:\.\d+)?)\s*\*\s*([+\-]?\d+(?:\.\d+)?)\s*=\s*([+\-]?\d+(?:\.\d+)?)"
-)
-
-# C2X Events & TMAP Incident (MFS) Events — both carry actual WGS84 coordinates.
-#
-# C2X (V2X 통신 수신):
-#   MapObjectProvider createCar2XEvent nEventID : 110, nEventType : 18,
-#     aDASISProfile : 14427270, eType : 1, coord : 37.544675,126.976875,
-#     eventTime : 202605150652, currentTime : 202605151552
-CAR2X_CREATE_PATTERN = re.compile(
-    r"createCar2XEvent\s+nEventID\s*:\s*(\d+),\s*nEventType\s*:\s*(\d+)"
-    r".*?coord\s*:\s*(-?\d+\.\d+),(-?\d+\.\d+)"
-    r"(?:.*?eventTime\s*:\s*(\d+))?"
-)
-
-# TMAP 유고정보 (MFS - Map Feature Service):
-#   MapObjectProvider processContents type:1 state:1 key:MFS_XXXXX visible:1
-#     level:16500 coord:37.XXXXXX,126.XXXXXX bCharge:0 VoltAC:0 bMarker:0 name:교통사고
-MFS_CONTENT_PATTERN = re.compile(
-    r"processContents\s+type:(\d+)\s+state:(\d+)\s+key:(\S+)\s+visible:(\d+)\s+level:(\d+)"
-    r"\s+coord:(-?\d+\.\d+),(-?\d+\.\d+)"
-    r".*?name:([^\r\n\x00]+)"
-)
-
-# SDI (Safety Drive Information) events:
-#   GetSdiSelected select (0): 0, 15 nDist: 300, 500, wptPos: 37.545592, 126.978641
-#   MapGuidingInformationProvider::onDriveStatusChanged SDI[15] CurrentSDI Speed : 50 pt(126.978641,37.545592)
-SDI_SELECTED_PATTERN = re.compile(
-    r"GetSdiSelected select\s*\((\d+)\):\s*(\d+),\s*(\d+)\s+nDist:\s*(\d+),\s*(\d+),\s+wptPos:\s*"
-    r"(-?\d+\.\d+),\s*(-?\d+\.\d+)"
-)
-SDI_DRIVE_STATUS_PATTERN = re.compile(
-    r"onDriveStatusChanged\s+SDI\[(\d+)\].*?Speed\s*:\s*(\d+).*?pt\((-?\d+\.\d+),(-?\d+\.\d+)\)"
-)
-
-# ParkingLot Detector application results:
-#   ApplyParkingLotDetector: state=3, candidateCount=2, bestLinkId=51075, bestMatchState=1
-PARKING_LOT_APPLY_PATTERN = re.compile(
-    r"ApplyParkingLotDetector:\s*state=(\d+),\s*candidateCount=(\d+),\s*bestLinkId=(\d+)"
-)
-
-# ParkingLot Detector state transitions (fallback):
-#   ParkingLotDetector transition: Idle -> EnterCandidate, reason=enter_candidate, ...
-PARKING_LOT_STATE_CHANGE_PATTERN = re.compile(
-    r"ParkingLotDetector transition:\s*([A-Za-z]+)\s*->\s*([A-Za-z]+),\s*reason=([^,]+)"
-)
-
-# 확장 차선수(LANE_EXT) 적용 로그 — 링크별로 LANE 값 대신 사용된 확장 차선수를 남긴다:
-#   navisdk :: [[MM] : 4] [LANE_EXT] link[16446] lane:2 -> ext:3, dist:29.1, fB:0.353
-LANE_EXT_PATTERN = re.compile(
-    r"\[LANE_EXT\]\s*link\[\s*(-?\d+)\s*\]\s*lane:\s*(-?\d+)\s*->\s*ext:\s*(-?\d+)"
-    r"(?:\s*,\s*dist:\s*([+\-]?\d+(?:\.\d+)?))?"
-    r"(?:\s*,\s*fB:\s*([+\-]?\d+(?:\.\d+)?))?"
-)
-
-# ---------------------------------------------------------------------------
-# GP (Guide Point) / turnCode logs — navisdk CRGDataCollector & CRGPlayer
-#
-# Emitted while a route is being applied (route build time), one burst per
-# route link, in this order:
-#   [LANE_COLOR] ucSndCode:65, nVoiceCode:65, usImgID:1234, ucImgAvailable:1, turnCode:18
-#   ServiceDataCollect #1 bCrossImage:1, nTurnCode:18, nLinkID:57
-#   ServiceDataCollect #2 bCrossImage:1, nTurnCode:18, nVoiceCode:65
-#   ServiceDataCollect nGPType:196608, nTurnCode:18, nLinkID:57
-#   [LANE_COLOR] store GP (new) GPIdx:7, linkIndex:57, nVoiceCode:65, nTurnCode:18, nGPType:0x30000
-# The 'store GP (new)' line is the one that actually creates a GP; the earlier
-# lines only carry the inputs the GP type was derived from. Links that never
-# reach 'store GP (new)' are non-guidance pass-through links (turnCode 4 등).
-#
-# Emitted while driving (per matched link, once per link):
-#   [LANE_COLOR] linkIndex:57, guidePointIndex:7, gpLinkIndex:57, nVoiceCode:65, laneColor:1, gpTurnCode:18
-GP_CROSS_IMAGE_RAW_PATTERN = re.compile(
-    r"ServiceDataCollect #1 bCrossImage:(-?\d+), nTurnCode:(-?\d+), nLinkID:(-?\d+)"
-)
-GP_CROSS_IMAGE_FILTERED_PATTERN = re.compile(
-    r"ServiceDataCollect #2 bCrossImage:(-?\d+), nTurnCode:(-?\d+), nVoiceCode:(-?\d+)"
-)
-GP_TYPE_PATTERN = re.compile(
-    r"ServiceDataCollect nGPType:(-?\d+), nTurnCode:(-?\d+), nLinkID:(-?\d+)"
-)
-GP_STORE_PATTERN = re.compile(
-    r"\[LANE_COLOR\] store GP \(new\) GPIdx:(-?\d+), linkIndex:(-?\d+), "
-    r"nVoiceCode:(-?\d+), nTurnCode:(-?\d+), nGPType:0x([0-9A-Fa-f]+)"
-)
-GP_CROSS_IMAGE_DATA_PATTERN = re.compile(
-    r"\[LANE_COLOR\] ucSndCode:(-?\d+), nVoiceCode:(-?\d+), usImgID:(-?\d+), "
-    r"ucImgAvailable:(-?\d+), turnCode:(-?\d+)"
-)
-GP_LANE_COLOR_PATTERN = re.compile(
-    r"\[LANE_COLOR\] linkIndex:(-?\d+), guidePointIndex:(-?\d+), gpLinkIndex:(-?\d+), "
-    r"nVoiceCode:(-?\d+), laneColor:(-?\d+), gpTurnCode:(-?\d+)"
-)
-# Route match result, logged per position fix (NcRouteMatchEX.cpp):
-#   Route LinkScore RESULT LINK[1] Vertex[10] Score[110.064] [Angle:...] ...
-# LINK[] is the route link index — the same enumeration ServiceDataCollect's
-# nLinkID uses — so it ties a route link ordinal to a real driven position.
-ROUTE_MATCH_LINK_PATTERN = re.compile(
-    r"Route LinkScore RESULT LINK\[(-?\d+)\] Vertex\[(-?\d+)\]"
-)
-GP_RENDER_DATA_PATTERN = re.compile(
-    r"GetRenderData pGuidePoint \[\s*(-?\d+)\] gpType (-?\d+), turnCode:\s*(-?\d+), vertexEnd\s*(-?\d+)"
-)
-
-# nGPType bit flags (rgdata_def.h RG_GPTYPE). Kept here so the parser can label
-# GPs without the frontend; the map popup decodes the same values again.
-GP_TYPE_FLAGS = (
-    (0x00000001, "POSITION_S"),
-    (0x00000002, "POSITION_E"),
-    (0x00000010, "POSITION_V"),
-    (0x00010000, "TURN"),
-    (0x00020000, "EXTCROSSTURN"),
-    (0x00100000, "ROTARY_IN"),
-    (0x00200000, "ROTARY_INNER"),
-    (0x00400000, "ROTARY_OUT"),
-    (0x01000000, "IC"),
-    (0x02000000, "JC"),
-    (0x04000000, "SA"),
-    (0x08000000, "TOLL"),
-    (0x10000000, "EV_STATION"),
-)
-
-
-# nVoiceCode -> LaneColor, exactly as RGPlayer.cpp ToLaneColor() maps it. nVoiceCode
-# is logged by the upstream 'ServiceDataCollect #2' line, so the lane bubble colour
-# can be derived without the locally-added [LANE_COLOR] logs.
-LANE_COLOR_BY_VOICE_CODE = {65: 1, 66: 2, 67: 3, 68: 4}
-
-
-def lane_color_from_voice_code(voice_code):
-    """LaneColor value for a voice code (0 = NONE)."""
-    if voice_code is None:
-        return 0
-    return LANE_COLOR_BY_VOICE_CODE.get(int(voice_code), 0)
-
-
-# LaneColor enum (rgdata_def.h) -> marker colour for the drive-time lane events
-LANE_COLOR_HEX = {
-    0: "#64748b",  # NONE
-    1: "#22c55e",  # GREEN
-    2: "#ec4899",  # PINK
-    3: "#3b82f6",  # BLUE
-    4: "#eab308",  # YELLOW
-}
-
-
-def decode_gp_type_flags(gp_type):
-    """Split an nGPType value into its RG_GPTYPE flag names."""
-    if not gp_type:
-        return []
-    return [name for mask, name in GP_TYPE_FLAGS if gp_type & mask]
-
-
-
-def lat_lon_dist(lat1, lon1, lat2, lon2):
-    local_x = -(((lon2 - lon1) * DEG2RAD) * math.cos(DEG2RAD * lat1)) * EARTH_RADIUS
-    local_y = ((lat2 - lat1) * DEG2RAD) * EARTH_RADIUS
-    return math.sqrt((local_x * local_x) + (local_y * local_y))
 
 
 def reset_runtime_state():
-    global COORDINATES, LINES, GUIDE_EVENTS, SDI_EVENTS, PARKING_LOT_EVENTS, LANE_EXT_LINKS, last_gnss_coordinate
+    global COORDINATES, LINES, GUIDE_EVENTS, SDI_EVENTS, PARKING_LOT_EVENTS, last_gnss_coordinate
     global GP_ENTRIES, GP_RENDER_POINTS, GP_LANE_EVENTS, gp_pending, ROUTE_MATCH_LINKS
     global min_timestamp, max_timestamp
     global last_road_match_state, last_route_match_state, last_threshold_info, log_base_timestamp, last_tvas_header_info
@@ -288,7 +103,6 @@ def reset_runtime_state():
     GUIDE_EVENTS = []
     SDI_EVENTS = []
     PARKING_LOT_EVENTS = []
-    LANE_EXT_LINKS = {}
     GP_ENTRIES = []
     GP_RENDER_POINTS = []
     GP_LANE_EVENTS = []
@@ -312,468 +126,68 @@ def reset_runtime_state():
     pending_gnss_mode_transition = None
 
 
-def parse_log(log_file_path=None):
-    global last_road_match_state, last_route_match_state, last_threshold_info
-    global log_base_timestamp, last_tvas_header_info, last_gnss_coordinate
-    global current_route_session_id, current_route_session_index, route_session_indices, route_session_sequence
-    global current_gnss_mode, pending_gnss_mode_transition
+class _LogParseState:
+    """parse_log 루프가 줄 사이에 이어가는 상태.
 
-    current_id = 1
-    temp_gnss1_coord = None
-    temp_gnss2_coord = None
-    last_dr_coordinate = None
-    pending_mm_feedback_reason = None
-    # Requests waiting for their TVAS session id (which arrives later in the log)
-    pending_route_request_coords = []
-    last_vpm_coordinate = None
-    last_road_match_coord = None
-    last_route_match_coord = None
-    pending_candidate_link_scores = []
-    pending_extrapoint_by_link_id = {}  # link_id -> extrapoint_info, buffered until Candidate Link line arrives
+    이전에는 parse_log 안의 지역변수 + 클로저였고, 코드가 길어질수록
+    어떤 값이 줄 사이에 유지되는지 파악하기 어려웠다. 라인 핸들러들이
+    이 상태만 주고받도록 모아둔다.
+    """
+
+    def __init__(self):
+        self.current_id = 1
+        self.temp_gnss1_coord = None
+        self.temp_gnss2_coord = None
+        self.last_dr_coordinate = None
+        self.last_vpm_coordinate = None
+        self.last_road_match_coord = None
+        self.last_route_match_coord = None
+        self.pending_mm_feedback_reason = None
+        # Requests waiting for their TVAS session id (which arrives later in the log)
+        self.pending_route_request_coords = []
+        self.pending_candidate_link_scores = []
+        # link_id -> extrapoint_info, buffered until Candidate Link line arrives
+        self.pending_extrapoint_by_link_id = {}
+
+    def flush_pending_raw_gnss(self, assign_id=None):
+        if self.temp_gnss2_coord is None:
+            return
+        fallback_id = self.current_id - 1 if self.current_id > 1 else self.current_id
+        self.temp_gnss2_coord.id = assign_id if isinstance(assign_id, int) and assign_id > 0 else fallback_id
+        COORDINATES[CoordType.GNSS2].append(self.temp_gnss2_coord)
+        self.temp_gnss2_coord = None
+
+
+def parse_log(log_file_path=None):
+    global log_base_timestamp
+
     source_path = log_file_path or PATHS.log_file_path
-    log_base_timestamp = infer_initial_timestamp(source_path)
-    current_timestamp = log_base_timestamp
-    line_number = 0
 
     if not os.path.exists(source_path):
         print(f"오류: 로그 파일 '{source_path}'을 찾을 수 없습니다.")
         return False
 
-    def flush_pending_raw_gnss(assign_id=None):
-        nonlocal temp_gnss2_coord
-        if temp_gnss2_coord is None:
-            return
-        candidate_id = assign_id if isinstance(assign_id, int) and assign_id > 0 else (current_id - 1 if current_id > 1 else current_id)
-        temp_gnss2_coord.id = candidate_id
-        COORDINATES[CoordType.GNSS2].append(temp_gnss2_coord)
-        temp_gnss2_coord = None
+    log_base_timestamp = infer_initial_timestamp(source_path)
+    current_timestamp = log_base_timestamp
+    state = _LogParseState()
 
     for dlt_id, line, reception_timestamp in iterate_log_records(source_path):
-            line_number += 1
+        current_timestamp = _resolve_line_timestamp(line, reception_timestamp, current_timestamp)
+        timestamp = current_timestamp
+        if timestamp:
+            update_timestamp_range(timestamp)
 
-            # Priority: DLT storage-header reception timestamp (absolute time).
-            if reception_timestamp is not None:
-                current_timestamp = reception_timestamp
-            else:
-                parsed_timestamp = parse_datetime(line, current_timestamp)
-                if parsed_timestamp:
-                    current_timestamp = parsed_timestamp
+        _track_threshold_and_gnss_mode(line)
+        _track_route_session(state, line)
+        _collect_standalone_events(line, timestamp)
+        _track_tvas_header(line)
+        _collect_candidate_link_score(state, line)
+        _collect_route_information(state, line, timestamp)
+        _track_match_states(line)
+        _track_mm_feedback(state, line)
+        _collect_coordinates(state, line, dlt_id, timestamp)
 
-            timestamp = current_timestamp
-            if timestamp:
-                update_timestamp_range(timestamp)
-
-            threshold_info = parse_threshold_info(line)
-            if threshold_info:
-                last_threshold_info = threshold_info
-
-            gnss_mode_info = parse_gnss_mode_info(line)
-            if gnss_mode_info:
-                current_gnss_mode = gnss_mode_info["mode"]
-                if gnss_mode_info.get("transition"):
-                    pending_gnss_mode_transition = gnss_mode_info["transition"]
-
-            route_session_info = parse_route_session_info(line)
-            if route_session_info:
-                current_route_session_id = route_session_info["session_id"]
-                current_route_session_index = route_session_indices.setdefault(
-                    current_route_session_id,
-                    len(route_session_indices) + 1,
-                )
-                route_session_sequence.setdefault(current_route_session_id, 0)
-                last_tvas_header_info = None
-                # The session id arrives after the request in the log; link it back
-                # to any pending Request coordinates so they can be matched later.
-                for pending_request in pending_route_request_coords:
-                    pending_request.extra["route_session_id"] = current_route_session_id
-                    ROUTE_SESSION_CONTENT_IDS[current_route_session_id] = pending_request.extra.get("group_1")
-                pending_route_request_coords = []
-
-            # Parse Guide Events (C2X, Accident), SDI Events, and Parking Lot Events
-            parse_guide_event(line, timestamp)
-            parse_sdi_event(line, timestamp)
-            parse_parking_lot_event(line, timestamp)
-            parse_lane_ext(line, timestamp)
-            parse_gp_guide_event(line, timestamp)
-            parse_route_request_points(line)
-
-            tvas_header_info = parse_tvas_header_info(line, last_tvas_header_info)
-            if tvas_header_info is not None:
-                last_tvas_header_info = tvas_header_info
-
-            extrapoint_info = parse_link_extrapoint(line)
-            if extrapoint_info:
-                pending_extrapoint_by_link_id[extrapoint_info["link_id"]] = extrapoint_info
-
-            candidate_link_info = parse_candidate_link_score(line)
-            if candidate_link_info:
-                ep = pending_extrapoint_by_link_id.pop(candidate_link_info["link_id"], None)
-                if ep:
-                    candidate_link_info["mul"] = ep["mul"]
-                    candidate_link_info["score"] = ep["score"]
-                if last_dr_coordinate is not None:
-                    bucket = last_dr_coordinate.extra.setdefault("candidate_link_scores", [])
-                    bucket.append(candidate_link_info)
-                else:
-                    pending_candidate_link_scores.append(candidate_link_info)
-
-            route_info = parse_set_route_information(line)
-            if route_info:
-                session_id = current_route_session_id or "unknown"
-                session_index = current_route_session_index or route_session_indices.setdefault(
-                    session_id,
-                    len(route_session_indices) + 1,
-                )
-                route_session_sequence[session_id] = route_session_sequence.get(session_id, 0) + 1
-                route_info["extra"]["route_session_id"] = session_id
-                route_info["extra"]["route_session_index"] = session_index
-                # Name route layers by the request content id (e.g. 'Route Info 10000013')
-                # so each layer is directly identifiable; fall back to session index.
-                request_content_id = ROUTE_SESSION_CONTENT_IDS.get(session_id)
-                route_info["extra"]["request_content_id"] = request_content_id
-                route_info["extra"]["route_session_name"] = (
-                    f"Route Info {request_content_id}" if request_content_id else f"Route Info {session_index}"
-                )
-                route_info["extra"]["route_sequence"] = route_session_sequence[session_id]
-                if last_tvas_header_info:
-                    route_info["extra"]["tvas_header"] = dict(last_tvas_header_info)
-                LINES[LineType.ROUTE_INFO].append(
-                    Line(
-                        id=current_id,
-                        type=LineType.ROUTE_INFO,
-                        start=(route_info["start_lat"], route_info["start_lon"]),
-                        end=(route_info["end_lat"], route_info["end_lon"]),
-                        timestamp=timestamp,
-                        extra=route_info["extra"],
-                    )
-                )
-
-            road_match_state = parse_road_match_state(line)
-            route_match_state = parse_route_match_state(line)
-            if road_match_state:
-                last_road_match_state = road_match_state
-            if route_match_state:
-                last_route_match_state = route_match_state
-
-            # MM feedback correction: capture the reason so the next DR coordinate
-            # can be highlighted and show what triggered the correction.
-            # Actual correction events (current log format):
-            #   'clamped: dist=..., laneWidth=..., ratio=..., timegap=...'  -> black (lane-width feedback)
-            #   'heading only: dr=..., feedback=...'                         -> gray (heading-only feedback)
-            # Legacy formats still accepted: 'correction clamped ...' /
-            #   'Force correction' -> black, 'correction normal' -> gray.
-            # Informational lines ('timegap: ...') and 'skipped' cases must NOT
-            # mark the next DR coordinate as feedback-corrected.
-            mm_feedback_match = MM_FEEDBACK_PATTERN.search(line)
-            if mm_feedback_match:
-                reason = mm_feedback_match.group(1).strip()
-                reason_lower = reason.lower()
-                is_correction = (
-                    reason_lower.startswith("clamp")       # clamp to lane edge / clamp to feedback pos
-                    or reason_lower.startswith("heading only")
-                    or "correction" in reason_lower        # legacy: correction clamped / Force correction
-                )
-                if is_correction and "skip" not in reason_lower:
-                    pending_mm_feedback_reason = reason
-
-            for coord_type in CoordType:
-                if coord_type.pattern is None:
-                    continue
-
-                match = coord_type.pattern.search(line)
-                if not match:
-                    continue
-
-                if coord_type == CoordType.GNSS1:
-                    gnss_lat = float(match.group(1))
-                    gnss_lon = float(match.group(2))
-                    heading = float(match.group(3))
-                    speed = float(match.group(4))
-
-                    if gnss_lat == 0.0 and gnss_lon == 0.0:
-                        break
-
-                    temp_gnss1_coord = Coordinate(
-                        dlt_id=dlt_id,
-                        type=coord_type,
-                        latitude=gnss_lat,
-                        longitude=gnss_lon,
-                        heading=heading,
-                        extra={"Speed": speed},
-                        timestamp=timestamp,
-                    )
-                    if current_gnss_mode:
-                        temp_gnss1_coord.extra["gnss_mode"] = current_gnss_mode
-                    if pending_gnss_mode_transition:
-                        temp_gnss1_coord.extra["gnss_mode_transition"] = pending_gnss_mode_transition
-                        temp_gnss1_coord.extra["gnss_transition_highlight"] = True
-                        pending_gnss_mode_transition = None
-
-                    # Update last GNSS coordinate for parking lot events
-                    last_gnss_coordinate = {"latitude": gnss_lat, "longitude": gnss_lon}
-
-                elif coord_type == CoordType.GNSS2:
-                    latitude = float(match.group(1)) / 10000000
-                    longitude = float(match.group(2)) / 10000000
-                    heading = float(match.group(3))
-                    speed = float(match.group(4))
-
-                    if latitude == 0.0 and longitude == 0.0:
-                        break
-
-                    flush_pending_raw_gnss()
-
-                    temp_gnss2_coord = Coordinate(
-                        dlt_id=dlt_id,
-                        type=coord_type,
-                        latitude=latitude,
-                        longitude=longitude,
-                        heading=heading,
-                        extra={"Speed": speed, "source": "gnss_line"},
-                        timestamp=timestamp,
-                    )
-
-                    # Update last GNSS coordinate for parking lot events
-                    last_gnss_coordinate = {"latitude": latitude, "longitude": longitude}
-
-                elif coord_type == CoordType.DR:
-                    latitude = float(match.group(1))
-                    longitude = float(match.group(2))
-                    speed = float(match.group(3))
-                    is_dr = int(match.group(4))
-                    heading = float(match.group(5))
-
-                    if latitude == 0.0 and longitude == 0.0:
-                        break
-
-                    if temp_gnss1_coord:
-                        temp_gnss1_coord.id = current_id
-
-                        # DR correction must connect: previous DR -> current GNSS
-                        if last_dr_coordinate:
-                            dist = lat_lon_dist(
-                                temp_gnss1_coord.latitude,
-                                temp_gnss1_coord.longitude,
-                                last_dr_coordinate.latitude,
-                                last_dr_coordinate.longitude,
-                            )
-                            speed_val = temp_gnss1_coord.extra.get("Speed", 0.0)
-                            correction_extra = {
-                                "reason": f"dist={dist:.2f}m, speed={speed_val:.2f}",
-                            }
-
-                            LINES[LineType.DR_CORRECTION].append(
-                                Line(
-                                    id=current_id,
-                                    type=LineType.DR_CORRECTION,
-                                    start=(last_dr_coordinate.latitude, last_dr_coordinate.longitude),
-                                    end=(temp_gnss1_coord.latitude, temp_gnss1_coord.longitude),
-                                    timestamp=temp_gnss1_coord.timestamp,
-                                    extra=correction_extra,
-                                )
-                            )
-
-                        LINES[LineType.GNSS_TO_DR].append(
-                            Line(
-                                id=current_id,
-                                type=LineType.GNSS_TO_DR,
-                                start=(temp_gnss1_coord.latitude, temp_gnss1_coord.longitude),
-                                end=(latitude, longitude),
-                                timestamp=temp_gnss1_coord.timestamp,
-                                extra={},
-                            )
-                        )
-                        COORDINATES[CoordType.GNSS1].append(temp_gnss1_coord)
-                        temp_gnss1_coord = None
-
-                    if temp_gnss2_coord:
-                        flush_pending_raw_gnss(current_id)
-
-                    dr_coordinate = Coordinate(
-                        id=current_id,
-                        dlt_id=dlt_id,
-                        type=coord_type,
-                        latitude=latitude,
-                        longitude=longitude,
-                        heading=heading,
-                        extra={"isDRGps": is_dr, "Speed": speed},
-                        timestamp=timestamp,
-                    )
-                    if pending_candidate_link_scores:
-                        dr_coordinate.extra["candidate_link_scores"] = pending_candidate_link_scores
-                        pending_candidate_link_scores = []
-
-                    if pending_mm_feedback_reason is not None:
-                        dr_coordinate.extra["mm_feedback"] = True
-                        dr_coordinate.extra["mm_feedback_reason"] = pending_mm_feedback_reason
-                        pending_mm_feedback_reason = None
-
-                    COORDINATES[coord_type].append(dr_coordinate)
-                    last_dr_coordinate = dr_coordinate
-                    current_id += 1
-
-                elif coord_type == CoordType.ROAD_MATCH:
-                    if "[MM_RESULT]" not in line:
-                        continue
-                    latitude, longitude, heading = map(float, match.groups())
-                    if latitude == 0.0 and longitude == 0.0:
-                        break
-
-                    road_coordinate = Coordinate(
-                        id=current_id - 1,
-                        dlt_id=dlt_id,
-                        type=coord_type,
-                        latitude=latitude,
-                        longitude=longitude,
-                        heading=heading,
-                        timestamp=timestamp,
-                        extra={"match_state": last_road_match_state if last_road_match_state else ""},
-                    )
-                    COORDINATES[coord_type].append(road_coordinate)
-                    last_road_match_coord = road_coordinate
-
-                elif coord_type == CoordType.ROUTE_MATCH:
-                    if "[MM_RESULT]" in line:
-                        continue
-                    latitude, longitude, heading = map(float, match.groups())
-                    if latitude == 0.0 and longitude == 0.0:
-                        break
-
-                    route_coordinate = Coordinate(
-                        id=current_id - 1,
-                        dlt_id=dlt_id,
-                        type=coord_type,
-                        latitude=latitude,
-                        longitude=longitude,
-                        heading=heading,
-                        timestamp=timestamp,
-                        extra={"match_state": last_route_match_state if last_route_match_state else ""},
-                    )
-                    COORDINATES[coord_type].append(route_coordinate)
-                    last_route_match_coord = route_coordinate
-
-                elif coord_type == CoordType.VPM:
-                    latitude = float(match.group(1))
-                    longitude = float(match.group(2))
-                    heading = float(match.group(3))
-                    speed = float(match.group(4))
-                    match_dist = float(match.group(5)) if match.group(5) is not None else None
-                    facility_type = int(match.group(6)) if match.group(6) is not None else None
-
-                    if latitude == 0.0 and longitude == 0.0:
-                        break
-
-                    vpm = Coordinate(
-                        id=current_id - 1,
-                        dlt_id=dlt_id,
-                        type=coord_type,
-                        latitude=latitude,
-                        longitude=longitude,
-                        heading=heading,
-                        extra={"Speed": speed, "MatchDist": match_dist, "FacilityType": facility_type},
-                        timestamp=timestamp,
-                    )
-                    last_vpm_coordinate = vpm
-                    COORDINATES[coord_type].append(vpm)
-
-                    if last_dr_coordinate:
-                        LINES[LineType.DR_TO_VPM].append(
-                            Line(
-                                id=last_dr_coordinate.id,
-                                type=LineType.DR_TO_VPM,
-                                start=(last_dr_coordinate.latitude, last_dr_coordinate.longitude),
-                                end=(latitude, longitude),
-                                timestamp=timestamp if timestamp else last_dr_coordinate.timestamp,
-                            )
-                        )
-
-                elif coord_type == CoordType.REQUEST:
-                    # Anchor the request marker to the best-known position.
-                    # Fall back to DR / raw GNSS so requests fired before the
-                    # first map-matched (VPM) fix are not silently dropped.
-                    request_anchor = last_vpm_coordinate or last_dr_coordinate
-                    if request_anchor is not None:
-                        anchor_lat = request_anchor.latitude
-                        anchor_lon = request_anchor.longitude
-                        anchor_heading = request_anchor.heading
-                    elif last_gnss_coordinate:
-                        anchor_lat = last_gnss_coordinate.get("latitude")
-                        anchor_lon = last_gnss_coordinate.get("longitude")
-                        anchor_heading = None
-                    else:
-                        anchor_lat = anchor_lon = anchor_heading = None
-
-                    if anchor_lat is not None and anchor_lon is not None:
-                        group2_value = int(match.group(2))
-                        group2_enum = RouteRequestType.get_type_by_value(group2_value)
-                        extra_info = {
-                            "group_1": match.group(1),
-                            "group_2_text": group2_enum.label,
-                            # Filled in when the TVAS session id for this request arrives
-                            "route_session_id": None,
-                        }
-
-                        if (
-                            group2_enum == RouteRequestType.REROUTE_BREAKAWAY
-                            and last_threshold_info
-                            and last_road_match_coord
-                            and last_route_match_coord
-                        ):
-                            distance_exceeded = last_threshold_info["distance"] > last_threshold_info["distance_threshold"]
-                            angle_exceeded = last_threshold_info["angle_diff"] > last_threshold_info["angle_threshold"]
-
-                            if distance_exceeded or angle_exceeded:
-                                deviation_type = None
-                                if distance_exceeded and angle_exceeded:
-                                    deviation_type = "both"
-                                elif distance_exceeded:
-                                    deviation_type = "distance"
-                                elif angle_exceeded:
-                                    deviation_type = "angle"
-
-                                LINES[LineType.DEVIATION].append(
-                                    Line(
-                                        id=current_id - 1,
-                                        type=LineType.DEVIATION,
-                                        start=(last_road_match_coord.latitude, last_road_match_coord.longitude),
-                                        end=(last_route_match_coord.latitude, last_route_match_coord.longitude),
-                                        timestamp=timestamp,
-                                        distance_threshold=last_threshold_info["distance_threshold"],
-                                        angle_threshold=last_threshold_info["angle_threshold"],
-                                        actual_distance=last_threshold_info["distance"],
-                                        actual_angle_diff=last_threshold_info["angle_diff"],
-                                        local_distance=last_threshold_info["local_distance"],
-                                        route_distance=last_threshold_info["route_distance"],
-                                        deviation_type=deviation_type,
-                                    )
-                                )
-
-                        request_coordinate = Coordinate(
-                            id=current_id - 1,
-                            dlt_id=dlt_id,
-                            type=coord_type,
-                            latitude=anchor_lat,
-                            longitude=anchor_lon,
-                            heading=anchor_heading,
-                            extra=extra_info,
-                            timestamp=timestamp,
-                        )
-                        COORDINATES[coord_type].append(request_coordinate)
-                        pending_route_request_coords.append(request_coordinate)
-                        # Start a provisional per-request session so subsequent
-                        # setRouteInformation dumps group under THIS request even
-                        # when the TVAS session-id line is absent from the log.
-                        # A real session id (if logged) overrides this via backfill.
-                        current_route_session_id = f"REQ_{extra_info['group_1']}"
-                        current_route_session_index = 0
-                        request_coordinate.extra["route_session_id"] = current_route_session_id
-                        ROUTE_SESSION_CONTENT_IDS[current_route_session_id] = extra_info["group_1"]
-
-                # Do not stop at first match. One physical line can contain
-                # multiple embedded DLT records in this log format.
-                continue
-
-    flush_pending_raw_gnss()
+    state.flush_pending_raw_gnss()
     normalize_sequential_ids()
     fill_missing_timestamps()
     sanitize_outlier_timestamps()
@@ -781,98 +195,495 @@ def parse_log(log_file_path=None):
     return True
 
 
-def iterate_log_records(source_path):
-    """
-    Yield normalized records as:
-      (dlt_id, message_text, reception_timestamp_or_none)
-    For .dlt, parse storage header timestamp directly from binary records.
-    For text files (or fallback), emit line-based records.
-    """
-    parsed_binary = False
-    if source_path.lower().endswith(".dlt"):
-        for dlt_id, message_text, reception_ts in iterate_dlt_storage_records(source_path):
-            parsed_binary = True
-            yield dlt_id, message_text, reception_ts
-        if parsed_binary:
-            return
+def _resolve_line_timestamp(line, reception_timestamp, current_timestamp):
+    """이 줄에 적용할 시각. DLT 저장 헤더의 수신 시각(절대시간)이 최우선."""
+    if reception_timestamp is not None:
+        return reception_timestamp
 
-    with open(source_path, "r", encoding="utf-8", errors="replace") as file:
-        for line_number, line in enumerate(file, start=1):
-            yield line_number, line, None
+    parsed_timestamp = parse_datetime(line, current_timestamp)
+    return parsed_timestamp if parsed_timestamp else current_timestamp
 
 
-def iterate_dlt_storage_records(source_path):
-    marker = b"DLT\x01"
-    with open(source_path, "rb") as file:
-        data = file.read()
+def _track_threshold_and_gnss_mode(line):
+    global last_threshold_info, current_gnss_mode, pending_gnss_mode_transition
 
-    if not data:
+    threshold_info = parse_threshold_info(line)
+    if threshold_info:
+        last_threshold_info = threshold_info
+
+    gnss_mode_info = parse_gnss_mode_info(line)
+    if gnss_mode_info:
+        current_gnss_mode = gnss_mode_info["mode"]
+        if gnss_mode_info.get("transition"):
+            pending_gnss_mode_transition = gnss_mode_info["transition"]
+
+
+def _track_route_session(state, line):
+    global current_route_session_id, current_route_session_index, last_tvas_header_info
+
+    route_session_info = parse_route_session_info(line)
+    if not route_session_info:
         return
 
-    data_len = len(data)
-    record_id = 0
-    starts = [m.start() for m in re.finditer(re.escape(marker), data)]
-    if not starts:
+    current_route_session_id = route_session_info["session_id"]
+    current_route_session_index = route_session_indices.setdefault(
+        current_route_session_id,
+        len(route_session_indices) + 1,
+    )
+    route_session_sequence.setdefault(current_route_session_id, 0)
+    last_tvas_header_info = None
+    # The session id arrives after the request in the log; link it back
+    # to any pending Request coordinates so they can be matched later.
+    for pending_request in state.pending_route_request_coords:
+        pending_request.extra["route_session_id"] = current_route_session_id
+        ROUTE_SESSION_CONTENT_IDS[current_route_session_id] = pending_request.extra.get("group_1")
+    state.pending_route_request_coords = []
+
+
+def _collect_standalone_events(line, timestamp):
+    """좌표 상태와 무관하게 자기 완결적으로 수집되는 이벤트들."""
+    parse_guide_event(line, timestamp)
+    parse_sdi_event(line, timestamp)
+    parse_parking_lot_event(line, timestamp)
+    parse_gp_guide_event(line, timestamp)
+    parse_route_request_points(line)
+
+
+def _track_tvas_header(line):
+    global last_tvas_header_info
+
+    tvas_header_info = parse_tvas_header_info(line, last_tvas_header_info)
+    if tvas_header_info is not None:
+        last_tvas_header_info = tvas_header_info
+
+
+def _collect_candidate_link_score(state, line):
+    extrapoint_info = parse_link_extrapoint(line)
+    if extrapoint_info:
+        state.pending_extrapoint_by_link_id[extrapoint_info["link_id"]] = extrapoint_info
+
+    candidate_link_info = parse_candidate_link_score(line)
+    if not candidate_link_info:
         return
 
-    for idx, start in enumerate(starts):
-        end = starts[idx + 1] if idx + 1 < len(starts) else data_len
-        if end - start < 16:
+    extrapoint = state.pending_extrapoint_by_link_id.pop(candidate_link_info["link_id"], None)
+    if extrapoint:
+        candidate_link_info["mul"] = extrapoint["mul"]
+        candidate_link_info["score"] = extrapoint["score"]
+
+    if state.last_dr_coordinate is not None:
+        bucket = state.last_dr_coordinate.extra.setdefault("candidate_link_scores", [])
+        bucket.append(candidate_link_info)
+    else:
+        state.pending_candidate_link_scores.append(candidate_link_info)
+
+
+def _collect_route_information(state, line, timestamp):
+    route_info = parse_set_route_information(line)
+    if not route_info:
+        return
+
+    session_id = current_route_session_id or "unknown"
+    session_index = current_route_session_index or route_session_indices.setdefault(
+        session_id,
+        len(route_session_indices) + 1,
+    )
+    route_session_sequence[session_id] = route_session_sequence.get(session_id, 0) + 1
+    route_info["extra"]["route_session_id"] = session_id
+    route_info["extra"]["route_session_index"] = session_index
+    # Name route layers by the request content id (e.g. 'Route Info 10000013')
+    # so each layer is directly identifiable; fall back to session index.
+    request_content_id = ROUTE_SESSION_CONTENT_IDS.get(session_id)
+    route_info["extra"]["request_content_id"] = request_content_id
+    route_info["extra"]["route_session_name"] = (
+        f"Route Info {request_content_id}" if request_content_id else f"Route Info {session_index}"
+    )
+    route_info["extra"]["route_sequence"] = route_session_sequence[session_id]
+    if last_tvas_header_info:
+        route_info["extra"]["tvas_header"] = dict(last_tvas_header_info)
+
+    LINES[LineType.ROUTE_INFO].append(
+        Line(
+            id=state.current_id,
+            type=LineType.ROUTE_INFO,
+            start=(route_info["start_lat"], route_info["start_lon"]),
+            end=(route_info["end_lat"], route_info["end_lon"]),
+            timestamp=timestamp,
+            extra=route_info["extra"],
+        )
+    )
+
+
+def _track_match_states(line):
+    global last_road_match_state, last_route_match_state
+
+    road_match_state = parse_road_match_state(line)
+    route_match_state = parse_route_match_state(line)
+    if road_match_state:
+        last_road_match_state = road_match_state
+    if route_match_state:
+        last_route_match_state = route_match_state
+
+
+def _track_mm_feedback(state, line):
+    """MM feedback 보정 사유를 잡아두고 다음 DR 좌표에 표시한다.
+
+    현재 로그 형식의 실제 보정 이벤트:
+      'clamped: dist=..., laneWidth=..., ratio=..., timegap=...'  -> 검정(차로폭 피드백)
+      'heading only: dr=..., feedback=...'                        -> 회색(헤딩만 보정)
+    레거시 형식도 계속 허용: 'correction clamped ...' / 'Force correction' -> 검정,
+      'correction normal' -> 회색.
+    안내성 라인('timegap: ...')과 'skipped' 케이스는 다음 DR 좌표를
+    피드백 보정으로 표시하지 않아야 한다.
+    """
+    mm_feedback_match = MM_FEEDBACK_PATTERN.search(line)
+    if not mm_feedback_match:
+        return
+
+    reason = mm_feedback_match.group(1).strip()
+    reason_lower = reason.lower()
+    is_correction = (
+        reason_lower.startswith("clamp")       # clamp to lane edge / clamp to feedback pos
+        or reason_lower.startswith("heading only")
+        or "correction" in reason_lower        # legacy: correction clamped / Force correction
+    )
+    if is_correction and "skip" not in reason_lower:
+        state.pending_mm_feedback_reason = reason
+
+
+def _collect_coordinates(state, line, dlt_id, timestamp):
+    """줄에서 좌표 패턴을 찾아 타입별 핸들러로 넘긴다."""
+    for coord_type in CoordType:
+        if coord_type.pattern is None:
             continue
 
-        # Storage header: "DLT\x01" + seconds(4 LE) + microseconds(4 LE) + ecu(4)
-        seconds = int.from_bytes(data[start + 4:start + 8], byteorder="little", signed=False)
-        microseconds = int.from_bytes(data[start + 8:start + 12], byteorder="little", signed=False)
-        try:
-            reception_timestamp = datetime.fromtimestamp(seconds + (microseconds / 1_000_000.0))
-        except (OSError, OverflowError, ValueError):
-            reception_timestamp = None
-
-        record_id += 1
-        if not is_relevant_dlt_record_slice(data, start, end):
+        match = coord_type.pattern.search(line)
+        if not match:
             continue
 
-        record = data[start:end]
-        message_text = record.decode("utf-8", errors="replace")
-        yield record_id, message_text, reception_timestamp
+        handler = _COORD_HANDLERS.get(coord_type)
+        if handler is None:
+            continue
+
+        if handler(state, coord_type, match, line, dlt_id, timestamp) is _STOP_LINE:
+            break
 
 
-def is_relevant_dlt_record_slice(data_bytes, start, end):
-    for keyword in DLT_RELEVANT_BYTE_KEYWORDS:
-        if data_bytes.find(keyword, start, end) != -1:
-            return True
+def _handle_gnss1_coord(state, coord_type, match, line, dlt_id, timestamp):
+    global last_gnss_coordinate, pending_gnss_mode_transition
 
-    # VPM payload line format: "[MM] <lat>, <lon>, ..."
-    # Exclude verbose MM diagnostic lines like "[[MM] : 4] ..."
-    mm_pos = data_bytes.find(b"[MM] ", start, end)
-    if mm_pos < 0:
-        return False
+    gnss_lat = float(match.group(1))
+    gnss_lon = float(match.group(2))
+    heading = float(match.group(3))
+    speed = float(match.group(4))
 
-    value_pos = mm_pos + len(b"[MM] ")
-    if value_pos >= end:
-        return False
+    if gnss_lat == 0.0 and gnss_lon == 0.0:
+        return _STOP_LINE
 
-    first_char = data_bytes[value_pos:value_pos + 1]
-    return first_char in b"-0123456789"
+    state.temp_gnss1_coord = Coordinate(
+        dlt_id=dlt_id,
+        type=coord_type,
+        latitude=gnss_lat,
+        longitude=gnss_lon,
+        heading=heading,
+        extra={"Speed": speed},
+        timestamp=timestamp,
+    )
+    if current_gnss_mode:
+        state.temp_gnss1_coord.extra["gnss_mode"] = current_gnss_mode
+    if pending_gnss_mode_transition:
+        state.temp_gnss1_coord.extra["gnss_mode_transition"] = pending_gnss_mode_transition
+        state.temp_gnss1_coord.extra["gnss_transition_highlight"] = True
+        pending_gnss_mode_transition = None
+
+    # Update last GNSS coordinate for parking lot events
+    last_gnss_coordinate = {"latitude": gnss_lat, "longitude": gnss_lon}
+    return _SCAN_NEXT_TYPE
 
 
-def is_relevant_dlt_record(record_bytes):
-    # Backward-compatible helper for ad-hoc callers.
-    if any(keyword in record_bytes for keyword in DLT_RELEVANT_BYTE_KEYWORDS):
-        return True
+def _handle_gnss2_coord(state, coord_type, match, line, dlt_id, timestamp):
+    global last_gnss_coordinate
 
-    # VPM payload line format: "[MM] <lat>, <lon>, ..."
-    # Exclude verbose MM diagnostic lines like "[[MM] : 4] ..."
-    mm_pos = record_bytes.find(b"[MM] ")
-    if mm_pos < 0:
-        return False
+    latitude = float(match.group(1)) / 10000000
+    longitude = float(match.group(2)) / 10000000
+    heading = float(match.group(3))
+    speed = float(match.group(4))
 
-    value_pos = mm_pos + len(b"[MM] ")
-    if value_pos >= len(record_bytes):
-        return False
+    if latitude == 0.0 and longitude == 0.0:
+        return _STOP_LINE
 
-    first_char = record_bytes[value_pos:value_pos + 1]
-    return first_char in b"-0123456789"
+    state.flush_pending_raw_gnss()
+
+    state.temp_gnss2_coord = Coordinate(
+        dlt_id=dlt_id,
+        type=coord_type,
+        latitude=latitude,
+        longitude=longitude,
+        heading=heading,
+        extra={"Speed": speed, "source": "gnss_line"},
+        timestamp=timestamp,
+    )
+
+    # Update last GNSS coordinate for parking lot events
+    last_gnss_coordinate = {"latitude": latitude, "longitude": longitude}
+    return _SCAN_NEXT_TYPE
+
+
+def _handle_dr_coord(state, coord_type, match, line, dlt_id, timestamp):
+    latitude = float(match.group(1))
+    longitude = float(match.group(2))
+    speed = float(match.group(3))
+    is_dr = int(match.group(4))
+    heading = float(match.group(5))
+
+    if latitude == 0.0 and longitude == 0.0:
+        return _STOP_LINE
+
+    if state.temp_gnss1_coord:
+        _emit_gnss1_transition_lines(state, latitude, longitude)
+
+    if state.temp_gnss2_coord:
+        state.flush_pending_raw_gnss(state.current_id)
+
+    dr_coordinate = Coordinate(
+        id=state.current_id,
+        dlt_id=dlt_id,
+        type=coord_type,
+        latitude=latitude,
+        longitude=longitude,
+        heading=heading,
+        extra={"isDRGps": is_dr, "Speed": speed},
+        timestamp=timestamp,
+    )
+    if state.pending_candidate_link_scores:
+        dr_coordinate.extra["candidate_link_scores"] = state.pending_candidate_link_scores
+        state.pending_candidate_link_scores = []
+
+    if state.pending_mm_feedback_reason is not None:
+        dr_coordinate.extra["mm_feedback"] = True
+        dr_coordinate.extra["mm_feedback_reason"] = state.pending_mm_feedback_reason
+        state.pending_mm_feedback_reason = None
+
+    COORDINATES[coord_type].append(dr_coordinate)
+    state.last_dr_coordinate = dr_coordinate
+    state.current_id += 1
+    return _SCAN_NEXT_TYPE
+
+
+def _emit_gnss1_transition_lines(state, dr_latitude, dr_longitude):
+    """보류 중인 Filtered GNSS 좌표를 확정하고 DR 보정/연결선을 만든다."""
+    gnss_coord = state.temp_gnss1_coord
+    gnss_coord.id = state.current_id
+
+    # DR correction must connect: previous DR -> current GNSS
+    if state.last_dr_coordinate:
+        dist = lat_lon_dist(
+            gnss_coord.latitude,
+            gnss_coord.longitude,
+            state.last_dr_coordinate.latitude,
+            state.last_dr_coordinate.longitude,
+        )
+        speed_val = gnss_coord.extra.get("Speed", 0.0)
+        LINES[LineType.DR_CORRECTION].append(
+            Line(
+                id=state.current_id,
+                type=LineType.DR_CORRECTION,
+                start=(state.last_dr_coordinate.latitude, state.last_dr_coordinate.longitude),
+                end=(gnss_coord.latitude, gnss_coord.longitude),
+                timestamp=gnss_coord.timestamp,
+                extra={"reason": f"dist={dist:.2f}m, speed={speed_val:.2f}"},
+            )
+        )
+
+    LINES[LineType.GNSS_TO_DR].append(
+        Line(
+            id=state.current_id,
+            type=LineType.GNSS_TO_DR,
+            start=(gnss_coord.latitude, gnss_coord.longitude),
+            end=(dr_latitude, dr_longitude),
+            timestamp=gnss_coord.timestamp,
+            extra={},
+        )
+    )
+    COORDINATES[CoordType.GNSS1].append(gnss_coord)
+    state.temp_gnss1_coord = None
+
+
+def _handle_road_match_coord(state, coord_type, match, line, dlt_id, timestamp):
+    # Road Match와 Route Match는 같은 패턴을 쓰고 [MM_RESULT] 유무로 갈린다.
+    if "[MM_RESULT]" not in line:
+        return _SCAN_NEXT_TYPE
+
+    latitude, longitude, heading = map(float, match.groups())
+    if latitude == 0.0 and longitude == 0.0:
+        return _STOP_LINE
+
+    road_coordinate = Coordinate(
+        id=state.current_id - 1,
+        dlt_id=dlt_id,
+        type=coord_type,
+        latitude=latitude,
+        longitude=longitude,
+        heading=heading,
+        timestamp=timestamp,
+        extra={"match_state": last_road_match_state if last_road_match_state else ""},
+    )
+    COORDINATES[coord_type].append(road_coordinate)
+    state.last_road_match_coord = road_coordinate
+    return _SCAN_NEXT_TYPE
+
+
+def _handle_route_match_coord(state, coord_type, match, line, dlt_id, timestamp):
+    if "[MM_RESULT]" in line:
+        return _SCAN_NEXT_TYPE
+
+    latitude, longitude, heading = map(float, match.groups())
+    if latitude == 0.0 and longitude == 0.0:
+        return _STOP_LINE
+
+    route_coordinate = Coordinate(
+        id=state.current_id - 1,
+        dlt_id=dlt_id,
+        type=coord_type,
+        latitude=latitude,
+        longitude=longitude,
+        heading=heading,
+        timestamp=timestamp,
+        extra={"match_state": last_route_match_state if last_route_match_state else ""},
+    )
+    COORDINATES[coord_type].append(route_coordinate)
+    state.last_route_match_coord = route_coordinate
+    return _SCAN_NEXT_TYPE
+
+
+def _handle_vpm_coord(state, coord_type, match, line, dlt_id, timestamp):
+    latitude = float(match.group(1))
+    longitude = float(match.group(2))
+    heading = float(match.group(3))
+    speed = float(match.group(4))
+    match_dist = float(match.group(5)) if match.group(5) is not None else None
+    facility_type = int(match.group(6)) if match.group(6) is not None else None
+
+    if latitude == 0.0 and longitude == 0.0:
+        return _STOP_LINE
+
+    vpm = Coordinate(
+        id=state.current_id - 1,
+        dlt_id=dlt_id,
+        type=coord_type,
+        latitude=latitude,
+        longitude=longitude,
+        heading=heading,
+        extra={"Speed": speed, "MatchDist": match_dist, "FacilityType": facility_type},
+        timestamp=timestamp,
+    )
+    state.last_vpm_coordinate = vpm
+    COORDINATES[coord_type].append(vpm)
+
+    if state.last_dr_coordinate:
+        LINES[LineType.DR_TO_VPM].append(
+            Line(
+                id=state.last_dr_coordinate.id,
+                type=LineType.DR_TO_VPM,
+                start=(state.last_dr_coordinate.latitude, state.last_dr_coordinate.longitude),
+                end=(latitude, longitude),
+                timestamp=timestamp if timestamp else state.last_dr_coordinate.timestamp,
+            )
+        )
+    return _SCAN_NEXT_TYPE
+
+
+def _handle_request_coord(state, coord_type, match, line, dlt_id, timestamp):
+    global current_route_session_id, current_route_session_index
+
+    anchor_lat, anchor_lon, anchor_heading = _resolve_request_anchor(state)
+    if anchor_lat is None or anchor_lon is None:
+        return _SCAN_NEXT_TYPE
+
+    group2_value = int(match.group(2))
+    group2_enum = RouteRequestType.get_type_by_value(group2_value)
+    extra_info = {
+        "group_1": match.group(1),
+        "group_2_text": group2_enum.label,
+        # Filled in when the TVAS session id for this request arrives
+        "route_session_id": None,
+    }
+
+    if group2_enum == RouteRequestType.REROUTE_BREAKAWAY:
+        _emit_deviation_line(state, timestamp)
+
+    request_coordinate = Coordinate(
+        id=state.current_id - 1,
+        dlt_id=dlt_id,
+        type=coord_type,
+        latitude=anchor_lat,
+        longitude=anchor_lon,
+        heading=anchor_heading,
+        extra=extra_info,
+        timestamp=timestamp,
+    )
+    COORDINATES[coord_type].append(request_coordinate)
+    state.pending_route_request_coords.append(request_coordinate)
+    # Start a provisional per-request session so subsequent
+    # setRouteInformation dumps group under THIS request even
+    # when the TVAS session-id line is absent from the log.
+    # A real session id (if logged) overrides this via backfill.
+    current_route_session_id = f"REQ_{extra_info['group_1']}"
+    current_route_session_index = 0
+    request_coordinate.extra["route_session_id"] = current_route_session_id
+    ROUTE_SESSION_CONTENT_IDS[current_route_session_id] = extra_info["group_1"]
+    return _SCAN_NEXT_TYPE
+
+
+def _resolve_request_anchor(state):
+    """요청 마커를 붙일 위치.
+
+    첫 맵매칭(VPM) 이전에 발생한 요청이 조용히 사라지지 않도록
+    VPM -> DR -> raw GNSS 순으로 폴백한다.
+    """
+    request_anchor = state.last_vpm_coordinate or state.last_dr_coordinate
+    if request_anchor is not None:
+        return request_anchor.latitude, request_anchor.longitude, request_anchor.heading
+
+    if last_gnss_coordinate:
+        return last_gnss_coordinate.get("latitude"), last_gnss_coordinate.get("longitude"), None
+
+    return None, None, None
+
+
+def _emit_deviation_line(state, timestamp):
+    """이탈 재탐색 요청에서 임계값을 넘긴 경우 이탈 선을 남긴다."""
+    if not (last_threshold_info and state.last_road_match_coord and state.last_route_match_coord):
+        return
+
+    distance_exceeded = last_threshold_info["distance"] > last_threshold_info["distance_threshold"]
+    angle_exceeded = last_threshold_info["angle_diff"] > last_threshold_info["angle_threshold"]
+    if not (distance_exceeded or angle_exceeded):
+        return
+
+    if distance_exceeded and angle_exceeded:
+        deviation_type = "both"
+    elif distance_exceeded:
+        deviation_type = "distance"
+    else:
+        deviation_type = "angle"
+
+    LINES[LineType.DEVIATION].append(
+        Line(
+            id=state.current_id - 1,
+            type=LineType.DEVIATION,
+            start=(state.last_road_match_coord.latitude, state.last_road_match_coord.longitude),
+            end=(state.last_route_match_coord.latitude, state.last_route_match_coord.longitude),
+            timestamp=timestamp,
+            distance_threshold=last_threshold_info["distance_threshold"],
+            angle_threshold=last_threshold_info["angle_threshold"],
+            actual_distance=last_threshold_info["distance"],
+            actual_angle_diff=last_threshold_info["angle_diff"],
+            local_distance=last_threshold_info["local_distance"],
+            route_distance=last_threshold_info["route_distance"],
+            deviation_type=deviation_type,
+        )
+    )
 
 
 def update_timestamp_range(timestamp):
@@ -957,39 +768,6 @@ def parse_datetime(line, last_timestamp=None):
                     pass
 
     return None
-
-
-def infer_initial_timestamp(log_file_path):
-    filename = os.path.basename(log_file_path)
-    # Prefer yyyyMMdd_HHmmss / yyyyMMddHHmmss in filename when available.
-    m = re.search(r"(20\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01]))[_-]?([01]\d[0-5]\d[0-5]\d)", filename)
-    if m:
-        try:
-            return datetime.strptime(f"{m.group(1)}{m.group(2)}", "%Y%m%d%H%M%S")
-        except ValueError:
-            pass
-
-    # Fallback: yyyyMMdd (midnight)
-    m = re.search(r"(20\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01]))", filename)
-    if m:
-        try:
-            return datetime.strptime(m.group(1), "%Y%m%d")
-        except ValueError:
-            pass
-
-    # Legacy fallback: yymmdd
-    m = re.search(r"(\d{6})", filename)
-    if not m:
-        return None
-
-    yymmdd = m.group(1)
-    try:
-        year = 2000 + int(yymmdd[0:2])
-        month = int(yymmdd[2:4])
-        day = int(yymmdd[4:6])
-        return datetime(year, month, day, 0, 0, 0, 0)
-    except ValueError:
-        return None
 
 
 def normalize_sequential_ids():
@@ -1086,76 +864,6 @@ def recompute_timestamp_range_from_coords():
 
     min_timestamp = min(coord.timestamp for coord in all_coords)
     max_timestamp = max(coord.timestamp for coord in all_coords)
-
-
-def parse_road_match_state(line):
-    road_match_state = re.search(r"\[MM_RESULT\] State = (\w+)", line)
-    if road_match_state:
-        return road_match_state.group(1)
-    return None
-
-
-def parse_route_match_state(line):
-    route_match_state = re.search(r"navisdk :: \[\[MM\] : 4\] State = (\w+)", line)
-    if route_match_state:
-        return route_match_state.group(1)
-    return None
-
-
-def parse_threshold_info(line):
-    threshold_match = re.search(
-        r"shouldStayRoute distance:([\d\.]+), distanceThreshold:([\d\.]+), angleDiff:([\d\.]+), angleThreshold:([\d\.]+), localDistance:([\d\.]+), routeDistance:([\d\.]+)",
-        line,
-    )
-    if threshold_match:
-        return {
-            "distance": float(threshold_match.group(1)),
-            "distance_threshold": float(threshold_match.group(2)),
-            "angle_diff": float(threshold_match.group(3)),
-            "angle_threshold": float(threshold_match.group(4)),
-            "local_distance": float(threshold_match.group(5)),
-            "route_distance": float(threshold_match.group(6)),
-        }
-    return None
-
-
-def parse_set_route_information(line):
-    match = SET_ROUTE_INFORMATION_PATTERN.search(line)
-    if not match:
-        return None
-
-    link_id_raw = int(match.group(1))
-    link_id = int(match.group(2))
-    direction = int(match.group(3))
-    link_type = int(match.group(4))
-    optional_link_str_code = match.group(5)
-    optional_road_length = match.group(6)
-    vertex_size = int(match.group(7))
-    start_lat = int(match.group(8)) / 10000000.0
-    start_lon = int(match.group(9)) / 10000000.0
-    end_lat = int(match.group(10)) / 10000000.0
-    end_lon = int(match.group(11)) / 10000000.0
-
-    extra = {
-        "source": "setRouteInformation",
-        "link_id": link_id,
-        "link_id_raw": link_id_raw,
-        "dir": direction,
-        "link_type": link_type,
-        "vertex_size": vertex_size,
-    }
-    if optional_link_str_code is not None:
-        extra["link_str_code"] = int(optional_link_str_code)
-    if optional_road_length is not None:
-        extra["road_length"] = int(optional_road_length)
-
-    return {
-        "start_lat": start_lat,
-        "start_lon": start_lon,
-        "end_lat": end_lat,
-        "end_lon": end_lon,
-        "extra": extra,
-    }
 
 
 def parse_sdi_event(line, timestamp):
@@ -1288,52 +996,6 @@ def parse_parking_lot_event(line, timestamp):
         return True
 
     return False
-
-
-def parse_lane_ext(line, timestamp):
-    """[LANE_EXT] 로그에서 링크별 확장 차선수(lane -> ext)를 수집한다.
-
-    navisdk :: [[MM] : 4] [LANE_EXT] link[16446] lane:2 -> ext:3, dist:29.1, fB:0.353
-
-    같은 링크가 반복 출력되므로 링크당 1건으로 합치고, 관측 횟수와
-    최초/마지막 시각만 누적한다(마지막 값이 최종 상태).
-    """
-    global LANE_EXT_LINKS
-
-    match = LANE_EXT_PATTERN.search(line)
-    if not match:
-        return False
-
-    link_id = match.group(1)
-    lane = int(match.group(2))
-    ext = int(match.group(3))
-    dist = float(match.group(4)) if match.group(4) is not None else None
-    feedback = float(match.group(5)) if match.group(5) is not None else None
-    ts_ms = int(timestamp.timestamp() * 1000) if timestamp else 0
-
-    entry = LANE_EXT_LINKS.get(link_id)
-    if entry is None:
-        entry = {
-            "link_id": link_id,
-            "lane": lane,
-            "ext": ext,
-            "dist": dist,
-            "feedback": feedback,
-            "count": 0,
-            "first_timestamp_ms": ts_ms,
-            "last_timestamp_ms": ts_ms,
-        }
-        LANE_EXT_LINKS[link_id] = entry
-
-    entry["lane"] = lane
-    entry["ext"] = ext
-    if dist is not None:
-        entry["dist"] = dist
-    if feedback is not None:
-        entry["feedback"] = feedback
-    entry["count"] += 1
-    entry["last_timestamp_ms"] = ts_ms
-    return True
 
 
 def parse_guide_event(line, timestamp):
@@ -1514,45 +1176,6 @@ def parse_gp_guide_event(line, timestamp):
     return False
 
 
-def parse_tvas_header_info(line, previous_info=None):
-    info = dict(previous_info or {})
-    matched = False
-
-    match = TVAS_HEADER_ROUTE_OPT_PATTERN.search(line)
-    if match:
-        info["route_opt_code"] = int(match.group(1))
-        matched = True
-
-    match = TVAS_HEADER_SERVICE_CNT_PATTERN.search(line)
-    if match:
-        info["service_cnt"] = int(match.group(1))
-        matched = True
-
-    match = TVAS_HEADER_TOTAL_TIME_PATTERN.search(line)
-    if match:
-        info["total_time"] = int(match.group(1))
-        matched = True
-
-    match = TVAS_HEADER_TOTAL_DIST_PATTERN.search(line)
-    if match:
-        info["total_dist"] = int(match.group(1))
-        matched = True
-
-    if matched:
-        return info
-
-
-def parse_route_session_info(line):
-    match = TVAS_SERVER_SESSION_PATTERN.search(line)
-    if not match:
-        return None
-
-    return {
-        "session_id": match.group(1).strip(),
-        "error_code": match.group(2).strip(),
-    }
-
-
 def parse_route_request_points(line):
     """Collect per-request depart/waypoint/destination points (SK coordinates)."""
     match = ROUTE_REQ_WAYPOINT_PATTERN.search(line)
@@ -1612,66 +1235,6 @@ def attach_route_points_to_requests(coords):
 
         if ordered:
             coord['extra']['route_points'] = ordered
-
-
-def parse_gnss_mode_info(line):
-    event_match = GNSS_MODE_EVENT_PATTERN.search(line)
-    if event_match:
-        event_name = event_match.group(1).strip()
-        from_mode = event_match.group(2).strip()
-        to_mode = event_match.group(3).strip()
-        return {
-            "mode": to_mode,
-            "transition": {
-                "event": event_name,
-                "from": from_mode,
-                "to": to_mode,
-            },
-        }
-
-    inline_match = GNSS_MODE_INLINE_PATTERN.search(line)
-    if inline_match:
-        return {
-            "mode": inline_match.group(1).strip(),
-        }
-
-    return None
-
-
-def parse_candidate_link_score(line):
-    match = CANDIDATE_LINK_PATTERN.search(line or "")
-    if not match:
-        return None
-
-    return {
-        "link_id": int(match.group(1)),
-        "score": float(match.group(2)),
-        "base": float(match.group(3)),
-        "distancePenalty": float(match.group(4)),
-        "anglePenalty": float(match.group(5)),
-        "laneBonus": float(match.group(6)),
-        "adjustment": float(match.group(7)),
-        "distanceProjection": float(match.group(8)),  # p: distancePenalty
-        "distanceScore": float(match.group(9)),        # d: 실제 투영거리(m)
-        "laneWeight": float(match.group(10)),
-        "facilityBonus": float(match.group(11)),
-        "gyroAngle": float(match.group(12)),
-        "vehicleAngle": float(match.group(13)),
-        "lane": int(match.group(14)),
-    }
-    return previous_info
-
-
-def parse_link_extrapoint(line):
-    match = LINK_EXTRAPOINT_PATTERN.search(line or "")
-    if not match:
-        return None
-    return {
-        "link_id": int(match.group(1)),
-        "base": float(match.group(2)),
-        "mul": float(match.group(3)),
-        "score": float(match.group(4)),
-    }
 
 
 def write_data_to_csv(out_path=None):
@@ -1887,91 +1450,6 @@ def build_guide_event_markers():
     return markers
 
 
-def _route_links_by_session(lines):
-    """Group 'Route Info' lines per route session, ordered by log order."""
-    sessions = {}
-    for line in lines or []:
-        if line.get("type") != "Route Info":
-            continue
-        extra = line.get("extra") or {}
-        session_id = extra.get("route_session_id") or "unknown"
-        sessions.setdefault(session_id, []).append(line)
-    for session_lines in sessions.values():
-        session_lines.sort(key=lambda item: (item.get("extra") or {}).get("route_sequence") or 0)
-    return sessions
-
-
-def _drive_positions(coords):
-    """Timestamp-sorted vehicle positions used to place drive-time GP events."""
-    preferred = [
-        coord for coord in coords or []
-        if coord.get("type") == "DR-based" and coord.get("timestamp_ms")
-    ]
-    if not preferred:
-        preferred = [
-            coord for coord in coords or []
-            if coord.get("timestamp_ms") and coord.get("latitude") and coord.get("longitude")
-        ]
-    return sorted(preferred, key=lambda coord: coord["timestamp_ms"])
-
-
-def _nearest_position(positions, timestamp, max_gap_ms=10000):
-    """Closest vehicle position to a log timestamp, or None when too far away."""
-    if not positions or timestamp is None:
-        return None
-    target = int(timestamp.timestamp() * 1000)
-    low, high = 0, len(positions) - 1
-    best = None
-    best_gap = None
-    while low <= high:
-        mid = (low + high) // 2
-        gap = abs(positions[mid]["timestamp_ms"] - target)
-        if best_gap is None or gap < best_gap:
-            best_gap = gap
-            best = positions[mid]
-        if positions[mid]["timestamp_ms"] < target:
-            low = mid + 1
-        else:
-            high = mid - 1
-    if best_gap is not None and best_gap > max_gap_ms:
-        return None
-    return best
-
-
-def _map_vertex_end_to_link_ordinal(route_links, vertex_ends):
-    """Map TVAS route vertex indices to route link ordinals.
-
-    setRouteInformation logs the vertex count of every route link, so the end
-    vertex index of link k can be accumulated. Whether neighbouring links share
-    their boundary vertex is not stated in the log, so both layouts are tried and
-    the one that actually explains the logged vertexEnd values wins. Returns {}
-    when neither layout fits (e.g. the route link list was trimmed on reroute),
-    in which case GetRenderData GPs simply stay unpositioned.
-    """
-    sizes = [int((link.get("extra") or {}).get("vertex_size") or 0) for link in route_links]
-    wanted = set(vertex_ends)
-    if not sizes or not wanted:
-        return {}
-
-    best_mapping = {}
-    best_hits = -1
-    for shares_boundary in (True, False):
-        mapping = {}
-        cursor = 0
-        for ordinal, size in enumerate(sizes):
-            end = cursor + max(size, 1) - 1
-            mapping.setdefault(end, ordinal)
-            cursor = end if shares_boundary else end + 1
-        hits = sum(1 for vertex_end in wanted if vertex_end in mapping)
-        if hits > best_hits:
-            best_hits = hits
-            best_mapping = mapping
-
-    if best_hits < len(wanted) * 0.9:
-        return {}
-    return best_mapping
-
-
 def _lane_color_by_gp_index():
     """Drive-time lane bubble colours observed per GP index."""
     by_gp = {}
@@ -1985,94 +1463,6 @@ def _lane_color_by_gp_index():
         if event["lane_color"] not in bucket["lane_colors"]:
             bucket["lane_colors"].append(event["lane_color"])
     return by_gp
-
-
-def _merge_gp_records_by_link_ordinal(route_links, entries, render_points):
-    """Tie GP log records to route link ordinals.
-
-    ServiceDataCollect carries the map link id, so it is matched against the
-    Route Info link list with a forward-only cursor (a route may pass the same
-    link twice). GetRenderData only has a route vertex index and is merged on
-    top of the matching link when that index can be resolved. Records that
-    cannot be tied to any route link are returned separately.
-    """
-    merged = {}
-    floating = []
-
-    route_link_ids = [(link.get("extra") or {}).get("link_id") for link in route_links]
-    logged_ids = [entry.get("link_id") for entry in entries if entry.get("link_id") is not None]
-    id_matches = sum(1 for value in logged_ids if value in set(route_link_ids))
-    # For TVAS routes pstLinkListInfo[i].m_nLinkID is the route link ordinal, not a
-    # map link id, so the logged values come out as 0,1,2,... Decide by what the
-    # values actually are rather than assuming one of the two.
-    treat_as_ordinal = (
-        id_matches == 0
-        and logged_ids
-        and min(logged_ids) == 0
-        and max(logged_ids) < max(len(route_links), len(logged_ids))
-        and len(set(logged_ids)) == len(logged_ids)
-    )
-
-    cursor = 0
-    for entry in entries:
-        link_id = entry.get("link_id")
-        ordinal = None
-        if treat_as_ordinal:
-            if link_id is not None and 0 <= link_id < len(route_links):
-                ordinal = link_id
-        else:
-            for candidate in range(cursor, len(route_links)):
-                if route_link_ids[candidate] == link_id:
-                    ordinal = candidate
-                    cursor = candidate + 1
-                    break
-            if ordinal is None:
-                # The logged route link list can be trimmed on reroute; fall back to
-                # a full scan without moving the cursor.
-                for candidate in range(0, len(route_links)):
-                    if route_link_ids[candidate] == link_id:
-                        ordinal = candidate
-                        break
-        record = dict(entry)
-        record["link_ordinal_from_log"] = bool(treat_as_ordinal)
-        record["position_source"] = (
-            "route link ordinal (nLinkID)" if treat_as_ordinal else "route link id"
-        )
-        if ordinal is None:
-            floating.append(record)
-        else:
-            merged[ordinal] = record
-
-    vertex_map = _map_vertex_end_to_link_ordinal(
-        route_links, [point["vertex_end"] for point in render_points]
-    )
-    for point in render_points:
-        ordinal = vertex_map.get(point["vertex_end"])
-        render_info = {
-            "render_gp_index": point["gp_index"],
-            "render_gp_type": point["gp_type"],
-            "render_turn_code": point["turn_code"],
-            "vertex_end": point["vertex_end"],
-        }
-        if ordinal is not None and ordinal in merged:
-            merged[ordinal].update(render_info)
-            continue
-        record = {
-            "gp_type": point["gp_type"],
-            "gp_type_flags": point["gp_type_flags"],
-            "turn_code": point["turn_code"],
-            "route_session_id": point["route_session_id"],
-            "route_session_index": point["route_session_index"],
-            "timestamp": point["timestamp"],
-            "position_source": "route vertex index",
-            **render_info,
-        }
-        if ordinal is None:
-            floating.append(record)
-        else:
-            merged[ordinal] = record
-
-    return merged, floating
 
 
 def _observed_link_positions(coords):
@@ -2309,67 +1699,6 @@ def build_gp_lane_color_markers(coords):
     return markers
 
 
-def build_lane_bubble_markers(gp_markers):
-    """Lane bubbles, derived from the upstream ServiceDataCollect logs only.
-
-    A lane bubble is drawn wherever a GP carries GPTYPE_TURN. Everything shown in
-    it comes from logs that exist upstream:
-      colour     <- nVoiceCode via ToLaneColor()   ('ServiceDataCollect #2')
-      차로 힌트  <- nVoiceCode (IDV_RG_* lane codes, e.g. 97 = 오른쪽 1개 차로)
-      회전       <- nTurnCode
-      교차로 이미지 <- bCrossImage + nGPType & EXTCROSSTURN
-    Per-lane arrows/highlight are NOT included: no upstream log carries
-    nLaneTurnInfo[] / nLaneAvailable[], so they cannot be reconstructed.
-    """
-    markers = []
-    marker_id = 70000
-
-    for gp in gp_markers or []:
-        extra = gp.get("extra") or {}
-        gp_type = int(extra.get("gp_type") or 0)
-        if not (gp_type & 0x00010000):   # GPTYPE_TURN — 버블은 회전 GP에서만 나온다
-            continue
-
-        voice_code = extra.get("voice_code")
-        lane_color = lane_color_from_voice_code(voice_code)
-        # The drive-time log, when present, is the ground truth for the colour.
-        observed = extra.get("lane_colors") or []
-        markers.append({
-            "id": marker_id,
-            "dlt_id": None,
-            "type": "GP Lane Bubble",
-            "latitude": gp["latitude"],
-            "longitude": gp["longitude"],
-            "heading": None,
-            "extra": {
-                "lane_bubble": True,
-                "gp_index": extra.get("gp_index"),
-                "link_index": extra.get("link_index"),
-                "link_id": extra.get("link_id"),
-                "turn_code": extra.get("turn_code"),
-                "gp_type": gp_type,
-                "gp_type_flags": extra.get("gp_type_flags"),
-                "voice_code": voice_code,
-                "lane_color": lane_color,
-                "lane_color_source": "nVoiceCode",
-                "lane_colors_observed": observed,
-                "has_cross_image": bool(gp_type & 0x00020000),
-                "cross_image": extra.get("cross_image"),
-                "cross_image_raw": extra.get("cross_image_raw"),
-                "cross_img_code": extra.get("cross_img_code"),
-                "cross_img_available": extra.get("cross_img_available"),
-                "route_session_id": extra.get("route_session_id"),
-            },
-            "timestamp_ms": gp.get("timestamp_ms"),
-            "timestamp_str": gp.get("timestamp_str"),
-            "color": LANE_COLOR_HEX.get(lane_color, "#64748b"),
-            "fill": True,
-        })
-        marker_id += 1
-
-    return markers
-
-
 def attach_guide_info_to_route_lines(lines):
     """Attach the GP / turnCode information of each route link to its Route Info line.
 
@@ -2484,107 +1813,8 @@ def build_runtime_payload():
         "max_id": max_id,
         "coords": all_coords,
         "parking_lot_state_markers": parking_lot_state_markers,
-        "lane_ext_links": sorted(LANE_EXT_LINKS.values(), key=lambda e: e["link_id"]),
         "lines": all_lines,
     }
-
-
-def build_parking_lot_state_markers(coords):
-    """Extract DR-based coordinates with parking state and format as markers."""
-    markers = []
-    marker_id_counter = 30000  # Start from 30000 to avoid conflicts
-
-    dr_based_count = 0
-    with_parking_state = 0
-
-    for coord in coords:
-        if coord.get('type') != 'DR-based':
-            continue
-
-        dr_based_count += 1
-        parking_state = coord.get('extra', {}).get('parking_state')
-        if not parking_state:
-            continue
-
-        with_parking_state += 1
-
-        # Set color based on parking state
-        if parking_state == 'ParkingLot':
-            color = '#808080'  # 회색 - 주차장 중
-        elif parking_state in ('EnterCandidate', 'EnterReady'):
-            color = '#ff1493'  # 분홍색 - 진입 후보/준비
-        else:
-            continue  # Skip unknown states
-
-        marker = {
-            "id": marker_id_counter,
-            "dlt_id": coord.get('dlt_id'),
-            "type": "Parking Lot State",
-            "latitude": coord.get("latitude"),
-            "longitude": coord.get("longitude"),
-            "heading": coord.get("heading"),
-            "color": color,
-            "fill": True,
-            "timestamp_ms": coord.get("timestamp_ms"),
-            "timestamp_str": coord.get("timestamp_str"),
-            "extra": {
-                "parking_state": parking_state,
-                "parking_candidate_count": coord.get('extra', {}).get('parking_candidate_count', 0),
-                "parking_best_link_id": coord.get('extra', {}).get('parking_best_link_id', -1),
-            }
-        }
-        markers.append(marker)
-        marker_id_counter += 1
-
-    import sys
-    print(f'[DEBUG] build_parking_lot_state_markers: DR-based={dr_based_count}, with_parking_state={with_parking_state}, markers created={len(markers)}', file=sys.stderr)
-    return markers
-
-
-def build_route_info_markers(lines):
-    """Convert Route Info lines to marker coordinates for displaying route details."""
-    markers = []
-    marker_id_counter = 40000  # Start from 40000 to avoid conflicts
-
-    if not lines:
-        return markers
-
-    route_info_lines = [line for line in lines if line.get('type') == 'Route Info']
-
-    for line in route_info_lines:
-        start_lat, start_lon = line.get('start', (None, None))
-        end_lat, end_lon = line.get('end', (None, None))
-
-        if start_lat is None or start_lon is None:
-            continue
-
-        marker = {
-            "id": marker_id_counter,
-            "dlt_id": None,
-            "type": "Route Info",
-            "latitude": start_lat,
-            "longitude": start_lon,
-            "heading": None,
-            "color": "#e91e63",  # Deep pink for route info
-            "fill": False,
-            "timestamp_ms": line.get('timestamp_ms'),
-            "timestamp_str": line.get('timestamp_str', ''),
-            "extra": {
-                "route_session_id": line.get('extra', {}).get('route_session_id'),
-                "link_id": line.get('extra', {}).get('link_id'),
-                "route_start_lat": start_lat,
-                "route_start_lon": start_lon,
-                "route_end_lat": end_lat,
-                "route_end_lon": end_lon,
-                "route_session_index": line.get('extra', {}).get('route_session_index'),
-                "route_sequence": line.get('extra', {}).get('route_sequence'),
-                "guide": line.get('extra', {}).get('guide'),
-            }
-        }
-        markers.append(marker)
-        marker_id_counter += 1
-
-    return markers
 
 
 def attach_parking_state_to_coords(coords):
@@ -2648,3 +1878,14 @@ def write_data_to_json(out_path=None):
             ensure_ascii=False,
             indent=2,
         )
+
+
+_COORD_HANDLERS = {
+    CoordType.GNSS1: _handle_gnss1_coord,
+    CoordType.GNSS2: _handle_gnss2_coord,
+    CoordType.DR: _handle_dr_coord,
+    CoordType.ROAD_MATCH: _handle_road_match_coord,
+    CoordType.ROUTE_MATCH: _handle_route_match_coord,
+    CoordType.VPM: _handle_vpm_coord,
+    CoordType.REQUEST: _handle_request_coord,
+}

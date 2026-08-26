@@ -9,7 +9,6 @@ class ParseResult:
     max_id: int
     coords: list[dict[str, Any]]
     parking_lot_state_markers: list[dict[str, Any]]
-    lane_ext_links: list[dict[str, Any]]
     lines: list[dict[str, Any]]
 
     @staticmethod
@@ -20,7 +19,6 @@ class ParseResult:
             max_id=int(payload.get("max_id", 1)),
             coords=list(payload.get("coords", [])),
             parking_lot_state_markers=list(payload.get("parking_lot_state_markers", [])),
-            lane_ext_links=list(payload.get("lane_ext_links", [])),
             lines=list(payload.get("lines", [])),
         )
 
@@ -31,6 +29,5 @@ class ParseResult:
             "max_id": self.max_id,
             "coords": self.coords,
             "parking_lot_state_markers": self.parking_lot_state_markers,
-            "lane_ext_links": self.lane_ext_links,
             "lines": self.lines,
         }
