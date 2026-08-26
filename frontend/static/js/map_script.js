@@ -5,6 +5,9 @@ const roadCanvasRendererNode = L.canvas({ padding: 0.25 });
 // 차로폭 박스 전용 렌더러 — 링크 중심선보다 아래(낮은 z-index 팬)에 그리기 위해 별도 팬에 고정.
 const roadCanvasRendererLane = L.canvas({ padding: 0.25, pane: 'roadLaneWidthPane' });
 const roadCanvasRendererLane2 = L.canvas({ padding: 0.25, pane: 'roadLaneWidth2Pane' });
+const roadCanvasRendererLaneExt = L.canvas({ padding: 0.25, pane: 'roadLaneWidthExtPane' });
+const roadCanvasRendererSegMid = L.canvas({ padding: 0.25, pane: 'roadSegmentMidlinePane' });
+const roadCanvasRendererSegFb  = L.canvas({ padding: 0.25, pane: 'roadSegmentFbPane' });
 
 
 const baseLayers = {
@@ -69,6 +72,9 @@ const ROAD_NODE_LAYER = 'Road Node';
 const ROAD_LINK_VERTEX_LAYER = 'Road Link Vertex';
 const LANE_WIDTH_LAYER = 'Lane Width';
 const LANE_WIDTH_LAYER_2 = 'Lane Width 2';
+// [LANE_EXT] 로그로 확장된 차선수가 실제 적용된 링크만 그리는 레이어.
+const LANE_WIDTH_EXT_LAYER = 'Lane Width Ext';
+const SEGMENT_FB_LAYER = 'Segment FB (0.25-0.75)';
 const ROUTE_INFO_MARKER_LAYER = 'Route Info Markers';
 const TMAP_ROUTE_LAYER = 'Tmap Route';
 const TMAP_WAYPOINT_LAYER = 'Tmap Waypoints';
@@ -79,6 +85,10 @@ let roadNodeGeoLayer = null;
 let roadLinkVertexGeoLayer = null;
 let roadLaneWidthGeoLayer = null;
 let roadLaneWidth2GeoLayer = null;
+let roadLaneWidthExtGeoLayer = null;
+let roadSegmentMidlineGeoLayer = null;
+let roadSegmentFbGeoLayer = null;
+const segmentFbConfig = { color: '#f97316', weight: 3, opacity: 0.45, pointRadius: 4 };
 // 차로폭 박스는 이 줌 이상에서만 그린다.
 const LANE_WIDTH_MIN_ZOOM = 17;
 // 링크에서 유도한 차로폭(한 차선 폭) 시각화 설정.
@@ -99,8 +109,19 @@ const DEFAULT_LANE_WIDTH_CONFIG_2 = {
     extendedColor: '#a855f7',
     fillOpacity: 0.28
 };
+// 확장 차선수(LANE_EXT) 레이어 — 로그에 [LANE_EXT] 가 찍힌 링크만, ext 차선수로 박스를 그린다(기본 OFF).
+const DEFAULT_LANE_WIDTH_CONFIG_EXT = {
+    normal: 3.0,
+    extended: 3.5,
+    normalColor: '#facc15',
+    extendedColor: '#ef4444',
+    fillOpacity: 0.32
+};
 let laneWidthConfig = { ...DEFAULT_LANE_WIDTH_CONFIG };
 let laneWidthConfig2 = { ...DEFAULT_LANE_WIDTH_CONFIG_2 };
+let laneWidthConfigExt = { ...DEFAULT_LANE_WIDTH_CONFIG_EXT };
+// LINK_ID(문자열) -> { lane, ext, dist, feedback, count } — 파싱 결과의 lane_ext_links.
+let laneExtByLinkId = new Map();
 // 마지막으로 렌더된(뷰포트 내) 링크 피처 캐시 — 차로폭 값 변경 시 워커 재조회 없이 즉시 다시 그림.
 let lastRenderedRoadLinks = [];
 let roadLinkFeatureCount = 0;
@@ -261,7 +282,7 @@ function writeJsonSetting(key, value) {
 
 // Bumped on perf-relevant frontend changes; logged at startup so a stale
 // cached page is immediately identifiable from the console.
-const FRONTEND_BUILD = 'perf-cull-v3';
+const FRONTEND_BUILD = 'lane-ext-v1';
 
 function init() {
     console.log(`[positioning-tool] frontend build: ${FRONTEND_BUILD}`);
@@ -544,9 +565,11 @@ function renderFromCurrentData() {
     focusOnInitialView();
     updateMap();
 
-    // Visualize guide events from log (C2X, Accident)
+    // Visualize guide events from log (C2X, Accident) and route guide points (GP)
     setTimeout(() => {
         visualizeGuideEventsFromLog();
+        visualizeGpGuideFromLog();
+        visualizeLaneBubblesFromLog();
     }, 100);
 }
 
@@ -2153,6 +2176,7 @@ function initUploadPanel() {
     bind('clearShpButton', 'click', handleClearRoadShape);
     bind('addLinkStyleRuleButton', 'click', handleAddLinkStyleRule);
     bind('applyNodeStyleButton', 'click', applyRoadNodeStyleConfig);
+    bind('applyVertexStyleButton', 'click', applyVertexStyleConfig);
     bind('layerCtxClose', 'click', closeLayerContextMenu);
     initLayerContextMenuDrag();
 
@@ -2179,6 +2203,15 @@ function initUploadPanel() {
     if (nodeStrokeInput) nodeStrokeInput.value = roadNodeStyleConfig.stroke;
     if (nodeRadiusInput) nodeRadiusInput.value = String(roadNodeStyleConfig.radius);
     if (nodeWeightInput) nodeWeightInput.value = String(roadNodeStyleConfig.weight);
+
+    const vertexColorInput = document.getElementById('vertexColorInput');
+    const vertexStrokeInput = document.getElementById('vertexStrokeInput');
+    const vertexRadiusInput = document.getElementById('vertexRadiusInput');
+    const vertexWeightInput = document.getElementById('vertexWeightInput');
+    if (vertexColorInput) vertexColorInput.value = roadVertexStyleConfig.color;
+    if (vertexStrokeInput) vertexStrokeInput.value = roadVertexStyleConfig.stroke;
+    if (vertexRadiusInput) vertexRadiusInput.value = String(roadVertexStyleConfig.radius);
+    if (vertexWeightInput) vertexWeightInput.value = String(roadVertexStyleConfig.weight);
 
     const exportBtn = document.getElementById('exportHtmlMenuButton');
     if (exportBtn) exportBtn.disabled = !(Array.isArray(markersData) && markersData.length > 0);
@@ -2299,12 +2332,14 @@ function loadLaneWidthConfigsFromStorage() {
     const raw = readJsonSetting(LANE_WIDTH_CONFIG_STORAGE_KEY, null);
     Object.assign(laneWidthConfig, normalizeLaneWidthConfig(raw?.lane1, DEFAULT_LANE_WIDTH_CONFIG));
     Object.assign(laneWidthConfig2, normalizeLaneWidthConfig(raw?.lane2, DEFAULT_LANE_WIDTH_CONFIG_2));
+    Object.assign(laneWidthConfigExt, normalizeLaneWidthConfig(raw?.laneExt, DEFAULT_LANE_WIDTH_CONFIG_EXT));
 }
 
 function saveLaneWidthConfigsToStorage() {
     writeJsonSetting(LANE_WIDTH_CONFIG_STORAGE_KEY, {
         lane1: { ...laneWidthConfig },
-        lane2: { ...laneWidthConfig2 }
+        lane2: { ...laneWidthConfig2 },
+        laneExt: { ...laneWidthConfigExt }
     });
 }
 
@@ -2781,19 +2816,23 @@ function refreshRoadLayerStyles() {
     if (roadNodeGeoLayer) {
         roadNodeGeoLayer.eachLayer((layer) => {
             if (typeof layer.setStyle !== 'function') return;
-            layer.setStyle(getRoadNodeStyle({
+            const style = getRoadNodeStyle({
                 ...(layer?.feature?.properties || {}),
                 __featureRef: layer?.feature || null
-            }));
+            });
+            layer.setStyle(style);
+            if (typeof layer.setRadius === 'function') layer.setRadius(style.radius);
         });
     }
     if (roadLinkVertexGeoLayer) {
         roadLinkVertexGeoLayer.eachLayer((layer) => {
             if (typeof layer.setStyle !== 'function') return;
-            layer.setStyle(getRoadLinkVertexStyle({
+            const style = getRoadLinkVertexStyle({
                 ...(layer?.feature?.properties || {}),
                 __featureRef: layer?.feature || null
-            }));
+            });
+            layer.setStyle(style);
+            if (typeof layer.setRadius === 'function') layer.setRadius(style.radius);
         });
     }
 }
@@ -2914,26 +2953,44 @@ function applyRoadNodeStyleConfig() {
     const radiusInput = document.getElementById('nodeRadiusInput');
     const weightInput = document.getElementById('nodeWeightInput');
 
-    const color = String(colorInput?.value || '#22c3d6').trim() || '#22c3d6';
-    const stroke = String(strokeInput?.value || '#0f8aa6').trim() || '#0f8aa6';
+    const color = String(colorInput?.value || DEFAULT_ROAD_NODE_STYLE.color).trim() || DEFAULT_ROAD_NODE_STYLE.color;
+    const stroke = String(strokeInput?.value || DEFAULT_ROAD_NODE_STYLE.stroke).trim() || DEFAULT_ROAD_NODE_STYLE.stroke;
     const radiusRaw = Number(radiusInput?.value);
     const weightRaw = Number(weightInput?.value);
 
-    const nextStyle = {
+    Object.assign(roadNodeStyleConfig, {
         color,
         stroke,
-        radius: Number.isFinite(radiusRaw) ? Math.max(1, Math.min(12, radiusRaw)) : 3.2,
-        weight: Number.isFinite(weightRaw) ? Math.max(0, Math.min(5, weightRaw)) : 1
-    };
-    if (roadStyleContextLayerName === ROAD_LINK_VERTEX_LAYER) {
-        Object.assign(roadVertexStyleConfig, nextStyle);
-    } else {
-        Object.assign(roadNodeStyleConfig, nextStyle);
-    }
+        radius: Number.isFinite(radiusRaw) ? Math.max(1, Math.min(12, radiusRaw)) : DEFAULT_ROAD_NODE_STYLE.radius,
+        weight: Number.isFinite(weightRaw) ? Math.max(0, Math.min(5, weightRaw)) : DEFAULT_ROAD_NODE_STYLE.weight
+    });
     saveRoadPointStylesToStorage();
     refreshRoadLayerStyles();
     if (roadShapeLoaded) scheduleRoadViewportQuery();
-    setUploadProgress(100, `${roadStyleContextLayerName === ROAD_LINK_VERTEX_LAYER ? 'Vertex' : '노드'} 스타일 적용 완료`, false);
+    setUploadProgress(100, '노드 스타일 적용 완료', false);
+}
+
+function applyVertexStyleConfig() {
+    const colorInput = document.getElementById('vertexColorInput');
+    const strokeInput = document.getElementById('vertexStrokeInput');
+    const radiusInput = document.getElementById('vertexRadiusInput');
+    const weightInput = document.getElementById('vertexWeightInput');
+
+    const color = String(colorInput?.value || DEFAULT_ROAD_VERTEX_STYLE.color).trim() || DEFAULT_ROAD_VERTEX_STYLE.color;
+    const stroke = String(strokeInput?.value || DEFAULT_ROAD_VERTEX_STYLE.stroke).trim() || DEFAULT_ROAD_VERTEX_STYLE.stroke;
+    const radiusRaw = Number(radiusInput?.value);
+    const weightRaw = Number(weightInput?.value);
+
+    Object.assign(roadVertexStyleConfig, {
+        color,
+        stroke,
+        radius: Number.isFinite(radiusRaw) ? Math.max(1, Math.min(12, radiusRaw)) : DEFAULT_ROAD_VERTEX_STYLE.radius,
+        weight: Number.isFinite(weightRaw) ? Math.max(0, Math.min(5, weightRaw)) : DEFAULT_ROAD_VERTEX_STYLE.weight
+    });
+    saveRoadPointStylesToStorage();
+    refreshRoadLayerStyles();
+    if (roadShapeLoaded) scheduleRoadViewportQuery();
+    setUploadProgress(100, 'Vertex 스타일 적용 완료', false);
 }
 
 function initToolPanels() {
@@ -3124,6 +3181,7 @@ function handleUploadAndParse() {
 
         markersData = response.coords || [];
         parkingLotStateMarkersData = response.parking_lot_state_markers || [];
+        setLaneExtLinks(response.lane_ext_links);
         linesData = response.lines || [];
         console.log('[DEBUG] Loaded data:', {
             markersCount: markersData.length,
@@ -3825,6 +3883,9 @@ function ensureRoadInteractionPanes() {
     // Lane-width boxes sit below the link canvas (overlayPane, z=400) so the centerline stays on top.
     ensurePane('roadLaneWidthPane', 350);
     ensurePane('roadLaneWidth2Pane', 351);
+    ensurePane('roadLaneWidthExtPane', 352);
+    ensurePane('roadSegmentMidlinePane', 352);
+    ensurePane('roadSegmentFbPane', 553);  // road link(550)보다 위
     ensurePane('roadLinkPane', 550);
     ensurePane('roadNodePane', 551);
     ensurePane('roadLinkVertexPane', 552);
@@ -3837,6 +3898,7 @@ function getRoadPaneName(layerName) {
     if (layerName === ROAD_NODE_LAYER) return 'roadNodePane';
     if (layerName === LANE_WIDTH_LAYER) return 'roadLaneWidthPane';
     if (layerName === LANE_WIDTH_LAYER_2) return 'roadLaneWidth2Pane';
+    if (layerName === LANE_WIDTH_EXT_LAYER) return 'roadLaneWidthExtPane';
     return null;
 }
 
@@ -3977,6 +4039,40 @@ function ensureRoadShapeLayers() {
         if (g2 && map.hasLayer(g2)) map.removeLayer(g2);
     }
 
+    if (!roadSegmentMidlineGeoLayer) {
+        roadSegmentMidlineGeoLayer = L.geoJSON(null, {
+            pane: 'roadSegmentMidlinePane',
+            renderer: roadCanvasRendererSegMid,
+            interactive: false,
+            style: () => ({
+                pane: 'roadSegmentMidlinePane',
+                color: '#1e40af',
+                weight: 1.5,
+                opacity: 0.8,
+                dashArray: '4 6',
+                fill: false
+            })
+        });
+        // Lane Width 레이어 그룹에 함께 추가 (같이 켜고 끄도록)
+        addLayerToGroup(LANE_WIDTH_LAYER, roadSegmentMidlineGeoLayer);
+        // addLayerToGroup이 options.pane을 덮어쓰므로 복원
+        roadSegmentMidlineGeoLayer.options.pane = 'roadSegmentMidlinePane';
+    }
+
+    if (!roadLaneWidthExtGeoLayer) {
+        roadLaneWidthExtGeoLayer = L.geoJSON(null, {
+            pane: 'roadLaneWidthExtPane',
+            renderer: roadCanvasRendererLaneExt,
+            interactive: false,
+            style: (feature) => getLaneWidthStyle(feature?.properties || {}, laneWidthConfigExt)
+        });
+        addLayerToGroup(LANE_WIDTH_EXT_LAYER, roadLaneWidthExtGeoLayer);
+        // 확장 차선수 레이어도 기본 OFF
+        activeGroups.delete(LANE_WIDTH_EXT_LAYER);
+        const gExt = featureGroups[LANE_WIDTH_EXT_LAYER];
+        if (gExt && map.hasLayer(gExt)) map.removeLayer(gExt);
+    }
+
     if (!roadNodeGeoLayer) {
         roadNodeGeoLayer = L.geoJSON(null, {
             pane: 'roadNodePane',
@@ -4020,11 +4116,48 @@ function ensureRoadShapeLayers() {
         addLayerToGroup(ROAD_LINK_VERTEX_LAYER, roadLinkVertexGeoLayer);
     }
 
+    if (!roadSegmentFbGeoLayer) {
+        roadSegmentFbGeoLayer = L.geoJSON(null, {
+            pane: 'roadSegmentFbPane',
+            renderer: roadCanvasRendererSegFb,
+            interactive: false,
+            style: () => ({
+                pane: 'roadSegmentFbPane',
+                color: segmentFbConfig.color,
+                weight: segmentFbConfig.weight,
+                opacity: segmentFbConfig.opacity,
+                fill: false
+            }),
+            pointToLayer: (feature, latlng) => {
+                const r = Math.max(2, segmentFbConfig.weight / 2);
+                const darker = darkenHexColor(segmentFbConfig.color, 0.3);
+                return L.circleMarker(latlng, {
+                    pane: 'roadSegmentFbPane',
+                    renderer: roadCanvasRendererSegFb,
+                    radius: r,
+                    color: darker,
+                    weight: segmentFbConfig.weight,
+                    fillColor: darker,
+                    fillOpacity: Math.min(1, segmentFbConfig.opacity + 0.3),
+                    opacity: Math.min(1, segmentFbConfig.opacity + 0.3)
+                });
+            }
+        });
+        addLayerToGroup(SEGMENT_FB_LAYER, roadSegmentFbGeoLayer);
+        roadSegmentFbGeoLayer.options.pane = 'roadSegmentFbPane';
+        // 기본 OFF
+        activeGroups.delete(SEGMENT_FB_LAYER);
+        const fbGroup = featureGroups[SEGMENT_FB_LAYER];
+        if (fbGroup && map.hasLayer(fbGroup)) map.removeLayer(fbGroup);
+    }
+
     if (!layerOrder.includes(ROAD_LINK_LAYER)) layerOrder.push(ROAD_LINK_LAYER);
     if (!layerOrder.includes(ROAD_NODE_LAYER)) layerOrder.push(ROAD_NODE_LAYER);
     if (!layerOrder.includes(ROAD_LINK_VERTEX_LAYER)) layerOrder.push(ROAD_LINK_VERTEX_LAYER);
+    if (!layerOrder.includes(SEGMENT_FB_LAYER)) layerOrder.push(SEGMENT_FB_LAYER);
     if (!layerOrder.includes(LANE_WIDTH_LAYER)) layerOrder.push(LANE_WIDTH_LAYER);
     if (!layerOrder.includes(LANE_WIDTH_LAYER_2)) layerOrder.push(LANE_WIDTH_LAYER_2);
+    if (!layerOrder.includes(LANE_WIDTH_EXT_LAYER)) layerOrder.push(LANE_WIDTH_EXT_LAYER);
     activeGroups.add(ROAD_LINK_LAYER);
     activeGroups.add(ROAD_NODE_LAYER);
     activeGroups.add(ROAD_LINK_VERTEX_LAYER);
@@ -4036,8 +4169,45 @@ function ensureRoadShapeLayers() {
 function laneLayerEntries() {
     return [
         { name: LANE_WIDTH_LAYER, layer: roadLaneWidthGeoLayer, config: laneWidthConfig },
-        { name: LANE_WIDTH_LAYER_2, layer: roadLaneWidth2GeoLayer, config: laneWidthConfig2 }
+        { name: LANE_WIDTH_LAYER_2, layer: roadLaneWidth2GeoLayer, config: laneWidthConfig2 },
+        // 확장 차선수 레이어: [LANE_EXT] 로그가 있는 링크만, ext 차선수로 그린다.
+        { name: LANE_WIDTH_EXT_LAYER, layer: roadLaneWidthExtGeoLayer, config: laneWidthConfigExt, laneExtOnly: true }
     ];
+}
+
+// LINK_ID 비교용 키 — 숫자로 읽히면 숫자 표기를 통일한다('16446.0'/' 16446' -> '16446').
+function normalizeLinkKey(value) {
+    if (value === null || value === undefined) return null;
+    const text = String(value).trim();
+    if (text === '') return null;
+    const num = Number(text);
+    return Number.isFinite(num) ? String(num) : text;
+}
+
+// 파싱 응답의 lane_ext_links(확장 차선수 적용 로그)를 LINK_ID 인덱스로 적재한다.
+function setLaneExtLinks(entries) {
+    laneExtByLinkId = new Map();
+    (Array.isArray(entries) ? entries : []).forEach((entry) => {
+        const linkKey = normalizeLinkKey(entry?.link_id);
+        const ext = Number(entry?.ext);
+        if (linkKey === null || !Number.isFinite(ext) || ext < 1) return;
+        laneExtByLinkId.set(linkKey, {
+            lane: Number(entry.lane),
+            ext,
+            dist: Number(entry.dist),
+            feedback: Number(entry.feedback),
+            count: Number(entry.count) || 0
+        });
+    });
+    refreshLaneWidthLayer();
+}
+
+// LINK_ID 로 [LANE_EXT] 로그 항목을 찾는다(없으면 null).
+function laneExtEntryForProps(props) {
+    if (!laneExtByLinkId || laneExtByLinkId.size === 0) return null;
+    const linkKey = normalizeLinkKey(pickRoadLinkId(props));
+    if (linkKey === null) return null;
+    return laneExtByLinkId.get(linkKey) || null;
 }
 
 // 링크의 차선수(LANE, 최소 1). 파싱 불가 시 1로 간주.
@@ -4048,11 +4218,13 @@ function laneCountForProps(props) {
 
 // 박스 반폭(중심선→가장자리) = ceil(max(1, 차선수)/2) * (타입별 한 차선 폭).
 // roadCate <= 1 이면 확장(EXTENDED_LANE_WIDTH), 그 외 기본(LANE_WIDTH). 차선수/2는 올림.
-function laneWidthForProps(props, config) {
+function laneWidthForProps(props, config, laneCountOverride = null) {
     const roadCate = toRoadInt(findRoadPropValue(props, 'ROAD_CATE'));
     const extended = roadCate !== null && roadCate <= 1;
     const oneLaneWidth = extended ? Number(config.extended) : Number(config.normal);
-    const laneCount = laneCountForProps(props);
+    const laneCount = (Number.isFinite(laneCountOverride) && laneCountOverride >= 1)
+        ? Math.floor(laneCountOverride)
+        : laneCountForProps(props);
     const halfLaneCount = Math.ceil(laneCount / 2); // 소수점 올림
     const halfWidth = halfLaneCount * oneLaneWidth;  // 미터
     return { halfWidth, oneLaneWidth, laneCount, extended };
@@ -4109,15 +4281,20 @@ function laneRectCornersForSegment(a, b, halfWidthMeters) {
 }
 
 // 링크 폴리라인들을 세그먼트별 차로폭 사각형 폴리곤 피처로 변환(주어진 config 기준).
-function buildLaneWidthFeatures(linkFeatures, config) {
+function buildLaneWidthFeatures(linkFeatures, config, options = {}) {
     const out = [];
     const sourceLinks = Array.isArray(linkFeatures) ? linkFeatures : [];
+    const laneExtOnly = options.laneExtOnly === true;
 
     sourceLinks.forEach((feature) => {
         const geometry = feature?.geometry;
         const props = feature?.properties || {};
         if (!geometry) return;
-        const { halfWidth, oneLaneWidth, laneCount, extended } = laneWidthForProps(props, config);
+        // 확장 차선수 레이어는 [LANE_EXT] 로그가 남은 링크만 대상으로 한다.
+        const laneExtEntry = laneExtOnly ? laneExtEntryForProps(props) : null;
+        if (laneExtOnly && !laneExtEntry) return;
+        const laneCountOverride = laneExtEntry ? Number(laneExtEntry.ext) : null;
+        const { halfWidth, oneLaneWidth, laneCount, extended } = laneWidthForProps(props, config, laneCountOverride);
         if (!Number.isFinite(halfWidth) || halfWidth <= 0) return;
 
         const linkId = pickRoadLinkId(props);
@@ -4138,6 +4315,8 @@ function buildLaneWidthFeatures(linkFeatures, config) {
                         LANE: laneCount,
                         ONE_LANE_WIDTH_M: oneLaneWidth,
                         HALF_WIDTH_M: halfWidth,
+                        LANE_EXT: laneExtEntry ? laneExtEntry.ext : undefined,
+                        LANE_EXT_BASE: laneExtEntry ? laneExtEntry.lane : undefined,
                         __laneExtended: extended
                     }
                 });
@@ -4154,19 +4333,125 @@ function buildLaneWidthFeatures(linkFeatures, config) {
     return out;
 }
 
+function darkenHexColor(hex, amount) {
+    const n = parseInt(hex.replace('#', ''), 16);
+    const r = Math.max(0, Math.round(((n >> 16) & 0xff) * (1 - amount)));
+    const g = Math.max(0, Math.round(((n >> 8)  & 0xff) * (1 - amount)));
+    const b = Math.max(0, Math.round((n & 0xff)          * (1 - amount)));
+    return `#${r.toString(16).padStart(2,'0')}${g.toString(16).padStart(2,'0')}${b.toString(16).padStart(2,'0')}`;
+}
+
+// 각 세그먼트의 fb 0.25→0.75 구간 폴리라인 + fb 0.5 중점 피처 생성 (20m 이상만)
+function buildSegmentFbFeatures(linkFeatures) {
+    const out = [];
+    const sourceLinks = Array.isArray(linkFeatures) ? linkFeatures : [];
+    sourceLinks.forEach((feature) => {
+        const geometry = feature?.geometry;
+        if (!geometry) return;
+        const emitLine = (coords) => {
+            if (!Array.isArray(coords)) return;
+            for (let i = 0; i < coords.length - 1; i++) {
+                const a = coords[i], b = coords[i + 1];
+                if (segmentLengthM(a, b) < 20) continue;
+                const p025 = [a[0] + 0.25 * (b[0] - a[0]), a[1] + 0.25 * (b[1] - a[1])];
+                const p075 = [a[0] + 0.75 * (b[0] - a[0]), a[1] + 0.75 * (b[1] - a[1])];
+                out.push({
+                    type: 'Feature',
+                    geometry: { type: 'LineString', coordinates: [p025, p075] },
+                    properties: {}
+                });
+            }
+        };
+        if (geometry.type === 'LineString') emitLine(geometry.coordinates);
+        else if (geometry.type === 'MultiLineString') geometry.coordinates.forEach(emitLine);
+    });
+    return out;
+}
+
+// 세그먼트 길이(m) 계산
+function segmentLengthM(a, b) {
+    const latRad = (a[1] + b[1]) / 2 * Math.PI / 180;
+    const mPerDegLat = 111320;
+    const mPerDegLon = 111320 * Math.cos(latRad);
+    const dx = (b[0] - a[0]) * mPerDegLon;
+    const dy = (b[1] - a[1]) * mPerDegLat;
+    return Math.sqrt(dx * dx + dy * dy);
+}
+
+// 각 세그먼트 중점에 수직 틱 선 생성 (길이 20m 이상 세그먼트만, 차로폭 절반 길이)
+function buildSegmentMidlineFeatures(linkFeatures, config) {
+    const out = [];
+    const sourceLinks = Array.isArray(linkFeatures) ? linkFeatures : [];
+    sourceLinks.forEach((feature) => {
+        const geometry = feature?.geometry;
+        const props = feature?.properties || {};
+        if (!geometry) return;
+        const { halfWidth } = laneWidthForProps(props, config || laneWidthConfig);
+        const tickHalf = (Number.isFinite(halfWidth) && halfWidth > 0) ? halfWidth : 3.0;
+
+        const emitLine = (coords) => {
+            if (!Array.isArray(coords)) return;
+            for (let i = 0; i < coords.length - 1; i++) {
+                const a = coords[i], b = coords[i + 1];
+                if (segmentLengthM(a, b) < 20) continue;
+
+                const latRad = (a[1] + b[1]) / 2 * Math.PI / 180;
+                const mPerDegLat = 111320;
+                const mPerDegLon = 111320 * Math.cos(latRad);
+
+                // 세그먼트 방향 벡터 → 수직 단위벡터
+                const dx = (b[0] - a[0]) * mPerDegLon;
+                const dy = (b[1] - a[1]) * mPerDegLat;
+                const len = Math.sqrt(dx * dx + dy * dy);
+                if (len === 0) continue;
+                const px = -dy / len; // 수직 방향 (경도 성분)
+                const py =  dx / len; // 수직 방향 (위도 성분)
+
+                const midLon = (a[0] + b[0]) / 2;
+                const midLat = (a[1] + b[1]) / 2;
+
+                const t1 = [midLon + px * tickHalf / mPerDegLon, midLat + py * tickHalf / mPerDegLat];
+                const t2 = [midLon - px * tickHalf / mPerDegLon, midLat - py * tickHalf / mPerDegLat];
+
+                out.push({
+                    type: 'Feature',
+                    geometry: { type: 'LineString', coordinates: [t1, t2] },
+                    properties: {}
+                });
+            }
+        };
+        if (geometry.type === 'LineString') emitLine(geometry.coordinates);
+        else if (geometry.type === 'MultiLineString') geometry.coordinates.forEach(emitLine);
+    });
+    return out;
+}
+
 // 캐시된 뷰포트 링크로부터 차로폭 레이어들(차로폭/차로폭2)을 다시 채운다(zoom 17+에서만).
 function refreshLaneWidthLayer() {
     const belowZoom = map.getZoom() < LANE_WIDTH_MIN_ZOOM;
     const noLinks = !Array.isArray(lastRenderedRoadLinks) || lastRenderedRoadLinks.length === 0;
-    laneLayerEntries().forEach(({ name, layer, config }) => {
+    laneLayerEntries().forEach(({ name, layer, config, laneExtOnly }) => {
         if (!layer) return;
         layer.clearLayers();
         if (!activeGroups.has(name) || belowZoom || noLinks) return;
-        const features = buildLaneWidthFeatures(lastRenderedRoadLinks, config);
+        const features = buildLaneWidthFeatures(lastRenderedRoadLinks, config, { laneExtOnly });
         if (features.length > 0) {
             layer.addData({ type: 'FeatureCollection', features });
         }
     });
+    // 세그먼트 수직 틱 비활성화 (fb 레이어에서 midpoint 표시로 대체)
+    if (roadSegmentMidlineGeoLayer) roadSegmentMidlineGeoLayer.clearLayers();
+
+    // Segment FB 0.25-0.75 가로선 (독립 토글, zoom 16+)
+    if (roadSegmentFbGeoLayer) {
+        roadSegmentFbGeoLayer.clearLayers();
+        if (activeGroups.has(SEGMENT_FB_LAYER) && !noLinks && map.getZoom() >= ROAD_RENDER_MIN_ZOOM) {
+            const fbFeatures = buildSegmentFbFeatures(lastRenderedRoadLinks);
+            if (fbFeatures.length > 0) {
+                roadSegmentFbGeoLayer.addData({ type: 'FeatureCollection', features: fbFeatures });
+            }
+        }
+    }
 }
 
 function queryRoadViewport() {
@@ -4179,6 +4464,7 @@ function queryRoadViewport() {
         if (roadLinkVertexGeoLayer) roadLinkVertexGeoLayer.clearLayers();
         if (roadLaneWidthGeoLayer) roadLaneWidthGeoLayer.clearLayers();
         if (roadLaneWidth2GeoLayer) roadLaneWidth2GeoLayer.clearLayers();
+        if (roadLaneWidthExtGeoLayer) roadLaneWidthExtGeoLayer.clearLayers();
         lastRenderedRoadLinks = [];
         roadLinkRenderCount = 0;
         roadNodeRenderCount = 0;
@@ -4192,7 +4478,7 @@ function queryRoadViewport() {
         type: 'query',
         requestId: ++roadShapeQueryRequestId,
         bounds: [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()],
-        includeLinks: activeGroups.has(ROAD_LINK_LAYER) || activeGroups.has(ROAD_LINK_VERTEX_LAYER) || activeGroups.has(LANE_WIDTH_LAYER) || activeGroups.has(LANE_WIDTH_LAYER_2),
+        includeLinks: activeGroups.has(ROAD_LINK_LAYER) || activeGroups.has(ROAD_LINK_VERTEX_LAYER) || activeGroups.has(SEGMENT_FB_LAYER) || activeGroups.has(LANE_WIDTH_LAYER) || activeGroups.has(LANE_WIDTH_LAYER_2) || activeGroups.has(LANE_WIDTH_EXT_LAYER),
         includeNodes: activeGroups.has(ROAD_NODE_LAYER),
         linkPropKeys: getRoadWorkerRequestedLinkProps(),
         maxLinks: limits.maxLinks,
@@ -4235,6 +4521,7 @@ function renderRoadViewportFeatures(linkFeatures, nodeFeatures) {
         if (roadLinkVertexGeoLayer) roadLinkVertexGeoLayer.clearLayers();
         if (roadLaneWidthGeoLayer) roadLaneWidthGeoLayer.clearLayers();
         if (roadLaneWidth2GeoLayer) roadLaneWidth2GeoLayer.clearLayers();
+        if (roadLaneWidthExtGeoLayer) roadLaneWidthExtGeoLayer.clearLayers();
         lastRenderedRoadLinks = [];
         roadLinkRenderCount = 0;
         roadNodeRenderCount = 0;
@@ -4356,28 +4643,36 @@ function removeRoadShapeLayers() {
         map.removeLayer(featureGroups[LANE_WIDTH_LAYER_2]);
         delete featureGroups[LANE_WIDTH_LAYER_2];
     }
+    if (featureGroups[LANE_WIDTH_EXT_LAYER]) {
+        map.removeLayer(featureGroups[LANE_WIDTH_EXT_LAYER]);
+        delete featureGroups[LANE_WIDTH_EXT_LAYER];
+    }
     delete overlays[ROAD_LINK_LAYER];
     delete overlays[ROAD_NODE_LAYER];
     delete overlays[ROAD_LINK_VERTEX_LAYER];
     delete overlays[LANE_WIDTH_LAYER];
     delete overlays[LANE_WIDTH_LAYER_2];
+    delete overlays[LANE_WIDTH_EXT_LAYER];
     delete layerCountOverride[ROAD_LINK_LAYER];
     delete layerCountOverride[ROAD_NODE_LAYER];
     delete layerCountOverride[ROAD_LINK_VERTEX_LAYER];
     delete layerCountOverride[LANE_WIDTH_LAYER];
     delete layerCountOverride[LANE_WIDTH_LAYER_2];
+    delete layerCountOverride[LANE_WIDTH_EXT_LAYER];
     activeGroups.delete(ROAD_LINK_LAYER);
     activeGroups.delete(ROAD_NODE_LAYER);
     activeGroups.delete(ROAD_LINK_VERTEX_LAYER);
     activeGroups.delete(LANE_WIDTH_LAYER);
     activeGroups.delete(LANE_WIDTH_LAYER_2);
-    layerOrder = layerOrder.filter((name) => name !== ROAD_LINK_LAYER && name !== ROAD_NODE_LAYER && name !== ROAD_LINK_VERTEX_LAYER && name !== LANE_WIDTH_LAYER && name !== LANE_WIDTH_LAYER_2);
+    activeGroups.delete(LANE_WIDTH_EXT_LAYER);
+    layerOrder = layerOrder.filter((name) => name !== ROAD_LINK_LAYER && name !== ROAD_NODE_LAYER && name !== ROAD_LINK_VERTEX_LAYER && name !== LANE_WIDTH_LAYER && name !== LANE_WIDTH_LAYER_2 && name !== LANE_WIDTH_EXT_LAYER);
 
     roadLinkGeoLayer = null;
     roadNodeGeoLayer = null;
     roadLinkVertexGeoLayer = null;
     roadLaneWidthGeoLayer = null;
     roadLaneWidth2GeoLayer = null;
+    roadLaneWidthExtGeoLayer = null;
     lastRenderedRoadLinks = [];
     roadLinkFeatureCount = 0;
     roadNodeFeatureCount = 0;
@@ -4411,6 +4706,9 @@ function handleRoadZoomChanged() {
         if (roadLinkVertexGeoLayer) roadLinkVertexGeoLayer.clearLayers();
         if (roadLaneWidthGeoLayer) roadLaneWidthGeoLayer.clearLayers();
         if (roadLaneWidth2GeoLayer) roadLaneWidth2GeoLayer.clearLayers();
+        if (roadLaneWidthExtGeoLayer) roadLaneWidthExtGeoLayer.clearLayers();
+        if (roadSegmentFbGeoLayer) roadSegmentFbGeoLayer.clearLayers();
+        if (roadSegmentMidlineGeoLayer) roadSegmentMidlineGeoLayer.clearLayers();
         lastRenderedRoadLinks = [];
         roadLinkRenderCount = 0;
         roadNodeRenderCount = 0;
@@ -4539,11 +4837,24 @@ function pickRoadPopupValue(props, keys) {
 
 function buildRoadSummaryRows(props, title) {
     const specs = getRoadPopupFieldSpecs(title);
-    return specs
-        .map((spec) => ({
+    // [LANE_EXT] 로그가 있는 링크는 실제 적용된 확장 차선수를 함께 보여준다.
+    const laneExtEntry = (title === 'Road Link' || title === 'Road Link Vertex')
+        ? laneExtEntryForProps(props)
+        : null;
+    const laneExtRow = laneExtEntry
+        ? [{
+            key: 'LANE_EXT',
+            value: `${laneExtEntry.lane} → ${laneExtEntry.ext}`
+                + (Number.isFinite(laneExtEntry.dist) ? ` (dist ${laneExtEntry.dist}` : '')
+                + (Number.isFinite(laneExtEntry.feedback) ? `, fB ${laneExtEntry.feedback}` : '')
+                + (Number.isFinite(laneExtEntry.dist) || Number.isFinite(laneExtEntry.feedback) ? ')' : '')
+        }]
+        : [];
+    return laneExtRow
+        .concat(specs.map((spec) => ({
             key: spec.label,
             value: pickRoadPopupValue(props, spec.keys)
-        }))
+        })))
         .filter((entry) => entry.value !== undefined && entry.value !== null && entry.value !== '')
         .map((entry) => `
             <div class="road-popup-summary-row">
@@ -4732,6 +5043,12 @@ function drawMarkers(coordinates) {
             // 'Route Info' coords exist only for request-route search; the route
             // itself is drawn as polylines — never as circle markers.
             if (coordtype === 'Route Info') continue;
+            // 아래 타입들은 전용 레이어에서만 그린다 (중복 레이어 방지)
+            //   GP*        -> visualizeGpGuideFromLog / visualizeLaneBubblesFromLog
+            //   Guide Event -> C2X Events / Tmap Incidents (MFS)
+            if (coordtype === 'GP Guide' || coordtype === 'GP Lane Color') continue;
+            if (coordtype === 'Guide Event') continue;
+            if (coordtype === 'GP Lane Bubble') continue;
             const latitude = coord.latitude;
             const longitude = coord.longitude;
             if (latitude === undefined || longitude === undefined) continue;
@@ -4759,6 +5076,12 @@ function drawMarkers(coordinates) {
 
                 // Use color set by backend based on parking state
                 let markerColor = coord.color || 'black';
+
+                // MM feedback 색상 덮어쓰기: 검정(위치+헤딩 동시보정) / 회색(헤딩보정만)
+                if (coordtype === 'DR-based' && coord.extra?.mm_feedback) {
+                    const reason = (coord.extra.mm_feedback_reason || '').toLowerCase();
+                    markerColor = reason.startsWith('heading only') ? '#888888' : '#000000';
+                }
 
                 const marker = useDrHeadingArrow
                     ? L.marker([latitude, longitude], {
@@ -5196,7 +5519,13 @@ function formatSubtractedCandidateCell(value) {
 // Dist(... laneW: laneWeight fB: facilityBonus) | ..." 형식에서, 기본점수(base)에 곱해지는 항(laneWeight)과
 // 더해지는 항(distancePenalty/laneBonus/facilityBonus/adjustment, anglePenalty는 빼지는 항)을 분리해서 보여준다.
 function buildCandidateLinkPopupHtml(extra) {
-    const entries = normalizeCandidateLinkEntries(extra).slice(0, 12);
+    const entries = normalizeCandidateLinkEntries(extra)
+        .sort((a, b) => {
+            const sa = Number(pickCandidateField(a, ['total', 'totalScore', 'score']));
+            const sb = Number(pickCandidateField(b, ['total', 'totalScore', 'score']));
+            return (Number.isFinite(sb) ? sb : -Infinity) - (Number.isFinite(sa) ? sa : -Infinity);
+        })
+        .slice(0, 12);
     if (entries.length === 0) return '';
 
     const rows = entries.map((entry, index) => {
@@ -5207,19 +5536,30 @@ function buildCandidateLinkPopupHtml(extra) {
         const distancePenalty = pickCandidateField(entry, ['distancePenalty', 'distance_penalty']);
         const anglePenalty = pickCandidateField(entry, ['anglePenalty', 'angle_penalty']);
         const laneBonus = pickCandidateField(entry, ['laneBonus', 'lane_bonus']);
-        const facilityBonus = pickCandidateField(entry, ['facilityBonus', 'facility_bonus']);
+        const distScore = pickCandidateField(entry, ['distanceProjection', 'distance_projection']); // p: = penalty
+        const distProj = pickCandidateField(entry, ['distanceScore', 'distance_score']); // d: = 실제 투영거리
         const adjustment = pickCandidateField(entry, ['adjustment']);
+        const extraMul = pickCandidateField(entry, ['mul', 'extrapoint', 'extrapointdr', 'extrapointgps']);
+        const baseNum = Number(base);
+        const adjNum = Number(adjustment);
+        const subtotal = (Number.isFinite(baseNum) && Number.isFinite(adjNum))
+            ? formatCandidateCell(baseNum + adjNum)
+            : '-';
+        const extraMulCell = (extraMul === '' || extraMul === null || extraMul === undefined)
+            ? '<span style="opacity:0.45">1.00</span>'
+            : formatCandidateCell(extraMul);
         return `
             <tr>
                 <td>${index + 1}</td>
                 <td>${formatCandidateCell(linkId)}</td>
-                <td>${formatCandidateCell(base)}</td>
-                <td class="weight-cell-mul">${formatCandidateCell(laneWeight)}</td>
-                <td class="weight-cell-add">${formatCandidateCell(distancePenalty)}</td>
-                <td class="weight-cell-add">${formatSubtractedCandidateCell(anglePenalty)}</td>
-                <td class="weight-cell-add">${formatCandidateCell(laneBonus)}</td>
-                <td class="weight-cell-add">${formatCandidateCell(facilityBonus)}</td>
+                <td class="weight-cell-base">${formatCandidateCell(base)}</td>
+                <td class="weight-cell-base-sub">${formatSubtractedCandidateCell(distScore)}</td>
+                <td class="weight-cell-base-sub">${formatCandidateCell(distProj)}</td>
+                <td class="weight-cell-base-sub">${formatSubtractedCandidateCell(anglePenalty)}</td>
+                <td class="weight-cell-base-sub">${formatCandidateCell(laneBonus)}</td>
                 <td class="weight-cell-add">${formatCandidateCell(adjustment)}</td>
+                <td class="weight-cell-add weight-cell-subtotal">${subtotal}</td>
+                <td class="weight-cell-mul">${extraMulCell}</td>
                 <td>${formatCandidateCell(total)}</td>
             </tr>
         `;
@@ -5234,18 +5574,19 @@ function buildCandidateLinkPopupHtml(extra) {
                         <tr>
                             <th rowspan="2">#</th>
                             <th rowspan="2">Link ID</th>
-                            <th rowspan="2">기본점수</th>
-                            <th class="weight-group-mul">곱해진 가중치</th>
-                            <th colspan="5" class="weight-group-add">더해진 가중치</th>
-                            <th rowspan="2">총점</th>
+                            <th colspan="7" class="weight-group-base">기본점수</th>
+                            <th colspan="1" class="weight-group-weight">가중치</th>
+                            <th rowspan="2">최종점수</th>
                         </tr>
                         <tr>
-                            <th class="weight-group-mul">차선가중치</th>
-                            <th class="weight-group-add">거리보정</th>
-                            <th class="weight-group-add">각도페널티</th>
-                            <th class="weight-group-add">차선보너스</th>
-                            <th class="weight-group-add">시설보너스</th>
-                            <th class="weight-group-add">조정값</th>
+                            <th class="weight-group-base">Base Score</th>
+                            <th class="weight-group-base">거리페널티</th>
+                            <th class="weight-group-base">dist(m)</th>
+                            <th class="weight-group-base">각도페널티</th>
+                            <th class="weight-group-base">차선보너스</th>
+                            <th class="weight-group-base">+조정값</th>
+                            <th class="weight-group-base weight-cell-subtotal">합계</th>
+                            <th class="weight-group-weight">×Extrapoint</th>
                         </tr>
                     </thead>
                     <tbody>${rows}</tbody>
@@ -5564,7 +5905,8 @@ function drawPolylines(lines) {
 
                 const popupContent =
                     `<strong>[Route Info]</strong><br>` +
-                    popupRows.join('<br>');
+                    popupRows.join('<br>') +
+                    buildRouteGuideSection(extra.guide);
                 L.popup().setLatLng(e.latlng).setContent(popupContent).openOn(map);
             }
             L.DomEvent.stopPropagation(e);
@@ -5789,33 +6131,60 @@ function openLayerContextMenu(layerName, anchorEl) {
     if (!menu) return;
 
     const isLink = layerName === ROAD_LINK_LAYER;
-    const isPointLayer = layerName === ROAD_NODE_LAYER || layerName === ROAD_LINK_VERTEX_LAYER;
-    roadStyleContextLayerName = isPointLayer ? layerName : ROAD_NODE_LAYER;
+    const isNode = layerName === ROAD_NODE_LAYER;
+    const isVertex = layerName === ROAD_LINK_VERTEX_LAYER;
+    const isPointLayer = isNode || isVertex;
 
     const title = document.getElementById('layerCtxTitle');
     if (title) title.textContent = `${layerName} 스타일`;
 
     const linkSec = document.getElementById('layerCtxLinkSection');
     const nodeSec = document.getElementById('layerCtxNodeSection');
+    const vertexSec = document.getElementById('layerCtxVertexSection');
     if (linkSec) linkSec.style.display = isLink ? '' : 'none';
-    if (nodeSec) nodeSec.style.display = isPointLayer ? '' : 'none';
-    const nodeSubtitle = nodeSec?.querySelector('.layer-ctx-subtitle');
-    if (nodeSubtitle) {
-        nodeSubtitle.textContent = layerName === ROAD_LINK_VERTEX_LAYER ? 'Vertex 스타일' : '노드 스타일';
+    // Road Node opens both sections; Road Link Vertex opens only vertex section
+    if (nodeSec) nodeSec.style.display = isNode ? '' : 'none';
+    if (vertexSec) vertexSec.style.display = isPointLayer ? '' : 'none';
+
+    // Pre-fill node inputs
+    if (isNode) {
+        const nodeColorInput = document.getElementById('nodeColorInput');
+        const nodeStrokeInput = document.getElementById('nodeStrokeInput');
+        const nodeRadiusInput = document.getElementById('nodeRadiusInput');
+        const nodeWeightInput = document.getElementById('nodeWeightInput');
+        if (nodeColorInput) nodeColorInput.value = roadNodeStyleConfig.color;
+        if (nodeStrokeInput) nodeStrokeInput.value = roadNodeStyleConfig.stroke;
+        if (nodeRadiusInput) nodeRadiusInput.value = String(roadNodeStyleConfig.radius);
+        if (nodeWeightInput) nodeWeightInput.value = String(roadNodeStyleConfig.weight);
     }
-    const applyBtn = document.getElementById('applyNodeStyleButton');
-    if (applyBtn) {
-        applyBtn.textContent = layerName === ROAD_LINK_VERTEX_LAYER ? 'Vertex 스타일 적용' : '노드 스타일 적용';
+
+    // Pre-fill vertex inputs
+    if (isPointLayer) {
+        const vertexColorInput = document.getElementById('vertexColorInput');
+        const vertexStrokeInput = document.getElementById('vertexStrokeInput');
+        const vertexRadiusInput = document.getElementById('vertexRadiusInput');
+        const vertexWeightInput = document.getElementById('vertexWeightInput');
+        if (vertexColorInput) vertexColorInput.value = roadVertexStyleConfig.color;
+        if (vertexStrokeInput) vertexStrokeInput.value = roadVertexStyleConfig.stroke;
+        if (vertexRadiusInput) vertexRadiusInput.value = String(roadVertexStyleConfig.radius);
+        if (vertexWeightInput) vertexWeightInput.value = String(roadVertexStyleConfig.weight);
     }
-    const styleSource = layerName === ROAD_LINK_VERTEX_LAYER ? roadVertexStyleConfig : roadNodeStyleConfig;
-    const nodeColorInput = document.getElementById('nodeColorInput');
-    const nodeStrokeInput = document.getElementById('nodeStrokeInput');
-    const nodeRadiusInput = document.getElementById('nodeRadiusInput');
-    const nodeWeightInput = document.getElementById('nodeWeightInput');
-    if (nodeColorInput) nodeColorInput.value = styleSource.color;
-    if (nodeStrokeInput) nodeStrokeInput.value = styleSource.stroke;
-    if (nodeRadiusInput) nodeRadiusInput.value = String(styleSource.radius);
-    if (nodeWeightInput) nodeWeightInput.value = String(styleSource.weight);
+
+    const fbSec = document.getElementById('layerCtxSegmentFbSection');
+    if (fbSec) {
+        fbSec.style.display = isLink ? '' : 'none';
+        if (isLink) {
+            const fbColor = document.getElementById('fbColorInput');
+            const fbWeight = document.getElementById('fbWeightInput');
+            const fbOpacity = document.getElementById('fbOpacityInput');
+            if (fbColor) fbColor.value = segmentFbConfig.color;
+            if (fbWeight) fbWeight.value = String(segmentFbConfig.weight);
+            if (fbOpacity) fbOpacity.value = String(segmentFbConfig.opacity);
+            if (fbColor) fbColor.oninput = () => { segmentFbConfig.color = fbColor.value; refreshLaneWidthLayer(); };
+            if (fbWeight) fbWeight.onchange = () => { segmentFbConfig.weight = Math.max(1, Math.min(10, Number(fbWeight.value))); refreshLaneWidthLayer(); };
+            if (fbOpacity) fbOpacity.onchange = () => { segmentFbConfig.opacity = Math.max(0.05, Math.min(1, Number(fbOpacity.value))); refreshLaneWidthLayer(); };
+        }
+    }
 
     if (isLink) {
         renderLinkStyleFieldOptions();
@@ -5949,7 +6318,7 @@ function initLayerContextMenuDrag() {
 }
 
 function isRoadShapeLayerName(name) {
-    return name === ROAD_LINK_LAYER || name === ROAD_NODE_LAYER || name === ROAD_LINK_VERTEX_LAYER || name === LANE_WIDTH_LAYER || name === LANE_WIDTH_LAYER_2;
+    return name === ROAD_LINK_LAYER || name === ROAD_NODE_LAYER || name === ROAD_LINK_VERTEX_LAYER || name === SEGMENT_FB_LAYER || name === LANE_WIDTH_LAYER || name === LANE_WIDTH_LAYER_2 || name === LANE_WIDTH_EXT_LAYER;
 }
 
 function appendLayerRows(childWrap, groups) {
@@ -6024,6 +6393,7 @@ function appendLayerRows(childWrap, groups) {
                 }
             }
 
+            if (name === SEGMENT_FB_LAYER) refreshLaneWidthLayer();
             updateMap();
             renderLayerControls();
         };
@@ -6152,7 +6522,7 @@ function renderLayerControls() {
 
     const resultGroups = layerOrder.filter((name) => !isRoadShapeLayerName(name));
     // Lane Width는 최상위 행이 아니라 Road Link 하위 체크박스로 노출한다(Vertex와 동일한 패턴).
-    const roadGroups = layerOrder.filter((name) => isRoadShapeLayerName(name) && name !== ROAD_LINK_VERTEX_LAYER && name !== LANE_WIDTH_LAYER && name !== LANE_WIDTH_LAYER_2);
+    const roadGroups = layerOrder.filter((name) => isRoadShapeLayerName(name) && name !== ROAD_LINK_VERTEX_LAYER && name !== SEGMENT_FB_LAYER && name !== LANE_WIDTH_LAYER && name !== LANE_WIDTH_LAYER_2 && name !== LANE_WIDTH_EXT_LAYER);
     const roadShapeVisibilityGroups = layerOrder.filter((name) => isRoadShapeLayerName(name));
 
     if (resultGroups.length > 0) {
@@ -6298,14 +6668,52 @@ function appendRoadRuleControls(parent, layerName) {
         // 차로폭 / 차로폭2 토글 + 인라인 튜닝 — Road Link 하위에 노출
         [
             { layerKey: LANE_WIDTH_LAYER, config: laneWidthConfig, label: '차로폭 (zoom 17+)' },
-            { layerKey: LANE_WIDTH_LAYER_2, config: laneWidthConfig2, label: '차로폭2 (zoom 17+)' }
+            { layerKey: LANE_WIDTH_LAYER_2, config: laneWidthConfig2, label: '차로폭2 (zoom 17+)' },
+            {
+                layerKey: LANE_WIDTH_EXT_LAYER,
+                config: laneWidthConfigExt,
+                label: `확장 차선수 [LANE_EXT] (링크 ${laneExtByLinkId.size}개, zoom 17+)`
+            }
         ].forEach((spec) => appendLaneWidthControl(ruleWrap, spec));
+
+        // Segment FB 토글 — Road Link 하위 (스타일은 붓 아이콘 패널에서 수정)
+        appendSimpleLayerToggle(ruleWrap, SEGMENT_FB_LAYER, 'Segment FB (zoom 16+)');
     }
 
     parent.appendChild(ruleWrap);
 }
 
 // Road Link 하위 차로폭 레이어 토글 + 인라인 튜닝(기본/확장 폭·색) 한 세트를 붙인다.
+function appendSimpleLayerToggle(parent, layerKey, label) {
+    const item = document.createElement('label');
+    item.className = 'layer-rule-item';
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'layer-control-check';
+    checkbox.checked = activeGroups.has(layerKey);
+    checkbox.onchange = () => {
+        const group = featureGroups[layerKey];
+        if (checkbox.checked) {
+            if (group && !map.hasLayer(group)) map.addLayer(group);
+            activeGroups.add(layerKey);
+        } else {
+            if (group && map.hasLayer(group)) map.removeLayer(group);
+            activeGroups.delete(layerKey);
+        }
+        refreshLaneWidthLayer();
+        renderLayerControls();
+    };
+    item.appendChild(checkbox);
+
+    const text = document.createElement('span');
+    text.className = 'layer-rule-label';
+    text.textContent = label;
+    item.appendChild(text);
+
+    parent.appendChild(item);
+}
+
 function appendLaneWidthControl(ruleWrap, spec) {
     const { layerKey, config, label } = spec;
 
@@ -6448,6 +6856,9 @@ function getLayerSwatchColor(name) {
     }
     if (name === LANE_WIDTH_LAYER_2) {
         return laneWidthConfig2.normalColor;
+    }
+    if (name === LANE_WIDTH_EXT_LAYER) {
+        return laneWidthConfigExt.normalColor;
     }
     const swatches = {
         'Road Link Vertex': '#f8fafc',
@@ -6991,6 +7402,54 @@ function parseLatLonSearchInput(value) {
     return { lat, lon };
 }
 
+// 입력한 자리수만큼만 비교한다 — '37.544057' 로 검색하면 6자리까지 같은 마커가 걸린다.
+function latLonInputPrecision(text) {
+    const decimals = String(text || '').match(/\.(\d+)/g) || [];
+    const longest = decimals.reduce((max, part) => Math.max(max, part.length - 1), 0);
+    return Math.min(Math.max(longest, 4), 7);
+}
+
+// 같은 좌표를 가진 마커 찾기. markersData 를 쓰는 이유: GP/차선 버블처럼 전용
+// 레이어에서만 그려지는 마커는 markers 배열에 없다.
+function findMarkersAtLatLon(lat, lon, precision) {
+    const key = (value) => Number(value).toFixed(precision);
+    const targetLat = key(lat);
+    const targetLon = key(lon);
+    const target = L.latLng(lat, lon);
+
+    return (Array.isArray(markersData) ? markersData : []).filter((marker) => {
+        const markerLat = Number(marker?.latitude);
+        const markerLon = Number(marker?.longitude);
+        if (!Number.isFinite(markerLat) || !Number.isFinite(markerLon)) return false;
+        if (key(markerLat) === targetLat && key(markerLon) === targetLon) return true;
+        // 자리수 반올림 경계에서 갈리는 부동소수 오차 보정
+        return target.distanceTo(L.latLng(markerLat, markerLon)) <= 0.5;
+    });
+}
+
+function buildLatLonResultItem(marker) {
+    const div = document.createElement('div');
+    div.className = 'info-item marker';
+
+    const rows = [
+        ['Type', escapeHtml(String(marker.type || 'Unknown'))],
+        ['ID', marker.id ?? '-'],
+        ['DLT', marker.dlt_id ?? '-'],
+        ['Time', escapeHtml(marker.timestamp_str || '-')],
+        ['Lat', Number(marker.latitude).toFixed(7)],
+        ['Lon', Number(marker.longitude).toFixed(7)]
+    ];
+    if (Number.isFinite(marker.heading)) rows.push(['Heading', Number(marker.heading).toFixed(2)]);
+
+    div.innerHTML = `
+        <div class="info-title"><span>[MARKER] ${escapeHtml(String(marker.type || 'Unknown'))}</span></div>
+        <div class="info-detail">
+            ${rows.map(([k, v]) => `<div class="info-row"><span class="info-key">${k}</span><span>${v}</span></div>`).join('')}
+        </div>`;
+    div.onclick = () => focusMarkerFromTableRow(marker);
+    return div;
+}
+
 function handleLatLonSearch() {
     const input = document.getElementById('latLonSearchBox');
     const parsed = parseLatLonSearchInput(input?.value);
@@ -7004,16 +7463,33 @@ function handleLatLonSearch() {
 
     const infoPanel = document.getElementById('infoPanel');
     if (!infoPanel) return;
-    openSidebar('좌표 검색 결과');
+
+    const precision = latLonInputPrecision(input?.value);
+    const matched = findMarkersAtLatLon(parsed.lat, parsed.lon, precision);
+    matched.sort((a, b) => (a.timestamp_ms || 0) - (b.timestamp_ms || 0));
+
+    openSidebar(`좌표 검색 결과 (마커 ${matched.length}개)`);
     infoPanel.innerHTML = `
         <div class="info-item marker">
             <div class="info-title">[COORD] 지정 좌표</div>
             <div class="info-detail">
                 <div class="info-row"><span class="info-key">Lat</span><span>${parsed.lat.toFixed(7)}</span></div>
                 <div class="info-row"><span class="info-key">Lon</span><span>${parsed.lon.toFixed(7)}</span></div>
+                <div class="info-row"><span class="info-key">일치 자리수</span><span>소수점 ${precision}자리</span></div>
+                <div class="info-row"><span class="info-key">일치 마커</span><span>${matched.length}개</span></div>
             </div>
         </div>
     `;
+
+    if (matched.length === 0) {
+        const empty = document.createElement('div');
+        empty.style.cssText = 'padding:16px; color:#cbd5e1;';
+        empty.textContent = '이 좌표와 일치하는 마커가 없습니다.';
+        infoPanel.appendChild(empty);
+        return;
+    }
+
+    matched.forEach((marker) => infoPanel.appendChild(buildLatLonResultItem(marker)));
 }
 
 function pickRoadLinkId(props) {
@@ -7780,5 +8256,543 @@ function visualizeGuideEventsFromLog() {
         });
     }
 
+    renderLayerControls();
+}
+
+// ===== GP (Guide Point) / turnCode 시각화 ==================================== //
+// 로그 원본: navisdk CRGDataCollector / CRGPlayer / CNaviModule
+//   ServiceDataCollect nGPType:%d, nTurnCode:%d, nLinkID:%d      (링크별 1회)
+//   [LANE_COLOR] store GP (new) GPIdx:%d, linkIndex:%d, ...      (GP 생성)
+//   GetRenderData pGuidePoint [%3d] gpType %d, turnCode: %5d, vertexEnd %5d
+//   [LANE_COLOR] linkIndex:%d, guidePointIndex:%d, ... laneColor:%d, ...  (주행 중)
+const GP_CROSS_IMAGE_LAYER = 'GP Guide (교차로 이미지)';
+const GP_TURN_ONLY_LAYER = 'GP Guide (이미지 없음)';
+const GP_LANE_COLOR_LAYER = 'GP Lane Color (주행)';
+
+// nGPType 비트 플래그 (rgdata_def.h RG_GPTYPE)
+const GP_TYPE_FLAG_LABELS = [
+    [0x00000001, 'POSITION_S (출발지)'],
+    [0x00000002, 'POSITION_E (목적지)'],
+    [0x00000010, 'POSITION_V (경유지)'],
+    [0x00010000, 'TURN (회전 안내)'],
+    [0x00020000, 'EXTCROSSTURN (복잡교차로)'],
+    [0x00100000, 'ROTARY_IN'],
+    [0x00200000, 'ROTARY_INNER'],
+    [0x00400000, 'ROTARY_OUT'],
+    [0x01000000, 'IC'],
+    [0x02000000, 'JC'],
+    [0x04000000, 'SA (휴게소)'],
+    [0x08000000, 'TOLL (톨게이트)'],
+    [0x10000000, 'EV_STATION']
+];
+const GP_TYPE_TURN = 0x00010000;
+const GP_TYPE_EXTCROSSTURN = 0x00020000;
+
+// LaneColor enum (rgdata_def.h) — 차선 버블 색상
+const GP_LANE_COLORS = {
+    0: { name: 'NONE', hex: '#64748b' },
+    1: { name: 'GREEN (초록)', hex: '#22c55e' },
+    2: { name: 'PINK (분홍)', hex: '#ec4899' },
+    3: { name: 'BLUE (파랑)', hex: '#3b82f6' },
+    4: { name: 'YELLOW (노랑)', hex: '#eab308' }
+};
+
+// IDV_RG_* 코드 (rg_def.h) — turnCode / nVoiceCode / ucSndCode 가 모두 이 코드계
+const GP_TURN_CODE_NAMES = {
+    1: '도곽에 의한 점', 2: '타일에 의한 점', 3: '고속도로 안내없음',
+    4: '일반도로 안내없음', 5: '특수한 경우 안내없음',
+    6: 'Y자 오른쪽 안내없음', 7: 'Y자 왼쪽 안내없음',
+    11: '직진', 12: '좌회전', 13: '우회전', 14: 'U-turn', 15: 'P-turn',
+    16: '8시 방향 좌회전', 17: '10시 방향 좌회전',
+    18: '2시 방향 우회전', 19: '4시 방향 우회전',
+    43: '오른쪽', 44: '왼쪽',
+    51: '직진방향', 52: '왼쪽차선', 53: '오른쪽차선',
+    65: '초록색 차선', 66: '분홍색 차선', 67: '파란색 차선', 68: '노란색 차선',
+    69: '왼쪽 길', 70: '오른쪽 길',
+    71: '첫번째 출구', 72: '두번째 출구',
+    73: '첫번째 오른쪽 길', 74: '두번째 오른쪽 길',
+    75: '첫번째 왼쪽 길', 76: '두번째 왼쪽 길',
+    77: '왼쪽 출구', 78: '오른쪽 출구',
+    80: '하이패스 좌측', 81: '하이패스 우측', 82: '하이패스 중앙',
+    101: '오른쪽방향 고속도로 입구', 102: '왼쪽방향 고속도로 입구', 103: '직진방향 고속도로 입구',
+    104: '오른쪽방향 고속도로 출구', 105: '왼쪽방향 고속도로 출구', 106: '직진방향 고속도로 출구',
+    111: '오른쪽방향 도시고속 입구', 112: '왼쪽방향 도시고속 입구', 113: '직진방향 도시고속 입구',
+    114: '오른쪽방향 도시고속 출구', 115: '왼쪽방향 도시고속 출구', 116: '직진방향 도시고속 출구',
+    117: '오른쪽 도로', 118: '왼쪽 도로', 119: '지하도로', 120: '고가도로',
+    121: '터널', 122: '교량', 123: '지하도로 옆', 124: '고가도로 옆',
+    150: '졸음 쉼터', 151: '휴게소', 152: '휴게소 진입',
+    153: '톨게이트(고속)', 154: '톨게이트(일반)', 160: '전기차 추천 충전소',
+    170: 'Ferry 진입', 171: 'Ferry 진출',
+    181: '목적지 직진방향', 182: '목적지 왼쪽방향', 183: '목적지 오른쪽방향', 184: '경유지',
+    191: '제한속도', 192: '사고다발', 193: '급커브', 194: '낙석주의',
+    195: '경찰청 차로 안내', 196: '경찰청 차로 안내2',
+    200: '출발지', 201: '목적지', 202: '다음 안내까지 직진', 203: '건너편 목적지',
+    210: '경로 진입', 220: '고속도로에 있습니까?', 221: '도시고속도로에 있습니까?',
+    222: '고가도로에 있습니까?', 223: '지하도로에 있습니까?',
+    249: '톨게이트', 250: '경로안내 종료'
+};
+(function fillRepeatedTurnCodeNames() {
+    for (let i = 1; i <= 12; i++) {
+        GP_TURN_CODE_NAMES[30 + i] = `${i}시 방향`;              // 31~42
+        GP_TURN_CODE_NAMES[130 + i] = `${i}시방향`;              // 131~142
+        GP_TURN_CODE_NAMES[230 + i] = `회전교차로 ${i}시방향`;    // 231~242
+    }
+    for (let i = 1; i <= 10; i++) GP_TURN_CODE_NAMES[53 + i] = `${i}차선`;   // 54~63
+    for (let i = 1; i <= 4; i++) {
+        GP_TURN_CODE_NAMES[84 + i] = `왼쪽 ${i}번째 차로`;        // 85~88
+        GP_TURN_CODE_NAMES[88 + i] = `오른쪽 ${i}번째 차로`;      // 89~92
+        GP_TURN_CODE_NAMES[92 + i] = `왼쪽 ${i}개 차로`;          // 93~96
+        GP_TURN_CODE_NAMES[96 + i] = `오른쪽 ${i}개 차로`;        // 97~100
+    }
+    for (let i = 1; i <= 9; i++) GP_TURN_CODE_NAMES[160 + i] = `경로시작 ${i}시방향`;
+    GP_TURN_CODE_NAMES[172] = '경로시작 12시방향';
+    GP_TURN_CODE_NAMES[251] = '경로시작 10시방향';
+    GP_TURN_CODE_NAMES[252] = '경로시작 11시방향';
+})();
+
+const GP_TURN_GLYPHS = (() => {
+    const glyphs = {};
+    const assign = (codes, glyph) => codes.forEach((code) => { glyphs[code] = glyph; });
+    assign([3, 4, 5, 6, 7], '·');
+    assign([11, 51, 103, 106, 113, 116, 181, 202], '↑');
+    assign([12, 16, 17, 44, 52, 77, 102, 105, 112, 115, 118, 182], '↰');
+    assign([13, 18, 19, 43, 53, 78, 101, 104, 111, 114, 117, 183], '↱');
+    assign([14], '↩');
+    assign([15], '↪');
+    assign([150, 151, 152], '☕');
+    assign([153, 154, 249], '₩');
+    assign([160], '⚡');
+    assign([200], 'S');
+    assign([201], 'E');
+    assign([184], 'V');
+    return glyphs;
+})();
+
+function gpTurnCodeName(turnCode) {
+    const code = Number(turnCode);
+    if (!Number.isFinite(code)) return '-';
+    // nVoiceCode / ucSndCode 는 필터에서 걸러지면 0 이 된다 (안내 코드 아님)
+    if (code === 0) return '없음';
+    return GP_TURN_CODE_NAMES[code] || '정의 없음';
+}
+
+function gpTurnCodeLabel(turnCode) {
+    const code = Number(turnCode);
+    if (!Number.isFinite(code)) return '-';
+    return `${code} (${gpTurnCodeName(code)})`;
+}
+
+function gpTypeFlagNames(gpType) {
+    const value = Number(gpType) || 0;
+    return GP_TYPE_FLAG_LABELS.filter(([mask]) => (value & mask) === mask).map(([, label]) => label);
+}
+
+// nGPType 은 비트 플래그라 == 비교가 아니라 마스크로 판정한다.
+function gpTypeLabel(gpType) {
+    const value = Number(gpType) || 0;
+    const flags = gpTypeFlagNames(value);
+    const hex = `0x${(value >>> 0).toString(16).toUpperCase()}`;
+    if (flags.length === 0) return `${value} (${hex}) · GPTYPE_NON — 안내 없음`;
+    return `${value} (${hex}) · ${flags.join(' | ')}`;
+}
+
+function gpMarkerColor(gpType) {
+    const value = Number(gpType) || 0;
+    if (value & GP_TYPE_EXTCROSSTURN) return '#7c3aed';   // 복잡교차로 이미지 있음
+    if (value & GP_TYPE_TURN) return '#0d9488';           // 일반 회전 GP
+    return '#94a3b8';                                     // 안내 없는 통과 링크
+}
+
+function buildGpMarkerIcon(extra) {
+    const gpType = Number(extra.gp_type) || 0;
+    const color = gpMarkerColor(gpType);
+    const glyph = GP_TURN_GLYPHS[Number(extra.turn_code)] || '◆';
+    const isCross = !!(gpType & GP_TYPE_EXTCROSSTURN);
+    const size = 16;
+    const badge = extra.gp_index !== null && extra.gp_index !== undefined
+        ? `<div style="margin-top:1px;padding:0 3px;background:rgba(15,23,42,.75);color:#fff;font-size:7px;font-weight:600;border-radius:5px;white-space:nowrap">GP ${extra.gp_index}</div>`
+        : '';
+    return L.divIcon({
+        className: '',
+        iconSize: [size, size + (badge ? 10 : 0)],
+        iconAnchor: [size / 2, size / 2],
+        html:
+            `<div style="display:flex;flex-direction:column;align-items:center">` +
+            `<div style="width:${size}px;height:${size}px;line-height:${size}px;text-align:center;` +
+            `background:${color};color:#fff;border-radius:${isCross ? '4px' : '50%'};` +
+            `font-size:10px;font-weight:700;` +
+            `border:1.5px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.3)">${glyph}</div>` +
+            badge +
+            `</div>`
+    });
+}
+
+function gpLaneColorChip(laneColor) {
+    const info = GP_LANE_COLORS[Number(laneColor)] || GP_LANE_COLORS[0];
+    return `<span style="display:inline-flex;align-items:center;gap:4px">` +
+        `<i style="width:9px;height:9px;border-radius:50%;background:${info.hex};display:inline-block;border:1px solid #fff"></i>` +
+        `${escapeHtml(info.name)}</span>`;
+}
+
+// 교차로 이미지 유무는 서로 다른 3개 신호로 나뉜다:
+//   nGPType & EXTCROSSTURN — 이 GP에 교차로 이미지가 붙었는가 (최종 결과)
+//   bCrossImage #1/#2      — GetCrossImageData 결과와 직진 필터 통과 여부
+//   usImgID / ucImgAvailable — 실제 이미지 리소스가 있는가
+function gpCrossImageSummary(extra) {
+    const gpType = Number(extra.gp_type) || 0;
+    const hasFlag = !!(gpType & GP_TYPE_EXTCROSSTURN);
+    const raw = extra.cross_image_raw;
+    const filtered = extra.cross_image;
+    const parts = [];
+
+    if (hasFlag) {
+        parts.push('<strong style="color:#7c3aed">있음</strong> (EXTCROSSTURN)');
+    } else if (raw === 1 && filtered === 0) {
+        // 직진(turnCode 11)이거나 nVoiceCode 가 0이면 GP로 넣지 않는다
+        parts.push('<strong>없음</strong> — 교차로 데이터는 있으나 필터에서 제외 (#1 1 → #2 0)');
+    } else if (raw === undefined || raw === null) {
+        parts.push('<strong>없음</strong> — offsetExtCross 없음 (교차로 데이터 자체가 없음)');
+    } else {
+        parts.push('<strong>없음</strong>');
+    }
+
+    if (extra.cross_img_code) parts.push(`imgID ${extra.cross_img_code}`);
+    if (extra.cross_img_available !== undefined && extra.cross_img_available !== null) {
+        parts.push(Number(extra.cross_img_available) ? '리소스 사용가능' : '리소스 없음');
+    }
+    return parts.join(' · ');
+}
+
+function buildGpGuidePopup(marker) {
+    const extra = marker.extra || {};
+    const gpType = Number(extra.gp_type) || 0;
+    const color = gpMarkerColor(gpType);
+    const title = gpType & GP_TYPE_EXTCROSSTURN
+        ? '복잡교차로 GP (차선 버블 + 교차로 이미지)'
+        : (gpType & GP_TYPE_TURN ? '회전 GP (차선 버블)' : '안내 없는 통과 링크');
+
+    const row = (label, value) => (value === null || value === undefined || value === '')
+        ? ''
+        : `<tr><td style="padding-right:8px;white-space:nowrap"><strong>${label}</strong></td><td>${value}</td></tr>`;
+
+    const laneColors = Array.isArray(extra.lane_colors) ? extra.lane_colors : [];
+    const crossImageRow = extra.cross_image === null || extra.cross_image === undefined
+        ? ''
+        : row('bCrossImage', `${extra.cross_image}${extra.cross_image_raw !== undefined && extra.cross_image_raw !== extra.cross_image
+            ? ` (필터 전 ${extra.cross_image_raw})` : ''}`);
+
+    return `
+        <div class="popup-content" style="min-width:280px">
+            <div style="font-weight:bold;color:${color};margin-bottom:6px">${escapeHtml(title)}</div>
+            <div style="font-size:11px;color:#64748b;margin-bottom:8px">
+                차선 버블은 GPTYPE_TURN, 교차로 이미지는 GPTYPE_EXTCROSSTURN 에서 나온다
+            </div>
+            <table style="font-size:12px">
+                ${row('turnCode', escapeHtml(gpTurnCodeLabel(extra.turn_code)))}
+                ${row('nGPType', escapeHtml(gpTypeLabel(gpType)))}
+                ${row('GPIdx', extra.gp_index)}
+                ${row('TVAS GP Idx', extra.render_gp_index)}
+                ${row('linkIndex', extra.link_index)}
+                ${row('nLinkID', extra.link_id)}
+                ${row('링크 순번', extra.link_ordinal)}
+                ${row('교차로 이미지', gpCrossImageSummary(extra))}
+                ${crossImageRow}
+                ${row('nVoiceCode', extra.voice_code === null || extra.voice_code === undefined
+                    ? '' : escapeHtml(gpTurnCodeLabel(extra.voice_code)))}
+                ${row('ucSndCode (원본)', extra.snd_code === null || extra.snd_code === undefined
+                    ? '' : escapeHtml(gpTurnCodeLabel(extra.snd_code)))}
+                ${row('교차로 이미지 ID', extra.cross_img_code)}
+                ${row('이미지 사용가능', extra.cross_img_available)}
+                ${row('vertexEnd', extra.vertex_end)}
+                ${row('laneColor', (Number(extra.gp_type) || 0) & GP_TYPE_TURN
+                    ? `${gpLaneColorChip(extra.lane_color)} <span style="color:#64748b">(nVoiceCode 유래)</span>` : '')}
+                ${row('주행 중 관측 laneColor', laneColors.length ? laneColors.map(gpLaneColorChip).join(', ') : '')}
+                ${row('위치 근거', escapeHtml(String(extra.position_source || '-'))
+                    + (extra.link_ordinal_from_log
+                        ? ' <span style="color:#94a3b8">— nLinkID가 맵 링크ID가 아니라 순번</span>' : ''))}
+                ${row('주행 중 관측 위치', extra.observed_gap_m === null || extra.observed_gap_m === undefined
+                    ? '' : `${Number(extra.observed_lat).toFixed(6)}, ${Number(extra.observed_lon).toFixed(6)}`
+                        + ` <span style="color:${extra.observed_gap_m > 50 ? '#dc2626' : '#16a34a'}">(차이 ${extra.observed_gap_m}m)</span>`
+                        + ` <span style="color:#94a3b8">vertex ${extra.observed_vertex_index}</span>`)}
+                ${row('경로', escapeHtml(String(extra.route_session_name || extra.route_session_id || '-')))}
+                ${row('좌표', `${marker.latitude.toFixed(6)}, ${marker.longitude.toFixed(6)}`)}
+                ${row('로그 시간', escapeHtml(marker.timestamp_str || '-'))}
+            </table>
+            ${buildGpBubbleSection(extra)}
+        </div>
+    `;
+}
+
+// 이 GP에서 그려지는 차선 버블 — nVoiceCode / nTurnCode 로 구성
+function buildGpBubbleSection(extra) {
+    const gpType = Number(extra.gp_type) || 0;
+    if (!(gpType & GP_TYPE_TURN)) return '';
+    return `<div style="margin-top:8px">` +
+        `<div style="font-size:11px;color:#64748b;margin-bottom:4px">이 GP에서 그려지는 차선 버블</div>` +
+        buildLaneBubbleHtml(extra) + `</div>`;
+}
+
+function buildGpLaneColorPopup(marker) {
+    const extra = marker.extra || {};
+    const info = GP_LANE_COLORS[Number(extra.lane_color)] || GP_LANE_COLORS[0];
+    const row = (label, value) => (value === null || value === undefined || value === '')
+        ? ''
+        : `<tr><td style="padding-right:8px;white-space:nowrap"><strong>${label}</strong></td><td>${value}</td></tr>`;
+
+    return `
+        <div class="popup-content" style="min-width:260px">
+            <div style="font-weight:bold;color:${info.hex};margin-bottom:6px">차선 버블 색상 (주행 중)</div>
+            <div style="font-size:11px;color:#64748b;margin-bottom:8px">
+                setLaneColor 호출 시점의 차량 위치에 표시
+            </div>
+            <table style="font-size:12px">
+                ${row('laneColor', gpLaneColorChip(extra.lane_color))}
+                ${row('nVoiceCode', escapeHtml(gpTurnCodeLabel(extra.voice_code)))}
+                ${row('gpTurnCode', escapeHtml(gpTurnCodeLabel(extra.turn_code)))}
+                ${row('guidePointIndex', extra.gp_index)}
+                ${row('linkIndex', extra.link_index)}
+                ${row('gpLinkIndex', extra.gp_link_index)}
+                ${extra.link_mismatch
+                    ? '<tr><td colspan="2" style="color:#dc2626"><strong>gpLinkIndex ≠ linkIndex</strong> — GP 매핑 확인 필요</td></tr>'
+                    : ''}
+                ${row('좌표', `${marker.latitude.toFixed(6)}, ${marker.longitude.toFixed(6)}`)}
+                ${row('로그 시간', escapeHtml(marker.timestamp_str || '-'))}
+            </table>
+        </div>
+    `;
+}
+
+function visualizeGpGuideFromLog() {
+    if (!Array.isArray(markersData) || markersData.length === 0) return;
+
+    const gpMarkers = markersData.filter((m) => m.extra?.gp_guide);
+    const laneMarkers = markersData.filter((m) => m.extra?.gp_lane_color);
+    if (gpMarkers.length === 0 && laneMarkers.length === 0) return;
+
+    // 교차로 이미지 유무는 nGPType 의 EXTCROSSTURN 플래그로 갈린다
+    const crossImageMarkers = gpMarkers.filter((m) => (Number(m.extra.gp_type) || 0) & GP_TYPE_EXTCROSSTURN);
+    const turnOnlyMarkers = gpMarkers.filter((m) => {
+        const gpType = Number(m.extra.gp_type) || 0;
+        return (gpType & GP_TYPE_TURN) && !(gpType & GP_TYPE_EXTCROSSTURN);
+    });
+    console.log(`📊 GP Guide: 교차로이미지 ${crossImageMarkers.length}개, 이미지없음 ${turnOnlyMarkers.length}개, ` +
+        `주행 laneColor ${laneMarkers.length}개`);
+
+    const addTo = (layerName, list, popupBuilder, iconBuilder) => {
+        if (list.length === 0) return null;
+        const group = ensureTmapFeatureGroup(layerName);
+        group.clearLayers();
+        list.forEach((marker) => {
+            const layer = iconBuilder
+                ? L.marker([marker.latitude, marker.longitude], { icon: iconBuilder(marker.extra) })
+                : L.circleMarker([marker.latitude, marker.longitude], {
+                    radius: 5,
+                    color: marker.color || '#64748b',
+                    weight: 2,
+                    fill: marker.fill !== false,
+                    fillColor: marker.color || '#64748b',
+                    fillOpacity: 0.85,
+                    pane: 'markerPane'
+                });
+            layer.bindPopup(popupBuilder(marker));
+            group.addLayer(layer);
+        });
+        return group;
+    };
+
+    addTo(GP_CROSS_IMAGE_LAYER, crossImageMarkers, buildGpGuidePopup, buildGpMarkerIcon);
+    addTo(GP_TURN_ONLY_LAYER, turnOnlyMarkers, buildGpGuidePopup, buildGpMarkerIcon);
+    addTo(GP_LANE_COLOR_LAYER, laneMarkers, buildGpLaneColorPopup, null);
+
+    renderLayerControls();
+}
+
+// Route Info 링크 팝업에 붙는 GP 요약 — 해당 링크에서 안내엔진이 내린 결정
+function buildRouteGuideSection(guide) {
+    if (!guide) {
+        return `<hr style="margin:6px 0;border:none;border-top:1px solid #e2e8f0">` +
+            `<span style="color:#94a3b8">GP 로그 없음 (이 링크의 ServiceDataCollect 미수집)</span>`;
+    }
+
+    const gpType = Number(guide.gp_type) || 0;
+    const color = gpMarkerColor(gpType);
+    const title = gpType & GP_TYPE_EXTCROSSTURN
+        ? '복잡교차로 GP'
+        : (gpType & GP_TYPE_TURN ? '회전 GP' : '안내 없음 (통과 링크)');
+
+    const rows = [
+        `turnCode: ${escapeHtml(gpTurnCodeLabel(guide.turn_code))}`,
+        `nGPType: ${escapeHtml(gpTypeLabel(gpType))}`,
+        `교차로 이미지: ${gpCrossImageSummary(guide)}`
+    ];
+    if (guide.gp_index !== null && guide.gp_index !== undefined) rows.push(`GPIdx: ${guide.gp_index}`);
+    if (guide.link_index !== null && guide.link_index !== undefined) rows.push(`linkIndex: ${guide.link_index}`);
+    if (guide.voice_code !== null && guide.voice_code !== undefined) {
+        rows.push(`nVoiceCode: ${escapeHtml(gpTurnCodeLabel(guide.voice_code))}`);
+    }
+    if (guide.lane_color !== undefined && (Number(guide.gp_type) || 0) & GP_TYPE_TURN) {
+        rows.push(`laneColor: ${gpLaneColorChip(guide.lane_color)} (nVoiceCode 유래)`);
+    }
+    const observed = Array.isArray(guide.lane_colors_observed) ? guide.lane_colors_observed : [];
+    if (observed.length > 0) {
+        rows.push(`주행 중 관측 laneColor: ${observed.map(gpLaneColorChip).join(', ')}`);
+    }
+
+    return `<hr style="margin:6px 0;border:none;border-top:1px solid #e2e8f0">` +
+        `<strong style="color:${color}">[GP] ${escapeHtml(title)}</strong><br>` +
+        rows.join('<br>') +
+        buildGpBubbleSection(guide);
+}
+
+// ===== Lane bubble (차선 버블) ============================================== //
+// upstream 로그만 사용한다 (ServiceDataCollect #1/#2, nGPType):
+//   색상      = nVoiceCode -> ToLaneColor()  (65 초록 / 66 분홍 / 67 파랑 / 68 노랑)
+//   차로 힌트 = nVoiceCode 의 IDV_RG_* 차로 코드 (예: 97 = 오른쪽 1개 차로)
+//   회전      = nTurnCode
+//   교차로 이미지 = bCrossImage + nGPType & EXTCROSSTURN
+// 차로별 화살표/하이라이트는 넣지 않는다 — nLaneTurnInfo[]/nLaneAvailable[] 를
+// 찍는 로그가 upstream 에 없어서 복원이 불가능하다.
+const GP_LANE_BUBBLE_LAYER = 'GP Lane Bubble (차선 버블)';
+
+// nVoiceCode 가 구체적인 차로를 지시하는 경우의 차로 배치.
+// { total: 표시할 칸 수, lit: 강조할 칸 인덱스, anchor: 미지의 나머지 차로 방향 }
+function gpLaneLayoutFromVoiceCode(voiceCode) {
+    const code = Number(voiceCode);
+    if (!Number.isFinite(code)) return null;
+
+    // 54~63 : n차선
+    if (code >= 54 && code <= 63) {
+        const n = code - 53;
+        return { total: n, lit: [n - 1], anchor: 'right', exact: false };
+    }
+    // 85~88 : 왼쪽 n번째 차로 / 89~92 : 오른쪽 n번째 차로
+    if (code >= 85 && code <= 88) {
+        const n = code - 84;
+        return { total: n, lit: [n - 1], anchor: 'right', exact: false };
+    }
+    if (code >= 89 && code <= 92) {
+        const n = code - 88;
+        return { total: n, lit: [0], anchor: 'left', exact: false };
+    }
+    // 93~96 : 왼쪽 n개 차로 / 97~100 : 오른쪽 n개 차로
+    if (code >= 93 && code <= 96) {
+        const n = code - 92;
+        return { total: n, lit: Array.from({ length: n }, (_, i) => i), anchor: 'right', exact: false };
+    }
+    if (code >= 97 && code <= 100) {
+        const n = code - 96;
+        return { total: n, lit: Array.from({ length: n }, (_, i) => i), anchor: 'left', exact: false };
+    }
+    // 52 왼쪽차선 / 53 오른쪽차선 / 51 직진방향
+    if (code === 52) return { total: 2, lit: [0], anchor: 'right', exact: false };
+    if (code === 53) return { total: 2, lit: [1], anchor: 'left', exact: false };
+    if (code === 51) return { total: 1, lit: [0], anchor: null, exact: false };
+    return null;
+}
+
+function buildLaneBubbleHtml(extra) {
+    const colorInfo = GP_LANE_COLORS[Number(extra.lane_color)] || GP_LANE_COLORS[0];
+    const glyph = GP_TURN_GLYPHS[Number(extra.turn_code)] || '◆';
+    const layout = gpLaneLayoutFromVoiceCode(extra.voice_code);
+
+    let strip;
+    if (layout) {
+        const cells = [];
+        // 총 차로 수는 로그에 없다. 미지의 나머지 차로는 '…' 칸으로 표시한다.
+        if (layout.anchor === 'left') {
+            cells.push(`<div style="min-width:9px;padding:1px;color:rgba(255,255,255,.4);font-size:9px;text-align:center">…</div>`);
+        }
+        for (let i = 0; i < layout.total; i++) {
+            const lit = layout.lit.includes(i);
+            cells.push(
+                `<div style="min-width:13px;padding:1px 1px;border-radius:2px;text-align:center;font-size:10px;line-height:12px;` +
+                `background:${lit ? colorInfo.hex : 'rgba(148,163,184,.4)'};color:${lit ? '#fff' : 'rgba(255,255,255,.45)'};` +
+                `font-weight:${lit ? 700 : 400}">${lit ? glyph : '·'}</div>`
+            );
+        }
+        if (layout.anchor === 'right') {
+            cells.push(`<div style="min-width:9px;padding:1px;color:rgba(255,255,255,.4);font-size:9px;text-align:center">…</div>`);
+        }
+        strip = `<div style="display:flex;gap:1px;justify-content:center">${cells.join('')}</div>`;
+    } else {
+        // 차로 지시가 없는 코드(65~68 색상 차선 등) — 색상 칩 + 회전만
+        strip = `<div style="display:flex;gap:4px;align-items:center;justify-content:center">` +
+            `<span style="width:14px;height:14px;line-height:14px;border-radius:2px;background:${colorInfo.hex};` +
+            `color:#fff;font-size:10px;font-weight:700;text-align:center">${glyph}</span></div>`;
+    }
+
+    const crossBadge = extra.has_cross_image
+        ? `<span style="padding:0 2px;border-radius:2px;background:#7c3aed;color:#fff;font-size:7px">교차로</span>`
+        : '';
+    const voiceText = extra.voice_code ? gpTurnCodeName(extra.voice_code) : '차로 지시 없음';
+
+    return `<div style="display:inline-block;padding:2px 3px;background:rgba(15,23,42,.86);` +
+        `border:1px solid ${colorInfo.hex};border-radius:4px">` +
+        strip +
+        `<div style="margin-top:1px;font-size:7px;line-height:9px;color:#e2e8f0;text-align:center;white-space:nowrap">` +
+        `${escapeHtml(colorInfo.name.split(' ')[0])} ${crossBadge}</div>` +
+        `<div style="font-size:7px;line-height:9px;color:#94a3b8;text-align:center;white-space:nowrap">${escapeHtml(voiceText)}</div>` +
+        `</div>`;
+}
+
+function buildLaneBubbleIcon(extra) {
+    const layout = gpLaneLayoutFromVoiceCode(extra.voice_code);
+    const width = Math.max(46, ((layout?.total || 1) * 15) + 30);
+    return L.divIcon({
+        className: '',
+        iconSize: [width, 38],
+        iconAnchor: [width / 2, 38],
+        html: buildLaneBubbleHtml(extra)
+    });
+}
+
+function buildLaneBubblePopup(marker) {
+    const extra = marker.extra || {};
+    const colorInfo = GP_LANE_COLORS[Number(extra.lane_color)] || GP_LANE_COLORS[0];
+    const row = (label, value) => (value === null || value === undefined || value === '')
+        ? ''
+        : `<tr><td style="padding-right:8px;white-space:nowrap"><strong>${label}</strong></td><td>${value}</td></tr>`;
+    const observed = Array.isArray(extra.lane_colors_observed) ? extra.lane_colors_observed : [];
+
+    return `
+        <div class="popup-content" style="min-width:280px">
+            <div style="font-weight:bold;color:${colorInfo.hex};margin-bottom:6px">차선 버블</div>
+            <div style="margin-bottom:8px">${buildLaneBubbleHtml(extra)}</div>
+            <table style="font-size:12px">
+                ${row('laneColor', `${gpLaneColorChip(extra.lane_color)} <span style="color:#64748b">(nVoiceCode ${extra.voice_code ?? '-'} → ToLaneColor)</span>`)}
+                ${row('nVoiceCode', escapeHtml(gpTurnCodeLabel(extra.voice_code)))}
+                ${row('turnCode', escapeHtml(gpTurnCodeLabel(extra.turn_code)))}
+                ${row('교차로 이미지', gpCrossImageSummary(extra))}
+                ${row('nGPType', escapeHtml(gpTypeLabel(extra.gp_type)))}
+                ${row('GPIdx', extra.gp_index)}
+                ${row('linkIndex', extra.link_index)}
+                ${row('nLinkID', extra.link_id)}
+                ${observed.length ? row('주행 중 관측 laneColor', observed.map(gpLaneColorChip).join(', ')) : ''}
+                ${row('좌표', `${marker.latitude.toFixed(6)}, ${marker.longitude.toFixed(6)}`)}
+                ${row('로그 시간', escapeHtml(marker.timestamp_str || '-'))}
+            </table>
+            <div style="font-size:11px;color:#64748b;margin-top:6px">
+                차로별 화살표·하이라이트는 이를 찍는 로그가 없어 표시하지 않습니다.
+                '…' 칸은 로그로 알 수 없는 나머지 차로입니다.
+            </div>
+        </div>
+    `;
+}
+
+function visualizeLaneBubblesFromLog() {
+    if (!Array.isArray(markersData) || markersData.length === 0) return;
+    const bubbles = markersData.filter((m) => m.extra?.lane_bubble);
+    if (bubbles.length === 0) return;
+
+    console.log(`📊 Lane Bubble: ${bubbles.length}개`);
+    const group = ensureTmapFeatureGroup(GP_LANE_BUBBLE_LAYER);
+    group.clearLayers();
+    bubbles.forEach((marker) => {
+        const layer = L.marker([marker.latitude, marker.longitude], {
+            icon: buildLaneBubbleIcon(marker.extra)
+        });
+        layer.bindPopup(buildLaneBubblePopup(marker));
+        group.addLayer(layer);
+    });
     renderLayerControls();
 }

@@ -1194,6 +1194,16 @@ html, body {
     max-width: 100%;
 }
 
+.candidate-weight-table thead th.weight-group-base {
+    background: #dcfce7;
+    color: #14532d;
+}
+
+.candidate-weight-table thead th.weight-group-weight {
+    background: #ede9fe;
+    color: #6d28d9;
+}
+
 .candidate-weight-table thead th.weight-group-mul {
     background: #ede9fe;
     color: #6d28d9;
@@ -1204,12 +1214,27 @@ html, body {
     color: #1e3a8a;
 }
 
+.candidate-weight-table td.weight-cell-base {
+    background: #f0fdf4;
+}
+
+.candidate-weight-table td.weight-cell-base-sub {
+    background: #f0fdf4;
+    color: #166534;
+}
+
 .candidate-weight-table td.weight-cell-mul {
     background: #f5f3ff;
 }
 
 .candidate-weight-table td.weight-cell-add {
-    background: #eff6ff;
+    background: #f0fdf4;
+}
+
+.candidate-weight-table th.weight-cell-subtotal,
+.candidate-weight-table td.weight-cell-subtotal {
+    background: #dcfce7;
+    border-left: 2px solid #86efac;
 }
 
 .layer-rule-list {

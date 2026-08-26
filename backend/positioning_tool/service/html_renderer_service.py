@@ -454,15 +454,40 @@ def add_upload_panel():
             <div class="layer-ctx-subtitle">노드 스타일</div>
             <div class="layer-ctx-row">
                 <label class="layer-ctx-label">색상</label>
-                <input id="nodeColorInput" type="color" value="#22c3d6" class="layer-ctx-color">
+                <input id="nodeColorInput" type="color" value="#38bdf8" class="layer-ctx-color">
                 <label class="layer-ctx-label">외곽</label>
-                <input id="nodeStrokeInput" type="color" value="#0f8aa6" class="layer-ctx-color">
+                <input id="nodeStrokeInput" type="color" value="#075985" class="layer-ctx-color">
                 <label class="layer-ctx-label">크기</label>
-                <input id="nodeRadiusInput" type="number" min="1" max="12" step="0.1" value="3.2" class="layer-ctx-weight">
+                <input id="nodeRadiusInput" type="number" min="1" max="12" step="0.1" value="3.4" class="layer-ctx-weight">
                 <label class="layer-ctx-label">두께</label>
-                <input id="nodeWeightInput" type="number" min="0" max="5" step="0.1" value="1" class="layer-ctx-weight">
+                <input id="nodeWeightInput" type="number" min="0" max="5" step="0.1" value="1.1" class="layer-ctx-weight">
             </div>
             <button id="applyNodeStyleButton" class="layer-ctx-btn">노드 스타일 적용</button>
+        </div>
+        <div id="layerCtxVertexSection">
+            <div class="layer-ctx-subtitle">Vertex 스타일</div>
+            <div class="layer-ctx-row">
+                <label class="layer-ctx-label">색상</label>
+                <input id="vertexColorInput" type="color" value="#f8fafc" class="layer-ctx-color">
+                <label class="layer-ctx-label">외곽</label>
+                <input id="vertexStrokeInput" type="color" value="#0f172a" class="layer-ctx-color">
+                <label class="layer-ctx-label">크기</label>
+                <input id="vertexRadiusInput" type="number" min="1" max="12" step="0.1" value="2.2" class="layer-ctx-weight">
+                <label class="layer-ctx-label">두께</label>
+                <input id="vertexWeightInput" type="number" min="0" max="5" step="0.1" value="1" class="layer-ctx-weight">
+            </div>
+            <button id="applyVertexStyleButton" class="layer-ctx-btn">Vertex 스타일 적용</button>
+        </div>
+        <div id="layerCtxSegmentFbSection">
+            <div class="layer-ctx-subtitle">Segment FB 스타일</div>
+            <div class="layer-ctx-row">
+                <label class="layer-ctx-label">색상</label>
+                <input id="fbColorInput" type="color" value="#f97316" class="layer-ctx-color">
+                <label class="layer-ctx-label">두께</label>
+                <input id="fbWeightInput" type="number" min="1" max="10" step="0.5" value="3" class="layer-ctx-weight">
+                <label class="layer-ctx-label">투명도</label>
+                <input id="fbOpacityInput" type="number" min="0.05" max="1" step="0.05" value="0.45" class="layer-ctx-weight">
+            </div>
         </div>
         <button class="layer-ctx-close" id="layerCtxClose">닫기</button>
     </div>
@@ -637,6 +662,13 @@ def add_legend():
             <div><i style="background:#808080; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> 주차장 상태 (ParkingLot)</div>
             <div><i style="background:#ff1493; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> 주차장 상태 (진입 평가/준비)</div>
             <div><img src="https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-grey.png" style="width:10px; height:15px; display:inline-block;"> Request</div>
+            <div style="margin-top:6px; font-size:11px; font-weight:600; color:#334155;">GP (Guide Point)</div>
+            <div>Route Info 링크: 선 색은 그대로. 링크 클릭 시 팝업 하단에 그 링크의 GP 정보가 붙습니다</div>
+            <div><i style="background:#7c3aed; width:10px; height:10px; display:inline-block; border-radius:2px;"></i> 교차로 이미지 있음 (EXTCROSSTURN) — 사각형 마커</div>
+            <div><i style="background:#0d9488; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> 교차로 이미지 없음 (TURN) — 원형 마커, 차선 버블만</div>
+            <div>안내 없는 통과 링크(GPTYPE_NON)는 마커를 만들지 않습니다 — 해당 링크의 turnCode/nGPType은 Route Info 링크 팝업에서 확인</div>
+            <div><i style="background:#22c55e; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> laneColor GREEN / <i style="background:#ec4899; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> PINK / <i style="background:#3b82f6; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> BLUE / <i style="background:#eab308; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> YELLOW</div>
+            <div style="margin-top:4px;">차선 버블: 색상은 nVoiceCode → ToLaneColor, 차로 힌트도 nVoiceCode(IDV_RG_* 차로 코드) 유래. '…' 칸은 로그로 알 수 없는 나머지 차로</div>
         </div>
     </div>
     """

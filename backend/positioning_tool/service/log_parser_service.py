@@ -16,7 +16,13 @@ COORDINATES = {coord_type: [] for coord_type in CoordType}
 LINES = {line_type: [] for line_type in LineType}
 GUIDE_EVENTS = []  # C2X events and accident events
 SDI_EVENTS = []  # SDI (Safety Drive Information) events
+GP_ENTRIES = []  # Route guidance points (GP) collected when a route is applied
+GP_RENDER_POINTS = []  # TVAS GP table from GetRenderData pGuidePoint logs
+ROUTE_MATCH_LINKS = []  # (route link index, route vertex index, timestamp) while driving
+GP_LANE_EVENTS = []  # Runtime setLaneColor ticks ([LANE_COLOR] linkIndex:...)
+gp_pending = {}  # Per-link scratch built up across the ServiceDataCollect log lines
 PARKING_LOT_EVENTS = []  # ParkingLot detector exit events
+LANE_EXT_LINKS = {}  # link_id(str) -> 확장 차선수([LANE_EXT] 로그) 정보
 last_gnss_coordinate = None  # Track last GNSS position for parking lot events
 min_timestamp = datetime.max
 max_timestamp = datetime.min
@@ -52,11 +58,16 @@ DLT_RELEVANT_BYTE_KEYWORDS = [
     b"processContents",
     b"GetSdiSelected select",
     b"onDriveStatusChanged SDI",
+    b"[LANE_EXT]",
     b"ApplyParkingLotDetector",
     b"ParkingLotDetector transition",
     b"TVAS server route",
     b"online request [",
     b"[TVAS Header]",
+    b"ServiceDataCollect",
+    b"Route LinkScore RESULT",
+    b"[LANE_COLOR]",
+    b"GetRenderData pGuidePoint",
 ]
 
 SET_ROUTE_INFORMATION_PATTERN = re.compile(
@@ -98,6 +109,12 @@ CANDIDATE_LINK_PATTERN = re.compile(
     r"Dist\(p:\s*([+\-]?\d+(?:\.\d+)?)\s*d:\s*([+\-]?\d+(?:\.\d+)?)\s*laneW:\s*([+\-]?\d+(?:\.\d+)?)\s*fB:\s*([+\-]?\d+(?:\.\d+)?)\)\s*\|\s*"
     r"Angle\(g:\s*([+\-]?\d+(?:\.\d+)?)\s*v:\s*([+\-]?\d+(?:\.\d+)?)\)\s*\|\s*"
     r"Lane:\s*(\-?\d+)"
+)
+
+# Link[ID] base * mul = final / Lane:... — extrapoint 곱셈 가중치 적용 결과
+LINK_EXTRAPOINT_PATTERN = re.compile(
+    r"(?<![Cc]andidate\s)Link\[\s*(\-?\d+)\]\s*"
+    r"([+\-]?\d+(?:\.\d+)?)\s*\*\s*([+\-]?\d+(?:\.\d+)?)\s*=\s*([+\-]?\d+(?:\.\d+)?)"
 )
 
 # C2X Events & TMAP Incident (MFS) Events — both carry actual WGS84 coordinates.
@@ -144,6 +161,111 @@ PARKING_LOT_STATE_CHANGE_PATTERN = re.compile(
     r"ParkingLotDetector transition:\s*([A-Za-z]+)\s*->\s*([A-Za-z]+),\s*reason=([^,]+)"
 )
 
+# 확장 차선수(LANE_EXT) 적용 로그 — 링크별로 LANE 값 대신 사용된 확장 차선수를 남긴다:
+#   navisdk :: [[MM] : 4] [LANE_EXT] link[16446] lane:2 -> ext:3, dist:29.1, fB:0.353
+LANE_EXT_PATTERN = re.compile(
+    r"\[LANE_EXT\]\s*link\[\s*(-?\d+)\s*\]\s*lane:\s*(-?\d+)\s*->\s*ext:\s*(-?\d+)"
+    r"(?:\s*,\s*dist:\s*([+\-]?\d+(?:\.\d+)?))?"
+    r"(?:\s*,\s*fB:\s*([+\-]?\d+(?:\.\d+)?))?"
+)
+
+# ---------------------------------------------------------------------------
+# GP (Guide Point) / turnCode logs — navisdk CRGDataCollector & CRGPlayer
+#
+# Emitted while a route is being applied (route build time), one burst per
+# route link, in this order:
+#   [LANE_COLOR] ucSndCode:65, nVoiceCode:65, usImgID:1234, ucImgAvailable:1, turnCode:18
+#   ServiceDataCollect #1 bCrossImage:1, nTurnCode:18, nLinkID:57
+#   ServiceDataCollect #2 bCrossImage:1, nTurnCode:18, nVoiceCode:65
+#   ServiceDataCollect nGPType:196608, nTurnCode:18, nLinkID:57
+#   [LANE_COLOR] store GP (new) GPIdx:7, linkIndex:57, nVoiceCode:65, nTurnCode:18, nGPType:0x30000
+# The 'store GP (new)' line is the one that actually creates a GP; the earlier
+# lines only carry the inputs the GP type was derived from. Links that never
+# reach 'store GP (new)' are non-guidance pass-through links (turnCode 4 등).
+#
+# Emitted while driving (per matched link, once per link):
+#   [LANE_COLOR] linkIndex:57, guidePointIndex:7, gpLinkIndex:57, nVoiceCode:65, laneColor:1, gpTurnCode:18
+GP_CROSS_IMAGE_RAW_PATTERN = re.compile(
+    r"ServiceDataCollect #1 bCrossImage:(-?\d+), nTurnCode:(-?\d+), nLinkID:(-?\d+)"
+)
+GP_CROSS_IMAGE_FILTERED_PATTERN = re.compile(
+    r"ServiceDataCollect #2 bCrossImage:(-?\d+), nTurnCode:(-?\d+), nVoiceCode:(-?\d+)"
+)
+GP_TYPE_PATTERN = re.compile(
+    r"ServiceDataCollect nGPType:(-?\d+), nTurnCode:(-?\d+), nLinkID:(-?\d+)"
+)
+GP_STORE_PATTERN = re.compile(
+    r"\[LANE_COLOR\] store GP \(new\) GPIdx:(-?\d+), linkIndex:(-?\d+), "
+    r"nVoiceCode:(-?\d+), nTurnCode:(-?\d+), nGPType:0x([0-9A-Fa-f]+)"
+)
+GP_CROSS_IMAGE_DATA_PATTERN = re.compile(
+    r"\[LANE_COLOR\] ucSndCode:(-?\d+), nVoiceCode:(-?\d+), usImgID:(-?\d+), "
+    r"ucImgAvailable:(-?\d+), turnCode:(-?\d+)"
+)
+GP_LANE_COLOR_PATTERN = re.compile(
+    r"\[LANE_COLOR\] linkIndex:(-?\d+), guidePointIndex:(-?\d+), gpLinkIndex:(-?\d+), "
+    r"nVoiceCode:(-?\d+), laneColor:(-?\d+), gpTurnCode:(-?\d+)"
+)
+# Route match result, logged per position fix (NcRouteMatchEX.cpp):
+#   Route LinkScore RESULT LINK[1] Vertex[10] Score[110.064] [Angle:...] ...
+# LINK[] is the route link index — the same enumeration ServiceDataCollect's
+# nLinkID uses — so it ties a route link ordinal to a real driven position.
+ROUTE_MATCH_LINK_PATTERN = re.compile(
+    r"Route LinkScore RESULT LINK\[(-?\d+)\] Vertex\[(-?\d+)\]"
+)
+GP_RENDER_DATA_PATTERN = re.compile(
+    r"GetRenderData pGuidePoint \[\s*(-?\d+)\] gpType (-?\d+), turnCode:\s*(-?\d+), vertexEnd\s*(-?\d+)"
+)
+
+# nGPType bit flags (rgdata_def.h RG_GPTYPE). Kept here so the parser can label
+# GPs without the frontend; the map popup decodes the same values again.
+GP_TYPE_FLAGS = (
+    (0x00000001, "POSITION_S"),
+    (0x00000002, "POSITION_E"),
+    (0x00000010, "POSITION_V"),
+    (0x00010000, "TURN"),
+    (0x00020000, "EXTCROSSTURN"),
+    (0x00100000, "ROTARY_IN"),
+    (0x00200000, "ROTARY_INNER"),
+    (0x00400000, "ROTARY_OUT"),
+    (0x01000000, "IC"),
+    (0x02000000, "JC"),
+    (0x04000000, "SA"),
+    (0x08000000, "TOLL"),
+    (0x10000000, "EV_STATION"),
+)
+
+
+# nVoiceCode -> LaneColor, exactly as RGPlayer.cpp ToLaneColor() maps it. nVoiceCode
+# is logged by the upstream 'ServiceDataCollect #2' line, so the lane bubble colour
+# can be derived without the locally-added [LANE_COLOR] logs.
+LANE_COLOR_BY_VOICE_CODE = {65: 1, 66: 2, 67: 3, 68: 4}
+
+
+def lane_color_from_voice_code(voice_code):
+    """LaneColor value for a voice code (0 = NONE)."""
+    if voice_code is None:
+        return 0
+    return LANE_COLOR_BY_VOICE_CODE.get(int(voice_code), 0)
+
+
+# LaneColor enum (rgdata_def.h) -> marker colour for the drive-time lane events
+LANE_COLOR_HEX = {
+    0: "#64748b",  # NONE
+    1: "#22c55e",  # GREEN
+    2: "#ec4899",  # PINK
+    3: "#3b82f6",  # BLUE
+    4: "#eab308",  # YELLOW
+}
+
+
+def decode_gp_type_flags(gp_type):
+    """Split an nGPType value into its RG_GPTYPE flag names."""
+    if not gp_type:
+        return []
+    return [name for mask, name in GP_TYPE_FLAGS if gp_type & mask]
+
+
 
 def lat_lon_dist(lat1, lon1, lat2, lon2):
     local_x = -(((lon2 - lon1) * DEG2RAD) * math.cos(DEG2RAD * lat1)) * EARTH_RADIUS
@@ -152,7 +274,8 @@ def lat_lon_dist(lat1, lon1, lat2, lon2):
 
 
 def reset_runtime_state():
-    global COORDINATES, LINES, GUIDE_EVENTS, SDI_EVENTS, PARKING_LOT_EVENTS, last_gnss_coordinate
+    global COORDINATES, LINES, GUIDE_EVENTS, SDI_EVENTS, PARKING_LOT_EVENTS, LANE_EXT_LINKS, last_gnss_coordinate
+    global GP_ENTRIES, GP_RENDER_POINTS, GP_LANE_EVENTS, gp_pending, ROUTE_MATCH_LINKS
     global min_timestamp, max_timestamp
     global last_road_match_state, last_route_match_state, last_threshold_info, log_base_timestamp, last_tvas_header_info
     global current_route_session_id, current_route_session_index, route_session_indices, route_session_sequence
@@ -165,6 +288,12 @@ def reset_runtime_state():
     GUIDE_EVENTS = []
     SDI_EVENTS = []
     PARKING_LOT_EVENTS = []
+    LANE_EXT_LINKS = {}
+    GP_ENTRIES = []
+    GP_RENDER_POINTS = []
+    GP_LANE_EVENTS = []
+    ROUTE_MATCH_LINKS = []
+    gp_pending = {}
     ROUTE_REQUEST_POINTS = {}
     ROUTE_SESSION_CONTENT_IDS = {}
     last_gnss_coordinate = None
@@ -200,6 +329,7 @@ def parse_log(log_file_path=None):
     last_road_match_coord = None
     last_route_match_coord = None
     pending_candidate_link_scores = []
+    pending_extrapoint_by_link_id = {}  # link_id -> extrapoint_info, buffered until Candidate Link line arrives
     source_path = log_file_path or PATHS.log_file_path
     log_base_timestamp = infer_initial_timestamp(source_path)
     current_timestamp = log_base_timestamp
@@ -263,14 +393,24 @@ def parse_log(log_file_path=None):
             parse_guide_event(line, timestamp)
             parse_sdi_event(line, timestamp)
             parse_parking_lot_event(line, timestamp)
+            parse_lane_ext(line, timestamp)
+            parse_gp_guide_event(line, timestamp)
             parse_route_request_points(line)
 
             tvas_header_info = parse_tvas_header_info(line, last_tvas_header_info)
             if tvas_header_info is not None:
                 last_tvas_header_info = tvas_header_info
 
+            extrapoint_info = parse_link_extrapoint(line)
+            if extrapoint_info:
+                pending_extrapoint_by_link_id[extrapoint_info["link_id"]] = extrapoint_info
+
             candidate_link_info = parse_candidate_link_score(line)
             if candidate_link_info:
+                ep = pending_extrapoint_by_link_id.pop(candidate_link_info["link_id"], None)
+                if ep:
+                    candidate_link_info["mul"] = ep["mul"]
+                    candidate_link_info["score"] = ep["score"]
                 if last_dr_coordinate is not None:
                     bucket = last_dr_coordinate.extra.setdefault("candidate_link_scores", [])
                     bucket.append(candidate_link_info)
@@ -329,9 +469,9 @@ def parse_log(log_file_path=None):
                 reason = mm_feedback_match.group(1).strip()
                 reason_lower = reason.lower()
                 is_correction = (
-                    reason_lower.startswith("clamped")
+                    reason_lower.startswith("clamp")       # clamp to lane edge / clamp to feedback pos
                     or reason_lower.startswith("heading only")
-                    or "correction" in reason_lower
+                    or "correction" in reason_lower        # legacy: correction clamped / Force correction
                 )
                 if is_correction and "skip" not in reason_lower:
                     pending_mm_feedback_reason = reason
@@ -1150,6 +1290,52 @@ def parse_parking_lot_event(line, timestamp):
     return False
 
 
+def parse_lane_ext(line, timestamp):
+    """[LANE_EXT] 로그에서 링크별 확장 차선수(lane -> ext)를 수집한다.
+
+    navisdk :: [[MM] : 4] [LANE_EXT] link[16446] lane:2 -> ext:3, dist:29.1, fB:0.353
+
+    같은 링크가 반복 출력되므로 링크당 1건으로 합치고, 관측 횟수와
+    최초/마지막 시각만 누적한다(마지막 값이 최종 상태).
+    """
+    global LANE_EXT_LINKS
+
+    match = LANE_EXT_PATTERN.search(line)
+    if not match:
+        return False
+
+    link_id = match.group(1)
+    lane = int(match.group(2))
+    ext = int(match.group(3))
+    dist = float(match.group(4)) if match.group(4) is not None else None
+    feedback = float(match.group(5)) if match.group(5) is not None else None
+    ts_ms = int(timestamp.timestamp() * 1000) if timestamp else 0
+
+    entry = LANE_EXT_LINKS.get(link_id)
+    if entry is None:
+        entry = {
+            "link_id": link_id,
+            "lane": lane,
+            "ext": ext,
+            "dist": dist,
+            "feedback": feedback,
+            "count": 0,
+            "first_timestamp_ms": ts_ms,
+            "last_timestamp_ms": ts_ms,
+        }
+        LANE_EXT_LINKS[link_id] = entry
+
+    entry["lane"] = lane
+    entry["ext"] = ext
+    if dist is not None:
+        entry["dist"] = dist
+    if feedback is not None:
+        entry["feedback"] = feedback
+    entry["count"] += 1
+    entry["last_timestamp_ms"] = ts_ms
+    return True
+
+
 def parse_guide_event(line, timestamp):
     """Parse C2X events and TMAP incident (MFS) events with actual coordinates.
 
@@ -1199,6 +1385,128 @@ def parse_guide_event(line, timestamp):
             "longitude": longitude,
             "event_time": "",
             "name": mfs_match.group(8).strip(),
+            "timestamp": timestamp,
+        })
+        return True
+
+    return False
+
+
+def parse_gp_guide_event(line, timestamp):
+    """Collect GP (guide point) / turnCode information from navisdk logs.
+
+    Three independent sources are merged later in build_gp_guide_markers():
+      * ServiceDataCollect bursts  -> one record per route link (map link id
+        included, so the GP can be placed with the Route Info link geometry)
+      * [LANE_COLOR] store GP      -> GP index / link index of the GPs that were
+        actually created out of those links
+      * GetRenderData pGuidePoint  -> the TVAS GP table as the renderer sees it
+        (gpType/turnCode per GP, positioned by route vertex index)
+    """
+    global gp_pending
+
+    # --- route build time: cross image data read for the current link ---------
+    match = GP_CROSS_IMAGE_DATA_PATTERN.search(line)
+    if match:
+        gp_pending["snd_code"] = int(match.group(1))
+        gp_pending["voice_code"] = int(match.group(2))
+        gp_pending["cross_img_code"] = int(match.group(3))
+        gp_pending["cross_img_available"] = int(match.group(4))
+        return True
+
+    match = GP_CROSS_IMAGE_RAW_PATTERN.search(line)
+    if match:
+        gp_pending["cross_image_raw"] = int(match.group(1))
+        gp_pending["turn_code"] = int(match.group(2))
+        gp_pending["link_id"] = int(match.group(3))
+        return True
+
+    match = GP_CROSS_IMAGE_FILTERED_PATTERN.search(line)
+    if match:
+        # '#2' is after the straight-ahead filter, so this is the bCrossImage
+        # value GetGuidePointType() actually sees.
+        gp_pending["cross_image"] = int(match.group(1))
+        gp_pending["turn_code"] = int(match.group(2))
+        gp_pending["voice_code"] = int(match.group(3))
+        return True
+
+    match = GP_TYPE_PATTERN.search(line)
+    if match:
+        # Logged once per route link — this line closes the burst for one link.
+        gp_type = int(match.group(1))
+        entry = dict(gp_pending)
+        gp_pending = {}
+        entry.update({
+            "gp_type": gp_type,
+            "turn_code": int(match.group(2)),
+            "link_id": int(match.group(3)),
+            "gp_type_flags": decode_gp_type_flags(gp_type),
+            "route_session_id": current_route_session_id or "unknown",
+            "route_session_index": current_route_session_index or 0,
+            "timestamp": timestamp,
+        })
+        GP_ENTRIES.append(entry)
+        return True
+
+    match = GP_STORE_PATTERN.search(line)
+    if match:
+        # Fires right after the ServiceDataCollect burst of the same link.
+        gp_type = int(match.group(5), 16)
+        stored = {
+            "gp_index": int(match.group(1)),
+            "link_index": int(match.group(2)),
+            "voice_code": int(match.group(3)),
+            "turn_code": int(match.group(4)),
+            "gp_type": gp_type,
+            "gp_type_flags": decode_gp_type_flags(gp_type),
+        }
+        if GP_ENTRIES and GP_ENTRIES[-1].get("gp_index") is None:
+            GP_ENTRIES[-1].update(stored)
+        else:
+            stored.update({
+                "route_session_id": current_route_session_id or "unknown",
+                "route_session_index": current_route_session_index or 0,
+                "timestamp": timestamp,
+            })
+            GP_ENTRIES.append(stored)
+        return True
+
+    # --- route render time: the TVAS GP table as the renderer walks it -------
+    match = GP_RENDER_DATA_PATTERN.search(line)
+    if match:
+        gp_type = int(match.group(2))
+        GP_RENDER_POINTS.append({
+            "gp_index": int(match.group(1)),
+            "gp_type": gp_type,
+            "gp_type_flags": decode_gp_type_flags(gp_type),
+            "turn_code": int(match.group(3)),
+            "vertex_end": int(match.group(4)),
+            "route_session_id": current_route_session_id or "unknown",
+            "route_session_index": current_route_session_index or 0,
+            "timestamp": timestamp,
+        })
+        return True
+
+    match = ROUTE_MATCH_LINK_PATTERN.search(line)
+    if match:
+        ROUTE_MATCH_LINKS.append({
+            "link_index": int(match.group(1)),
+            "vertex_index": int(match.group(2)),
+            "timestamp": timestamp,
+        })
+        return True
+
+    # --- drive time: which lane bubble colour is active on the current link --
+    match = GP_LANE_COLOR_PATTERN.search(line)
+    if match:
+        GP_LANE_EVENTS.append({
+            "link_index": int(match.group(1)),
+            "gp_index": int(match.group(2)),
+            "gp_link_index": int(match.group(3)),
+            "voice_code": int(match.group(4)),
+            "lane_color": int(match.group(5)),
+            "turn_code": int(match.group(6)),
+            "route_session_id": current_route_session_id or "unknown",
             "timestamp": timestamp,
         })
         return True
@@ -1343,8 +1651,8 @@ def parse_candidate_link_score(line):
         "anglePenalty": float(match.group(5)),
         "laneBonus": float(match.group(6)),
         "adjustment": float(match.group(7)),
-        "distanceProjection": float(match.group(8)),
-        "distanceScore": float(match.group(9)),
+        "distanceProjection": float(match.group(8)),  # p: distancePenalty
+        "distanceScore": float(match.group(9)),        # d: 실제 투영거리(m)
         "laneWeight": float(match.group(10)),
         "facilityBonus": float(match.group(11)),
         "gyroAngle": float(match.group(12)),
@@ -1352,6 +1660,18 @@ def parse_candidate_link_score(line):
         "lane": int(match.group(14)),
     }
     return previous_info
+
+
+def parse_link_extrapoint(line):
+    match = LINK_EXTRAPOINT_PATTERN.search(line or "")
+    if not match:
+        return None
+    return {
+        "link_id": int(match.group(1)),
+        "base": float(match.group(2)),
+        "mul": float(match.group(3)),
+        "score": float(match.group(4)),
+    }
 
 
 def write_data_to_csv(out_path=None):
@@ -1567,6 +1887,559 @@ def build_guide_event_markers():
     return markers
 
 
+def _route_links_by_session(lines):
+    """Group 'Route Info' lines per route session, ordered by log order."""
+    sessions = {}
+    for line in lines or []:
+        if line.get("type") != "Route Info":
+            continue
+        extra = line.get("extra") or {}
+        session_id = extra.get("route_session_id") or "unknown"
+        sessions.setdefault(session_id, []).append(line)
+    for session_lines in sessions.values():
+        session_lines.sort(key=lambda item: (item.get("extra") or {}).get("route_sequence") or 0)
+    return sessions
+
+
+def _drive_positions(coords):
+    """Timestamp-sorted vehicle positions used to place drive-time GP events."""
+    preferred = [
+        coord for coord in coords or []
+        if coord.get("type") == "DR-based" and coord.get("timestamp_ms")
+    ]
+    if not preferred:
+        preferred = [
+            coord for coord in coords or []
+            if coord.get("timestamp_ms") and coord.get("latitude") and coord.get("longitude")
+        ]
+    return sorted(preferred, key=lambda coord: coord["timestamp_ms"])
+
+
+def _nearest_position(positions, timestamp, max_gap_ms=10000):
+    """Closest vehicle position to a log timestamp, or None when too far away."""
+    if not positions or timestamp is None:
+        return None
+    target = int(timestamp.timestamp() * 1000)
+    low, high = 0, len(positions) - 1
+    best = None
+    best_gap = None
+    while low <= high:
+        mid = (low + high) // 2
+        gap = abs(positions[mid]["timestamp_ms"] - target)
+        if best_gap is None or gap < best_gap:
+            best_gap = gap
+            best = positions[mid]
+        if positions[mid]["timestamp_ms"] < target:
+            low = mid + 1
+        else:
+            high = mid - 1
+    if best_gap is not None and best_gap > max_gap_ms:
+        return None
+    return best
+
+
+def _map_vertex_end_to_link_ordinal(route_links, vertex_ends):
+    """Map TVAS route vertex indices to route link ordinals.
+
+    setRouteInformation logs the vertex count of every route link, so the end
+    vertex index of link k can be accumulated. Whether neighbouring links share
+    their boundary vertex is not stated in the log, so both layouts are tried and
+    the one that actually explains the logged vertexEnd values wins. Returns {}
+    when neither layout fits (e.g. the route link list was trimmed on reroute),
+    in which case GetRenderData GPs simply stay unpositioned.
+    """
+    sizes = [int((link.get("extra") or {}).get("vertex_size") or 0) for link in route_links]
+    wanted = set(vertex_ends)
+    if not sizes or not wanted:
+        return {}
+
+    best_mapping = {}
+    best_hits = -1
+    for shares_boundary in (True, False):
+        mapping = {}
+        cursor = 0
+        for ordinal, size in enumerate(sizes):
+            end = cursor + max(size, 1) - 1
+            mapping.setdefault(end, ordinal)
+            cursor = end if shares_boundary else end + 1
+        hits = sum(1 for vertex_end in wanted if vertex_end in mapping)
+        if hits > best_hits:
+            best_hits = hits
+            best_mapping = mapping
+
+    if best_hits < len(wanted) * 0.9:
+        return {}
+    return best_mapping
+
+
+def _lane_color_by_gp_index():
+    """Drive-time lane bubble colours observed per GP index."""
+    by_gp = {}
+    for event in GP_LANE_EVENTS:
+        bucket = by_gp.setdefault(event["gp_index"], {
+            "lane_colors": [],
+            "voice_code": event["voice_code"],
+            "turn_code": event["turn_code"],
+            "first_timestamp": event["timestamp"],
+        })
+        if event["lane_color"] not in bucket["lane_colors"]:
+            bucket["lane_colors"].append(event["lane_color"])
+    return by_gp
+
+
+def _merge_gp_records_by_link_ordinal(route_links, entries, render_points):
+    """Tie GP log records to route link ordinals.
+
+    ServiceDataCollect carries the map link id, so it is matched against the
+    Route Info link list with a forward-only cursor (a route may pass the same
+    link twice). GetRenderData only has a route vertex index and is merged on
+    top of the matching link when that index can be resolved. Records that
+    cannot be tied to any route link are returned separately.
+    """
+    merged = {}
+    floating = []
+
+    route_link_ids = [(link.get("extra") or {}).get("link_id") for link in route_links]
+    logged_ids = [entry.get("link_id") for entry in entries if entry.get("link_id") is not None]
+    id_matches = sum(1 for value in logged_ids if value in set(route_link_ids))
+    # For TVAS routes pstLinkListInfo[i].m_nLinkID is the route link ordinal, not a
+    # map link id, so the logged values come out as 0,1,2,... Decide by what the
+    # values actually are rather than assuming one of the two.
+    treat_as_ordinal = (
+        id_matches == 0
+        and logged_ids
+        and min(logged_ids) == 0
+        and max(logged_ids) < max(len(route_links), len(logged_ids))
+        and len(set(logged_ids)) == len(logged_ids)
+    )
+
+    cursor = 0
+    for entry in entries:
+        link_id = entry.get("link_id")
+        ordinal = None
+        if treat_as_ordinal:
+            if link_id is not None and 0 <= link_id < len(route_links):
+                ordinal = link_id
+        else:
+            for candidate in range(cursor, len(route_links)):
+                if route_link_ids[candidate] == link_id:
+                    ordinal = candidate
+                    cursor = candidate + 1
+                    break
+            if ordinal is None:
+                # The logged route link list can be trimmed on reroute; fall back to
+                # a full scan without moving the cursor.
+                for candidate in range(0, len(route_links)):
+                    if route_link_ids[candidate] == link_id:
+                        ordinal = candidate
+                        break
+        record = dict(entry)
+        record["link_ordinal_from_log"] = bool(treat_as_ordinal)
+        record["position_source"] = (
+            "route link ordinal (nLinkID)" if treat_as_ordinal else "route link id"
+        )
+        if ordinal is None:
+            floating.append(record)
+        else:
+            merged[ordinal] = record
+
+    vertex_map = _map_vertex_end_to_link_ordinal(
+        route_links, [point["vertex_end"] for point in render_points]
+    )
+    for point in render_points:
+        ordinal = vertex_map.get(point["vertex_end"])
+        render_info = {
+            "render_gp_index": point["gp_index"],
+            "render_gp_type": point["gp_type"],
+            "render_turn_code": point["turn_code"],
+            "vertex_end": point["vertex_end"],
+        }
+        if ordinal is not None and ordinal in merged:
+            merged[ordinal].update(render_info)
+            continue
+        record = {
+            "gp_type": point["gp_type"],
+            "gp_type_flags": point["gp_type_flags"],
+            "turn_code": point["turn_code"],
+            "route_session_id": point["route_session_id"],
+            "route_session_index": point["route_session_index"],
+            "timestamp": point["timestamp"],
+            "position_source": "route vertex index",
+            **render_info,
+        }
+        if ordinal is None:
+            floating.append(record)
+        else:
+            merged[ordinal] = record
+
+    return merged, floating
+
+
+def _observed_link_positions(coords):
+    """Where the car actually was on each route link, from the route match log.
+
+    'Route LinkScore RESULT LINK[k]' uses the same route link enumeration as
+    ServiceDataCollect's nLinkID, so it gives an independent check on GPs that
+    were placed by ordinal. The last sample on a link is closest to its end,
+    which is where the GP sits.
+    """
+    if not ROUTE_MATCH_LINKS:
+        return {}
+
+    positions = _drive_positions(coords)
+    if not positions:
+        return {}
+
+    last_sample = {}
+    for sample in ROUTE_MATCH_LINKS:
+        if sample["timestamp"] is None:
+            continue
+        current = last_sample.get(sample["link_index"])
+        if current is None or sample["timestamp"] > current["timestamp"]:
+            last_sample[sample["link_index"]] = sample
+
+    observed = {}
+    for link_index, sample in last_sample.items():
+        position = _nearest_position(positions, sample["timestamp"], max_gap_ms=3000)
+        if position:
+            observed[link_index] = {
+                "latitude": position["latitude"],
+                "longitude": position["longitude"],
+                "vertex_index": sample["vertex_index"],
+                "timestamp_str": position.get("timestamp_str", ""),
+            }
+    return observed
+
+
+def build_gp_guide_markers(lines, coords):
+    """Place route guide points (GP) on the map.
+
+    Position source, in order of reliability:
+      1. map link id from 'ServiceDataCollect nGPType:...' matched against the
+         Route Info link geometry -> the GP sits on that link's end vertex
+      2. route vertex index from 'GetRenderData pGuidePoint' -> link ordinal
+      3. the vehicle position at the time the GP's lane colour went active
+    """
+    if not GP_ENTRIES and not GP_RENDER_POINTS:
+        return []
+
+    route_sessions = _route_links_by_session(lines)
+    positions = _drive_positions(coords)
+    lane_colors = _lane_color_by_gp_index()
+    observed_links = _observed_link_positions(coords)
+
+    entries_by_session = {}
+    for entry in GP_ENTRIES:
+        entries_by_session.setdefault(entry["route_session_id"], []).append(entry)
+    renders_by_session = {}
+    for point in GP_RENDER_POINTS:
+        renders_by_session.setdefault(point["route_session_id"], []).append(point)
+
+    markers = []
+    marker_id = 50000
+    seen = set()
+
+    for session_id in list(entries_by_session.keys()) + [
+        sid for sid in renders_by_session if sid not in entries_by_session
+    ]:
+        route_links = route_sessions.get(session_id, [])
+        # A session id is only attached to Route Info lines once the session log
+        # arrives; fall back to the single known route when there is just one.
+        if not route_links and len(route_sessions) == 1:
+            route_links = next(iter(route_sessions.values()))
+
+        merged, floating = _merge_gp_records_by_link_ordinal(
+            route_links,
+            entries_by_session.get(session_id, []),
+            renders_by_session.get(session_id, []),
+        )
+
+        ordered = [(ordinal, merged[ordinal]) for ordinal in sorted(merged)]
+        ordered.extend((None, record) for record in floating)
+
+        for ordinal, record in ordered:
+            latitude = longitude = None
+            link_extra = {}
+            if ordinal is not None and ordinal < len(route_links):
+                route_link = route_links[ordinal]
+                link_extra = route_link.get("extra") or {}
+                # The turn happens at the end vertex of the link the GP sits on.
+                latitude, longitude = route_link.get("end", (None, None))
+
+            gp_index = record.get("gp_index")
+            lane_info = lane_colors.get(gp_index) if gp_index is not None else None
+
+            if latitude is None:
+                # Last resort: where the car was when this GP's lane went active.
+                fallback = _nearest_position(
+                    positions, lane_info["first_timestamp"]
+                ) if lane_info else None
+                if fallback:
+                    latitude = fallback["latitude"]
+                    longitude = fallback["longitude"]
+                    record["position_source"] = "drive position (lane color)"
+
+            if latitude is None or longitude is None:
+                continue
+
+            gp_type = int(record.get("gp_type") or 0)
+            if not gp_type:
+                # GPTYPE_NON — 안내 없는 통과 링크. 마커로 만들지 않는다.
+                # 이 링크의 turnCode/nGPType 는 Route Info 링크 팝업에서 볼 수 있다.
+                continue
+
+            dedupe_key = (
+                session_id, ordinal, record.get("link_id"), gp_index,
+                record.get("turn_code"), gp_type,
+            )
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+
+            # Independent check: where the car actually was on this route link.
+            observed = observed_links.get(ordinal) if ordinal is not None else None
+            observed_gap_m = None
+            if observed:
+                observed_gap_m = round(
+                    lat_lon_dist(latitude, longitude, observed["latitude"], observed["longitude"]), 1
+                )
+
+            timestamp = record.get("timestamp")
+            markers.append({
+                "id": marker_id,
+                "dlt_id": None,
+                "type": "GP Guide",
+                "latitude": latitude,
+                "longitude": longitude,
+                "heading": None,
+                "extra": {
+                    "gp_guide": True,
+                    "gp_index": gp_index,
+                    "render_gp_index": record.get("render_gp_index"),
+                    "link_ordinal": ordinal,
+                    "link_index": record.get("link_index"),
+                    "link_id": record.get("link_id"),
+                    "route_link_id": link_extra.get("link_id"),
+                    "turn_code": record.get("turn_code"),
+                    "gp_type": gp_type,
+                    "gp_type_flags": record.get("gp_type_flags") or decode_gp_type_flags(gp_type),
+                    "is_guidance": bool(gp_type),
+                    "voice_code": record.get("voice_code"),
+                    "snd_code": record.get("snd_code"),
+                    "cross_image": record.get("cross_image"),
+                    "cross_image_raw": record.get("cross_image_raw"),
+                    "cross_img_code": record.get("cross_img_code"),
+                    "cross_img_available": record.get("cross_img_available"),
+                    "vertex_end": record.get("vertex_end"),
+                    "lane_color": lane_color_from_voice_code(record.get("voice_code")),
+                    "lane_colors": (lane_info or {}).get("lane_colors") or [],
+                    "position_source": record.get("position_source"),
+                    "link_ordinal_from_log": record.get("link_ordinal_from_log"),
+                    "observed_lat": (observed or {}).get("latitude"),
+                    "observed_lon": (observed or {}).get("longitude"),
+                    "observed_vertex_index": (observed or {}).get("vertex_index"),
+                    "observed_time": (observed or {}).get("timestamp_str"),
+                    "observed_gap_m": observed_gap_m,
+                    "route_session_id": session_id,
+                    "route_session_index": record.get("route_session_index"),
+                    "route_session_name": link_extra.get("route_session_name"),
+                    "link_start_lat": (route_links[ordinal].get("start") or [None, None])[0]
+                    if ordinal is not None and ordinal < len(route_links) else None,
+                    "link_start_lon": (route_links[ordinal].get("start") or [None, None])[1]
+                    if ordinal is not None and ordinal < len(route_links) else None,
+                },
+                "timestamp_ms": int(timestamp.timestamp() * 1000) if timestamp else 0,
+                "timestamp_str": timestamp.strftime("%Y/%m/%d %H:%M:%S.%f")[:-3] if timestamp else "",
+                "color": "#7c3aed" if gp_type & 0x00020000 else ("#0d9488" if gp_type & 0x00010000 else "#94a3b8"),
+                "fill": bool(gp_type),
+            })
+            marker_id += 1
+
+    return markers
+
+
+def build_gp_lane_color_markers(coords):
+    """Place drive-time lane bubble events at the vehicle position of that tick."""
+    if not GP_LANE_EVENTS:
+        return []
+
+    positions = _drive_positions(coords)
+    markers = []
+    marker_id = 60000
+    seen = set()
+
+    for event in GP_LANE_EVENTS:
+        dedupe_key = (event["route_session_id"], event["link_index"], event["gp_index"], event["lane_color"])
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+
+        position = _nearest_position(positions, event["timestamp"])
+        if not position:
+            continue
+
+        lane_color = event["lane_color"]
+        markers.append({
+            "id": marker_id,
+            "dlt_id": None,
+            "type": "GP Lane Color",
+            "latitude": position["latitude"],
+            "longitude": position["longitude"],
+            "heading": None,
+            "extra": {
+                "gp_lane_color": True,
+                "gp_index": event["gp_index"],
+                "link_index": event["link_index"],
+                "gp_link_index": event["gp_link_index"],
+                "voice_code": event["voice_code"],
+                "lane_color": lane_color,
+                "turn_code": event["turn_code"],
+                # gpLinkIndex != linkIndex means the active GP was created on a
+                # different link than the one the car is matched to.
+                "link_mismatch": event["gp_link_index"] != event["link_index"],
+                "route_session_id": event["route_session_id"],
+            },
+            "timestamp_ms": int(event["timestamp"].timestamp() * 1000) if event["timestamp"] else 0,
+            "timestamp_str": event["timestamp"].strftime("%Y/%m/%d %H:%M:%S.%f")[:-3] if event["timestamp"] else "",
+            "color": LANE_COLOR_HEX.get(lane_color, "#64748b"),
+            "fill": lane_color != 0,
+        })
+        marker_id += 1
+
+    return markers
+
+
+def build_lane_bubble_markers(gp_markers):
+    """Lane bubbles, derived from the upstream ServiceDataCollect logs only.
+
+    A lane bubble is drawn wherever a GP carries GPTYPE_TURN. Everything shown in
+    it comes from logs that exist upstream:
+      colour     <- nVoiceCode via ToLaneColor()   ('ServiceDataCollect #2')
+      차로 힌트  <- nVoiceCode (IDV_RG_* lane codes, e.g. 97 = 오른쪽 1개 차로)
+      회전       <- nTurnCode
+      교차로 이미지 <- bCrossImage + nGPType & EXTCROSSTURN
+    Per-lane arrows/highlight are NOT included: no upstream log carries
+    nLaneTurnInfo[] / nLaneAvailable[], so they cannot be reconstructed.
+    """
+    markers = []
+    marker_id = 70000
+
+    for gp in gp_markers or []:
+        extra = gp.get("extra") or {}
+        gp_type = int(extra.get("gp_type") or 0)
+        if not (gp_type & 0x00010000):   # GPTYPE_TURN — 버블은 회전 GP에서만 나온다
+            continue
+
+        voice_code = extra.get("voice_code")
+        lane_color = lane_color_from_voice_code(voice_code)
+        # The drive-time log, when present, is the ground truth for the colour.
+        observed = extra.get("lane_colors") or []
+        markers.append({
+            "id": marker_id,
+            "dlt_id": None,
+            "type": "GP Lane Bubble",
+            "latitude": gp["latitude"],
+            "longitude": gp["longitude"],
+            "heading": None,
+            "extra": {
+                "lane_bubble": True,
+                "gp_index": extra.get("gp_index"),
+                "link_index": extra.get("link_index"),
+                "link_id": extra.get("link_id"),
+                "turn_code": extra.get("turn_code"),
+                "gp_type": gp_type,
+                "gp_type_flags": extra.get("gp_type_flags"),
+                "voice_code": voice_code,
+                "lane_color": lane_color,
+                "lane_color_source": "nVoiceCode",
+                "lane_colors_observed": observed,
+                "has_cross_image": bool(gp_type & 0x00020000),
+                "cross_image": extra.get("cross_image"),
+                "cross_image_raw": extra.get("cross_image_raw"),
+                "cross_img_code": extra.get("cross_img_code"),
+                "cross_img_available": extra.get("cross_img_available"),
+                "route_session_id": extra.get("route_session_id"),
+            },
+            "timestamp_ms": gp.get("timestamp_ms"),
+            "timestamp_str": gp.get("timestamp_str"),
+            "color": LANE_COLOR_HEX.get(lane_color, "#64748b"),
+            "fill": True,
+        })
+        marker_id += 1
+
+    return markers
+
+
+def attach_guide_info_to_route_lines(lines):
+    """Attach the GP / turnCode information of each route link to its Route Info line.
+
+    Route Info lines already carry the map link id, which is exactly the key the
+    ServiceDataCollect logs use — so every route link can show what the guidance
+    engine decided for it, without needing the separate GP layers.
+    """
+    if not GP_ENTRIES and not GP_RENDER_POINTS:
+        return 0
+
+    route_sessions = _route_links_by_session(lines)
+    lane_colors = _lane_color_by_gp_index()
+
+    entries_by_session = {}
+    for entry in GP_ENTRIES:
+        entries_by_session.setdefault(entry["route_session_id"], []).append(entry)
+    renders_by_session = {}
+    for point in GP_RENDER_POINTS:
+        renders_by_session.setdefault(point["route_session_id"], []).append(point)
+
+    attached = 0
+    session_ids = list(entries_by_session.keys()) + [
+        sid for sid in renders_by_session if sid not in entries_by_session
+    ]
+
+    for session_id in session_ids:
+        route_links = route_sessions.get(session_id, [])
+        if not route_links and len(route_sessions) == 1:
+            route_links = next(iter(route_sessions.values()))
+        if not route_links:
+            continue
+
+        merged, _floating = _merge_gp_records_by_link_ordinal(
+            route_links,
+            entries_by_session.get(session_id, []),
+            renders_by_session.get(session_id, []),
+        )
+
+        for ordinal, record in merged.items():
+            if ordinal >= len(route_links):
+                continue
+            gp_type = int(record.get("gp_type") or 0)
+            gp_index = record.get("gp_index")
+            link_index = record.get("link_index")
+            guide = {
+                "turn_code": record.get("turn_code"),
+                "gp_type": gp_type,
+                "gp_type_flags": record.get("gp_type_flags") or decode_gp_type_flags(gp_type),
+                "is_guidance": bool(gp_type),
+                "has_cross_image": bool(gp_type & 0x00020000),
+                "gp_index": gp_index,
+                "render_gp_index": record.get("render_gp_index"),
+                "link_index": link_index,
+                "voice_code": record.get("voice_code"),
+                "snd_code": record.get("snd_code"),
+                "cross_image": record.get("cross_image"),
+                "cross_image_raw": record.get("cross_image_raw"),
+                "cross_img_code": record.get("cross_img_code"),
+                "cross_img_available": record.get("cross_img_available"),
+                "vertex_end": record.get("vertex_end"),
+                "lane_color": lane_color_from_voice_code(record.get("voice_code")),
+                "lane_colors_observed": (lane_colors.get(gp_index) or {}).get("lane_colors") or []
+                if gp_index is not None else [],
+            }
+            route_links[ordinal].setdefault("extra", {})["guide"] = guide
+            attached += 1
+
+    return attached
+
+
 def build_runtime_payload():
     import sys
     print(f'[DEBUG] build_runtime_payload start: PARKING_LOT_EVENTS = {len(PARKING_LOT_EVENTS)}', file=sys.stderr)
@@ -1584,9 +2457,18 @@ def build_runtime_payload():
     import sys
     print(f'[DEBUG] build_runtime_payload: created parking_lot_state_markers = {len(parking_lot_state_markers)}', file=sys.stderr)
 
+    # Attach per-link GP / turnCode info to the route links themselves so the
+    # Route Info layer shows the guidance decision for each link.
+    attached_guides = attach_guide_info_to_route_lines(all_lines)
+    print(f'[DEBUG] build_runtime_payload: guide info attached to {attached_guides} route links', file=sys.stderr)
+
     # Convert guide events and route info to marker coordinates
     all_coords.extend(build_guide_event_markers())
     all_coords.extend(build_route_info_markers(all_lines))
+    gp_guide_markers = build_gp_guide_markers(all_lines, all_coords)
+    all_coords.extend(gp_guide_markers)
+    all_coords.extend(build_gp_lane_color_markers(all_coords))
+    all_coords.extend(build_lane_bubble_markers(gp_guide_markers))
 
     all_coords.sort(key=lambda c: c.get("id") if c.get("id") is not None else 0)
     all_lines.sort(key=lambda l: l.get("id") if l.get("id") is not None else 0)
@@ -1602,6 +2484,7 @@ def build_runtime_payload():
         "max_id": max_id,
         "coords": all_coords,
         "parking_lot_state_markers": parking_lot_state_markers,
+        "lane_ext_links": sorted(LANE_EXT_LINKS.values(), key=lambda e: e["link_id"]),
         "lines": all_lines,
     }
 
@@ -1695,6 +2578,7 @@ def build_route_info_markers(lines):
                 "route_end_lon": end_lon,
                 "route_session_index": line.get('extra', {}).get('route_session_index'),
                 "route_sequence": line.get('extra', {}).get('route_sequence'),
+                "guide": line.get('extra', {}).get('guide'),
             }
         }
         markers.append(marker)
