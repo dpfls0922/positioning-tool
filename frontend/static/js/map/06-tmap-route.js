@@ -224,12 +224,12 @@ function ensureTmapFeatureGroup(name) {
 function buildTmapWaypointIcon(label, bgColor, subLabel) {
     return L.divIcon({
         className: '',
-        iconSize: [26, 38],
-        iconAnchor: [13, 19],
+        iconSize: [30, 44],
+        iconAnchor: [15, 22],
         html:
             `<div style="display:flex;flex-direction:column;align-items:center">` +
-            `<div style="width:26px;height:26px;line-height:26px;text-align:center;background:${bgColor};color:#fff;border-radius:50%;font-size:12px;font-weight:800;box-shadow:0 2px 7px rgba(0,0,0,.25);border:2px solid #fff">${label}</div>` +
-            `<div style="margin-top:1px;padding:0 4px;background:rgba(15,23,42,0.78);color:#fff;font-size:8px;font-weight:600;border-radius:6px;white-space:nowrap">${subLabel}</div>` +
+            `<div style="width:30px;height:30px;line-height:30px;text-align:center;background:${bgColor};color:#fff;border-radius:50%;font-size:14px;font-weight:800;box-shadow:0 2px 8px rgba(0,0,0,.25);border:2.5px solid #fff">${label}</div>` +
+            `<div style="margin-top:2px;padding:1px 5px;background:rgba(15,23,42,0.78);color:#fff;font-size:9px;font-weight:600;border-radius:7px;white-space:nowrap">${subLabel}</div>` +
             `</div>`
     });
 }

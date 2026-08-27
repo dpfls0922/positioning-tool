@@ -102,6 +102,14 @@ const SDI_TYPE_MAP = {
     66: { name: '졸음쉼터', color: '#10b981', text: '😴', desc: '졸음 쉼터 안내' },
     67: { name: '노후경유차', color: '#059669', text: '💨', desc: '노후경유차 단속' },
     68: { name: '터널차로변경', color: '#0f766e', text: '🔄', desc: '터널내 차로변경 단속' },
+    69: { name: '후면구간단속 시점', color: '#be123c', text: '시', desc: '후면 구간단속 시점' },
+    70: { name: '후면구간단속 종점', color: '#e11d48', text: '끝', desc: '후면 구간단속 종점' },
+    71: { name: '후면신호과속구간 시점', color: '#9f1239', text: '시', desc: '후면 신호과속 구간단속 시점' },
+    72: { name: '후면신호과속구간 종점', color: '#f43f5e', text: '끝', desc: '후면 신호과속 구간단속 종점' },
+    73: { name: '신호과속구간 시점', color: '#b91c1c', text: '시', desc: '신호과속 구간단속 시점' },
+    74: { name: '신호과속구간 종점', color: '#ef4444', text: '끝', desc: '신호과속 구간단속 종점' },
+    75: { name: 'SDI_UNKNOWN', color: '#64748b', text: '?', desc: '알 수 없는 SDI' },
+    76: { name: 'SDI_MAX', color: '#94a3b8', text: '–', desc: '선택된 SDI 없음(센티넬)' },
 };
 
 function getEventIconConfig(typeCode) {
@@ -112,60 +120,300 @@ function getSdiIconConfig(sdiType) {
     return SDI_TYPE_MAP[sdiType] || { name: `기타 안내`, color: '#64748b', text: '⚙️', desc: `SDI Type ${sdiType}` };
 }
 
-function createEventMarkerIcon(typeCode, iconText = null) {
-    const config = getEventIconConfig(typeCode);
-    const iconHtml = `
-        <div style="
-            background-color: ${config.color};
-            color: white;
-            border-radius: 50%;
-            width: 22px;
-            height: 22px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 11px;
-            border: 1.5px solid white;
-            box-shadow: 0 1px 4px rgba(0,0,0,0.3);
-        ">
-            ${iconText || config.icon}
-        </div>
-    `;
+// SDI type -> real icon asset, extracted from the VSM dev resource server.
+// Package 32 SAFE_DRIVE_ICON_ROUTE (RawImageBundle, 64x64 RGBA) provides 23
+// icons; the type->code mapping is g_sSDICode in
+// MapGuidingInformationProvider.cpp, with the enum name as a fallback where
+// that mapping and this bundle version disagree (e.g. SDI_SCHOOL_ZONE).
+// Types absent here have no asset on this server and fall back to the drawn sign.
+const SDI_ICON_ASSET = {
+    0: "SDI_SPEED_ACCIDENT_POS",
+    1: "SDI_SPEED_LIMIT_POS",
+    2: "SDI_SPEED_BLOCK_START_POS",
+    3: "SDI_SPEED_BLOCK_END_POS",
+    5: "SDI_TAIL",
+    6: "SDI_SIGNAL_ACCIDENT_POS",
+    7: "SDI_SPEED_LIMIT_DANGEROUS_AREA",
+    8: "SDI_BOX_SPEED_LIMIT_POS",
+    12: "SDI_CHANGEROAD_POS",
+    13: "SDI_ROAD_CONTROL_POS",
+    15: "SDI_TRAFFICINFO_COLLECT_POS",
+    16: "SDI_CCTV_AREA",
+    18: "SDI_LOAD_BAD_CONTROL_POS",
+    19: "SDI_PARKING_CONTROL_POS",
+    21: "SDI_RAILWAY_CROSSING",
+    22: "SDI_SCHOOL_ZONE_START",
+    24: "SDI_SPEEDBUMP",
+    29: "SDI_FOG_AREA",
+    31: "SDI_ACCIDEDNT_AREA",
+    32: "SDI_SHARP_CURVE_AREA",
+    33: "SDI_SHARP_CURVE_AREA",
+    47: "SDI_ACCIDEDNT_AREA",
+    62: "SDI_ACCIDEDNT_AREA",
+    63: "SDI_ACCIDEDNT_AREA",
+    64: "SDI_ACCIDEDNT_AREA",
+    66: "SDI_REST_PLACE",
+};
+
+const SDI_ICON_DIR = '/static/img/sdi/';
+
+// Generated from benz-ivi2 module/navisdk/src/include/rg_def.h (SDI_Type).
+// Category comes from that enum's '[ 타입 : ... ]' annotation; the 33 types
+// without one are classified by identifier.
+// Shape follows Korean road-sign convention so every SDI reads as one family:
+//   camera(규제)=circle, caution(주의)=triangle, info(안내)=rounded square.
+const SDI_CATEGORY = {
+    0: { cat: 'camera',   glyph: "신"    },  // 신호과속
+    1: { cat: 'camera',   glyph: "속"    },  // 과속 (고정식)
+    2: { cat: 'camera',   glyph: "시"    },  // 구간단속 시작
+    3: { cat: 'camera',   glyph: "끝"    },  // 구간단속 끝
+    4: { cat: 'camera',   glyph: "중"    },  // 구간단속중
+    5: { cat: 'camera',   glyph: "꼬"    },  // 꼬리물기단속카메라
+    6: { cat: 'camera',   glyph: "신"    },  // 신호 단속
+    7: { cat: 'camera',   glyph: "이"    },  // 과속 (이동식)
+    8: { cat: 'camera',   glyph: "박"    },  // 고정식 과속위험 구간(박스형)
+    9: { cat: 'camera',   glyph: "후"    },  // 후면신호과속단속카메라
+    10: { cat: 'camera',   glyph: "후"    },  // 후면과속단속카메라
+    11: { cat: 'camera',   glyph: "버"    },  // 버스전용차로구간
+    12: { cat: 'camera',   glyph: "가"    },  // 가변 차로 단속
+    13: { cat: 'camera',   glyph: "갓"    },  // 갓길 감시 지점
+    14: { cat: 'camera',   glyph: "끼"    },  // 끼어들기 금지
+    15: { cat: 'info',     glyph: "교"    },  // 교통정보 수집지점
+    16: { cat: 'info',     glyph: "C"    },  // 방범용CCTV(신규)
+    17: { cat: 'caution',  glyph: "과"    },  // 과적차량 위험구간
+    18: { cat: 'camera',   glyph: "적"    },  // 적재 불량 단속
+    19: { cat: 'camera',   glyph: "주"    },  // 주차단속 지점
+    20: { cat: 'caution',  glyph: "일"    },  // 일방통행도로 (신규)
+    21: { cat: 'caution',  glyph: "철"    },  // 철길 건널목
+    22: { cat: 'caution',  glyph: "스"    },  // 어린이 보호구역(스쿨존 시작 구간)
+    23: { cat: 'caution',  glyph: "스"    },  // 어린이 보호구역(스쿨존 끝 구간 )
+    24: { cat: 'caution',  glyph: "⌣"    },  // 과속방지턱
+    25: { cat: 'info',     glyph: "L"    },  // LPG충전소
+    26: { cat: 'info',     glyph: "터"    },  // 터널 구간
+    27: { cat: 'info',     glyph: "휴"    },  // 휴게소
+    28: { cat: 'info',     glyph: "톨"    },  // 톨게이트
+    29: { cat: 'caution',  glyph: "안"    },  // 안개주의 지역
+    30: { cat: 'caution',  glyph: "유"    },  // 유해물질 지역
+    31: { cat: 'caution',  glyph: "사"    },  // 사고다발
+    32: { cat: 'caution',  glyph: "급"    },  // 급커브지역
+    33: { cat: 'caution',  glyph: "급"    },  // 급커브구간1 (신규)
+    34: { cat: 'caution',  glyph: "급"    },  // 급경사구간 (신규)
+    35: { cat: 'caution',  glyph: "야"    },  // 야생동물 교통사고 잦은 구간
+    36: { cat: 'caution',  glyph: "우"    },  // 우측시야불량지점(신규)
+    37: { cat: 'caution',  glyph: "시"    },  // 시야불량지점(신규)
+    38: { cat: 'caution',  glyph: "좌"    },  // 좌측시야불량지점(신규)
+    39: { cat: 'caution',  glyph: "신"    },  // 신호위반다발구간(신규)
+    40: { cat: 'caution',  glyph: "과"    },  // 과속운행다발구간(신규)
+    41: { cat: 'caution',  glyph: "교"    },  // 교통혼잡지역(신규)
+    42: { cat: 'caution',  glyph: "방"    },  // 방향별차로선택지점(신규)
+    43: { cat: 'caution',  glyph: "무"    },  // 무단횡단사고다발지점(신규)
+    44: { cat: 'caution',  glyph: "갓"    },  // 갓길 사고 다발 지점 (신규)
+    45: { cat: 'caution',  glyph: "과"    },  // 과속 사발 다발 지점 (신규)
+    46: { cat: 'caution',  glyph: "졸"    },  // 졸음 사고 다발 지점 (신규)
+    47: { cat: 'caution',  glyph: "사"    },  // 사고다발지점
+    48: { cat: 'caution',  glyph: "보"    },  // 보행자 사고다발지점
+    49: { cat: 'caution',  glyph: "노"    },  // 노인보호구역
+    50: { cat: 'caution',  glyph: "차"    },  // 차량도난사고 상습발생지점
+    51: { cat: 'caution',  glyph: "낙"    },  // 낙석주의지역
+    52: { cat: 'caution',  glyph: "결"    },  // 결빙주의지역
+    53: { cat: 'caution',  glyph: "병"    },  // 병목지점
+    54: { cat: 'caution',  glyph: "합"    },  // 합류 도로
+    55: { cat: 'caution',  glyph: "추"    },  // 추락주의지역
+    56: { cat: 'info',     glyph: "지"    },  // 지하차도 구간
+    57: { cat: 'caution',  glyph: "주"    },  // 주택밀집지역(교통진정지역)
+    58: { cat: 'info',     glyph: "IC"   },  // 인터체인지
+    59: { cat: 'info',     glyph: "JC"   },  // 분기점
+    60: { cat: 'info',     glyph: "휴"    },  // 휴게소(LPG충전가능)
+    61: { cat: 'info',     glyph: "교"    },  // 교량
+    62: { cat: 'caution',  glyph: "제"    },  // 제동장치사고다발지점
+    63: { cat: 'caution',  glyph: "중"    },  // 중앙선침범사고다발지점
+    64: { cat: 'caution',  glyph: "통"    },  // 통행위반사고다발지점
+    65: { cat: 'info',     glyph: "목"    },  // 목적지 건너편 안내(Tmap 전용, GP 203을 변경해서 사용)
+    66: { cat: 'info',     glyph: "졸"    },  // 졸음 쉼터 안내(Tmap 전용, GP 150을 변경해서 사용)
+    67: { cat: 'camera',   glyph: "노"    },  // 노후경유차단속(8.0 신규)
+    68: { cat: 'camera',   glyph: "터"    },  // 터널내 차로변경단속(8.0신규 - 데이터는 내려오지 않음).
+    69: { cat: 'camera',   glyph: "시"    },  // 후면구간단속 시점
+    70: { cat: 'camera',   glyph: "끝"    },  // 후면구간단속 종점
+    71: { cat: 'camera',   glyph: "시"    },  // 후면신호과속구간단속 시점
+    72: { cat: 'camera',   glyph: "끝"    },  // 후면신호과속구간단속 종점
+    73: { cat: 'camera',   glyph: "시"    },  // 신호과속구간단속 시점
+    74: { cat: 'camera',   glyph: "끝"    },  // 신호과속구간단속 종점
+    75: { cat: 'caution',  glyph: "?"    },  // SDI_UNKNOWN
+    76: { cat: 'caution',  glyph: "–"    },  // SDI_MAX
+};
+
+// C2X nEventType -> real Car2X icon, generated from benz-ivi2:
+//   Car2XBridge.h (tagCar2XType), MapObjectProvider.cpp (g_cCar2XResourceMap,
+//   ObjectResourceIndex, g_sResourcePath). Images copied from app/_res/image.
+const C2X_EVENT_ASSET = {
+    1: { file: "Car2X_Broken_Down_Vehicle_(BDV).png",         label: "고장차량" },
+    3: { file: "Car2X_Approaching_Emergency_Vehicle_(AEV).png", label: "응급차량" },
+    4: { file: "Car2X_Road_Works_(RW).png",                   label: "이동작업 구간" },
+    5: { file: "Car2X_Vehicle_Accident_(VA).png",             label: "사고 발생" },
+    6: { file: "Car2X_Fog_(FOG).png",                         label: "시야 제한" },
+    7: { file: "Car2X_General_Warning_(GW).png",              label: "교통상황 주의" },
+    8: { file: "Car2X_Severe_Weather_(SW).png",               label: "날씨변화 주의" },
+    9: { file: "Car2X_Oversized_Vehicle_(OV).png",            label: "대형차량" },
+    10: { file: "Car2X_Slow_Moving_Vehicle_(SMV).png",         label: "저속 주행 차량" },
+    11: { file: "Car2X_Wrong_Way_Driver_(WWD).png",            label: "역주행차량" },
+    14: { file: "Car2X_Hazard_Light_(HL).png",                 label: "교통상황 주의" },
+    15: { file: "Car2X_Emergency_Braking_(EB).png",            label: "교통상황 주의" },
+    16: { file: "Car2X_Slippery_Road_(SR).png",                label: "미끄러운 도로" },
+    17: { file: "Car2X_AquaPlaning_(AP).png",                  label: "미끄러운 도로" },
+    18: { file: "Car2X_Heavy_Rain_(HR).png",                   label: "호우 주의" },
+    19: { file: "Car2X_Cross_Wind_(CW).png",                   label: "강풍 주의" },
+    20: { file: "Car2X_Reduced_VISibility_(RVIS).png",         label: "시야 확보 주의" },
+    21: { file: "Car2X_Objects_On_the_Road_(OOR).png",         label: "도로 위 장애물" },
+    22: { file: "Car2X_Animals_On_the_Road_(AOR).png",         label: "도로 위 야생동물" },
+    23: { file: "Car2X_people_crossing.png",                   label: "도로 위 보행자" },
+    24: { file: "Car2X_Pothole_(PH).png",                      label: "패인 도로 주의" },
+    25: { file: "Car2X_Major_Road_Works_(MRW).png",            label: "공사 구간" },
+    26: { file: "Car2X_Crossing_Train_(CT).png",               label: "철길 건널목" },
+    27: { file: "Car2X_Bump_(BUM).png",                        label: "과속방지턱" },
+};
+
+const C2X_ICON_DIR = '/static/img/c2x/';
+
+// One palette per category, so a camera reads as a camera regardless of which
+// of the 14 camera types it is.
+const SDI_CATEGORY_STYLE = {
+    camera:  { color: '#dc2626', label: '단속(규제)' },
+    caution: { color: '#f59e0b', label: '주의구간' },
+    info:    { color: '#0284c7', label: '위치정보' },
+    other:   { color: '#64748b', label: '기타' }
+};
+
+// Measured off the real bundle assets so drawn fallbacks sit in the same family:
+// solid fill, dark outline, high-contrast glyph. There is no blue in the real
+// set — info shares the caution yellow and is told apart by shape (circle).
+const SDI_ASSET_PALETTE = {
+    camera:  { fill: '#ef3e11', stroke: '#520303', glyph: '#ffffff' },
+    caution: { fill: '#fed100', stroke: '#4e4e4e', glyph: '#111111' },
+    info:    { fill: '#fed100', stroke: '#4e4e4e', glyph: '#111111' },
+    other:   { fill: '#94a3b8', stroke: '#334155', glyph: '#ffffff' }
+};
+
+// Types the navigation UI itself treats as speed cameras
+// (MapGuidingInformationProvider::isSpeedCameraType). Only these carry a speed
+// limit, so only these show a number instead of a glyph.
+const SDI_SPEED_CAMERA_TYPES = new Set([0, 1, 2, 3, 7, 8, 9, 10]);
+
+// C2X and MFS markers. C2X uses the real Car2X images shipped in benz-ivi2's
+// app/_res/image (white disc, red ring, black glyph); everything else is drawn
+// in that same construction so the two sit together.
+//
+// Deliberately smaller than the SDI signs: these are transient traffic events,
+// not fixed roadside installations, and at the old 26px they dominated the map.
+const C2X_ICON_SIZE = 22;
+
+function buildRingIconHtml(glyph, ringColor, size) {
+    const fontSize = String(glyph).length > 1 ? Math.round(size * 0.42) : Math.round(size * 0.52);
+    return `
+        <div style="width:${size}px;height:${size}px;border-radius:50%;box-sizing:border-box;
+            background:#ffffff;border:2px solid ${ringColor};
+            filter:drop-shadow(0 1px 2px rgba(0,0,0,.3));
+            display:flex;align-items:center;justify-content:center;
+            color:#111111;font-weight:800;font-size:${fontSize}px;line-height:1">${glyph}</div>`;
+}
+
+function createEventMarkerIcon(typeCode, iconText = null, eventTypeCode = null) {
+    const size = C2X_ICON_SIZE;
+    const asset = C2X_EVENT_ASSET[Number(eventTypeCode)];
+    let iconHtml;
+
+    if (asset) {
+        iconHtml = `<img src="${C2X_ICON_DIR}${encodeURIComponent(asset.file)}"`
+            + ` width="${size}" height="${size}" style="display:block;`
+            + `filter:drop-shadow(0 1px 2px rgba(0,0,0,.3))" alt="">`;
+    } else {
+        const config = getEventIconConfig(typeCode);
+        // The A~E MFS codes have no image set; use their initial, not an emoji.
+        iconHtml = buildRingIconHtml(iconText || config.name.charAt(0), config.color, size);
+    }
+
     return L.divIcon({
         html: iconHtml,
         className: 'event-marker',
-        iconSize: [22, 22],
-        iconAnchor: [11, 11],
-        popupAnchor: [0, -11]
+        iconSize: [size, size],
+        iconAnchor: [size / 2, size / 2],
+        popupAnchor: [0, -size / 2]
     });
 }
 
-function createSdiMarkerIcon(sdiType) {
-    const config = getSdiIconConfig(sdiType);
-    const iconHtml = `
-        <div style="
-            background: linear-gradient(135deg, ${config.color} 0%, ${config.color}dd 100%);
-            color: white;
-            border-radius: 50%;
-            width: 22px;
-            height: 22px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 11px;
-            font-weight: bold;
-            border: 1.5px solid white;
-            box-shadow: 0 1px 4px rgba(0,0,0,0.3);
-        ">
-            ${config.text}
-        </div>
-    `;
+function getSdiCategory(sdiType) {
+    const entry = SDI_CATEGORY[Number(sdiType)];
+    const cat = entry ? entry.cat : 'other';
+    return { ...SDI_CATEGORY_STYLE[cat], cat, glyph: entry ? entry.glyph : '?' };
+}
+
+// Types with no asset on the resource server fall back to a drawn sign. These
+// deliberately copy the real assets' construction — solid fill, dark outline,
+// glyph in the contrasting colour — so a mixed map still reads as one set:
+//   camera = circle (red), caution = rounded triangle (yellow),
+//   info = circle (yellow).
+function buildSdiSignHtml(sdiType, speedLimit, size) {
+    const category = getSdiCategory(sdiType);
+    const palette = SDI_ASSET_PALETTE[category.cat] || SDI_ASSET_PALETTE.other;
+    const isSpeedCamera = SDI_SPEED_CAMERA_TYPES.has(Number(sdiType));
+    const limit = Number(speedLimit);
+    const text = isSpeedCamera && Number.isFinite(limit) && limit > 0
+        ? String(limit)
+        : category.glyph;
+    const fontSize = text.length >= 3 ? Math.round(size * 0.34)
+        : (text.length === 2 ? Math.round(size * 0.40) : Math.round(size * 0.48));
+    const shadow = 'filter:drop-shadow(0 1px 2px rgba(0,0,0,.35))';
+
+    if (category.cat === 'caution') {
+        return `
+            <div style="width:${size}px;height:${size}px;position:relative;${shadow}">
+                <div style="position:absolute;inset:0;background:${palette.stroke};
+                    clip-path:polygon(50% 2%,98% 94%,2% 94%)"></div>
+                <div style="position:absolute;inset:2px;background:${palette.fill};
+                    clip-path:polygon(50% 2%,98% 94%,2% 94%)"></div>
+                <div style="position:absolute;left:0;right:0;bottom:${Math.round(size * 0.08)}px;
+                    text-align:center;color:${palette.glyph};font-weight:800;
+                    font-size:${Math.round(fontSize * 0.85)}px;line-height:1">${text}</div>
+            </div>`;
+    }
+
+    return `
+        <div style="width:${size}px;height:${size}px;border-radius:50%;
+            background:${palette.fill};border:2px solid ${palette.stroke};box-sizing:border-box;
+            ${shadow};display:flex;align-items:center;justify-content:center;
+            color:${palette.glyph};font-weight:800;font-size:${fontSize}px;line-height:1">${text}</div>`;
+}
+
+function createSdiMarkerIcon(sdiType, faded = false, speedLimit = null) {
+    const size = 26;
+    const asset = SDI_ICON_ASSET[Number(sdiType)];
+    let iconHtml;
+
+    if (asset) {
+        // Real navigation asset. The bundle's camera icons carry no number — the
+        // app composites the limit separately — so it is added as a badge here
+        // for the types that have one.
+        const limit = Number(speedLimit);
+        const showLimit = SDI_SPEED_CAMERA_TYPES.has(Number(sdiType))
+            && Number.isFinite(limit) && limit > 0;
+        const badge = showLimit
+            ? `<div style="position:absolute;right:-3px;bottom:-3px;min-width:13px;height:13px;
+                 padding:0 2px;border-radius:7px;background:#fff;border:1.5px solid #dc2626;
+                 color:#111827;font-size:9px;font-weight:800;line-height:11px;text-align:center;
+                 box-sizing:border-box">${limit}</div>`
+            : '';
+        iconHtml = `<div style="position:relative;width:${size}px;height:${size}px">`
+            + `<img src="${SDI_ICON_DIR}${asset}.png" width="${size}" height="${size}"`
+            + ` style="display:block" alt="">${badge}</div>`;
+    } else {
+        iconHtml = buildSdiSignHtml(sdiType, speedLimit, size);
+    }
+
     return L.divIcon({
-        html: iconHtml,
+        html: faded ? `<div style="opacity:.4">${iconHtml}</div>` : iconHtml,
         className: 'sdi-marker',
-        iconSize: [22, 22],
-        iconAnchor: [11, 11],
-        popupAnchor: [0, -11]
+        iconSize: [size, size],
+        iconAnchor: [size / 2, size / 2],
+        popupAnchor: [0, -size / 2]
     });
 }
 
@@ -267,7 +515,7 @@ function renderDangerAreas(tvasResult) {
             lon: (startCoord.lon + endCoord.lon) / 2
         };
         const marker = L.marker([midCoord.lat, midCoord.lon], {
-            icon: createEventMarkerIcon(null, typeConfig.icon)
+            icon: createEventMarkerIcon(null, typeConfig.name.charAt(0))
         });
         dangerGroup.addLayer(marker);
     });
@@ -311,7 +559,10 @@ function visualizeGuideEventsFromLog() {
     const mfsEvents = guideMarkers.filter((m) => m.extra.event_type === 'MFS');
     console.log(`📊 Guide Events: ${c2xEvents.length} C2X, ${mfsEvents.length} MFS(유고정보), SDI: ${sdiMarkers.length}`);
 
-    if (guideMarkers.length === 0) {
+    // SDI is rendered further down and is independent of C2X/MFS, so this must
+    // not bail out on guide events alone — a log with SDI but no C2X/MFS still
+    // has something to draw.
+    if (guideMarkers.length === 0 && sdiMarkers.length === 0) {
         return;
     }
 
@@ -321,7 +572,7 @@ function visualizeGuideEventsFromLog() {
         c2xGroup.clearLayers();
 
         c2xEvents.forEach((marker) => {
-            const icon = createEventMarkerIcon(null, '📡');
+            const icon = createEventMarkerIcon(null, null, marker.extra.event_type_code);
             const markerObj = L.marker([marker.latitude, marker.longitude], { icon });
 
             markerObj.bindPopup(`
@@ -384,22 +635,46 @@ function visualizeGuideEventsFromLog() {
         sdiGroup.clearLayers();
 
         sdiMarkers.forEach((marker) => {
-            const icon = createSdiMarkerIcon(marker.extra.sdi_type);
-            const config = getSdiIconConfig(marker.extra.sdi_type);
+            const extra = marker.extra || {};
+            // GetSdiSelected logs every candidate on the route, most of which
+            // are rejected. Showing them identically would imply every marker
+            // was actually guided, so rejected ones are drawn faded.
+            const wasSelected = extra.ever_selected !== false;
+            const icon = createSdiMarkerIcon(extra.sdi_type, !wasSelected, extra.speed);
+            const config = getSdiIconConfig(extra.sdi_type);
             const markerObj = L.marker([marker.latitude, marker.longitude], { icon });
+
+            const reasons = Array.isArray(extra.skip_reasons) ? extra.skip_reasons : [];
+            const row = (label, value) => (value === null || value === undefined || value === '')
+                ? ''
+                : `<div><strong>${label}:</strong> ${value}</div>`;
 
             markerObj.bindPopup(`
                 <div style="min-width: 240px;">
                     <div style="font-weight: bold; color: ${config.color}; margin-bottom: 8px; font-size: 14px;">
                         🛣️ ${config.name}
+                        <span style="font-size:11px;font-weight:600;padding:1px 6px;border-radius:8px;margin-left:4px;
+                            background:${wasSelected ? '#dcfce7' : '#f1f5f9'};color:${wasSelected ? '#15803d' : '#64748b'}">
+                            ${wasSelected ? '선택됨' : '후보(미선택)'}
+                        </span>
                     </div>
                     <div style="font-size: 12px; line-height: 1.6;">
                         <div style="background-color: ${config.color}20; padding: 6px; border-radius: 4px; margin-bottom: 8px; color: ${config.color}; font-weight: bold;">
                             ${config.desc}
                         </div>
-                        <div><strong>타입 코드:</strong> ${marker.extra.sdi_type}</div>
-                        ${marker.extra.speed ? `<div><strong>제한속도:</strong> ${marker.extra.speed} km/h</div>` : ''}
-                        <div><strong>정보원:</strong> ${marker.extra.source}</div>
+                        ${row('분류', getSdiCategory(extra.sdi_type).label)}
+                        ${row('타입 코드', extra.sdi_type)}
+                        ${row('제한속도', extra.speed ? `${extra.speed} km/h` : '')}
+                        ${row('가변속도', extra.changeable_speed === true ? '예' : (extra.changeable_speed === false ? '아니오' : ''))}
+                        ${row('우선순위', extra.priority)}
+                        ${row('최근접 거리', extra.remain_dist !== null && extra.remain_dist !== undefined ? `${extra.remain_dist} m` : '')}
+                        ${row('안내 기준거리', extra.guide_dist !== null && extra.guide_dist !== undefined ? `${extra.guide_dist} m` : '')}
+                        ${reasons.length ? `<div><strong>미선택 사유:</strong> ${reasons.map(escapeHtml).join(', ')}</div>` : ''}
+                        ${row('직전 선택', extra.selected_type_name)}
+                        ${row('관측 횟수', extra.observation_count)}
+                        ${row('아이콘 코드', extra.sdi_code ? escapeHtml(extra.sdi_code) : '')}
+                        ${row('아이콘 에셋', SDI_ICON_ASSET[Number(extra.sdi_type)] || '없음(도형으로 대체)')}
+                        ${row('정보원', extra.source)}
                         <div><strong>좌표:</strong> ${marker.latitude.toFixed(6)}, ${marker.longitude.toFixed(6)}</div>
                         <div><strong>기록시간:</strong> ${marker.timestamp_str || '-'}</div>
                     </div>

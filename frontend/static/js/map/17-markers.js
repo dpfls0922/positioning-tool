@@ -241,6 +241,21 @@ function bringParkingLotMarkersToFront() {
     });
 }
 
+function buildRequestIcon(hasDeviation) {
+    const size = 17;
+    const glyph = hasDeviation ? '!' : 'i';
+    return L.divIcon({
+        className: '',
+        iconSize: [size, size],
+        iconAnchor: [size / 2, size / 2],
+        popupAnchor: [0, -size / 2],
+        html:
+            `<div style="width:${size}px;height:${size}px;line-height:${size}px;text-align:center;` +
+            `background:#6b7280;color:#fff;border-radius:50%;font-size:11px;font-weight:700;` +
+            `font-style:normal;border:1.5px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.3)">${glyph}</div>`
+    });
+}
+
 function drawRequestGroupMarkers(requestGroups, markers) {
     Object.keys(requestGroups).forEach(key => {
         const request = requestGroups[key];
@@ -249,13 +264,12 @@ function drawRequestGroupMarkers(requestGroups, markers) {
         const members = request.members;
 
         const hasDeviation = members.some(m => m.extra.group_2_text === "이탈");
+        // A compact circle rather than an AwesomeMarkers pin: 'small' is that
+        // library's smallest preset, and scaling it with a CSS transform would
+        // override the transform Leaflet uses to position the marker. This also
+        // matches the other route-card icons.
         let marker = L.marker([latitude, longitude], {
-            icon: L.AwesomeMarkers.icon({
-                icon: hasDeviation ? 'exclamation' : 'info-circle',
-                markerColor: 'gray',
-                prefix: 'fa',
-                size: 'small'
-            })
+            icon: buildRequestIcon(hasDeviation)
         });
 
         // Same-position requests are merged into one marker; show how many
@@ -264,7 +278,7 @@ function drawRequestGroupMarkers(requestGroups, markers) {
             marker.bindTooltip(`×${members.length}`, {
                 permanent: true,
                 direction: 'right',
-                offset: [10, -18],
+                offset: [9, 0],
                 className: 'request-count-badge'
             });
         }

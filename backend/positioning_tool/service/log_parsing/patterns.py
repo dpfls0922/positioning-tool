@@ -116,16 +116,42 @@ MFS_CONTENT_PATTERN = re.compile(
     r".*?name:([^\r\n\x00]+)"
 )
 
-# SDI (Safety Drive Information) events:
-#   GetSdiSelected select (0): 0, 15 nDist: 300, 500, wptPos: 37.545592, 126.978641
-#   MapGuidingInformationProvider::onDriveStatusChanged SDI[15] CurrentSDI Speed : 50 pt(126.978641,37.545592)
+# SDI (Safety Drive Information) events.
+#
+# CSafeDriveInfomation::GetSdiSelected walks every SDI candidate on the route
+# and logs one line per candidate before deciding whether to keep it:
+#
+#   GetSdiSelected select (0): 76, 15 nDist: 300, 500, wptPos: 37.545592, 126.978641
+#                         ^i   ^   ^                                ^lat       ^lon
+#                              |   `- pSDIInfo->nType: THIS candidate's type,
+#                              |      and wptPos is THIS candidate's position
+#                              `- stSelected.nType: best-so-far, SDI_MAX (76)
+#                                 until something is selected. It belongs to a
+#                                 different SDI than the coordinates do.
+#
+# Candidates that are rejected get a follow-up line carrying the same index,
+# which is what attributes a reason to a candidate. 'skip is not service' is
+# logged *before* the line above, so those candidates have no position at all.
 SDI_SELECTED_PATTERN = re.compile(
-    r"GetSdiSelected select\s*\((\d+)\):\s*(\d+),\s*(\d+)\s+nDist:\s*(\d+),\s*(\d+),\s+wptPos:\s*"
+    r"GetSdiSelected select\s*\((\d+)\):\s*(\d+),\s*(\d+)\s+nDist:\s*(-?\d+),\s*(-?\d+),\s+wptPos:\s*"
     r"(-?\d+\.\d+),\s*(-?\d+\.\d+)"
 )
 
+SDI_SKIP_PATTERN = re.compile(
+    r"GetSdiSelected select\s*\((\d+)\):\s*skip\s+(.+?)\s*:\s*(\d+)(?:,\s*(\d+))?\s*$"
+)
+
+# MapGuidingInformationProvider::onDriveStatusChanged SDI[15] CurrentSDI
+#   Speed : 50 | ChangeableSpeedType : 0 | <sdiCode> pt(126.978641,37.545592) priority:3
+# pt() is (x, y) here, i.e. (lon, lat) — the opposite order from wptPos above.
+# sdiCode is g_sSDICode[type] (+ the speed limit for camera types), i.e. the
+# exact asset name the navigation UI looks up in its raw image bundle.
 SDI_DRIVE_STATUS_PATTERN = re.compile(
-    r"onDriveStatusChanged\s+SDI\[(\d+)\].*?Speed\s*:\s*(\d+).*?pt\((-?\d+\.\d+),(-?\d+\.\d+)\)"
+    r"onDriveStatusChanged\s+SDI\[(\d+)\].*?Speed\s*:\s*(-?\d+)"
+    r"(?:.*?ChangeableSpeedType\s*:\s*(\d+))?"
+    r"(?:\s*\|\s*([A-Za-z0-9_]+))?"
+    r".*?pt\((-?\d+\.\d+),\s*(-?\d+\.\d+)\)"
+    r"(?:\s*priority:\s*(-?\d+))?"
 )
 
 # ParkingLot Detector application results:

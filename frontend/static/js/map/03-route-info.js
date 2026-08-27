@@ -78,12 +78,12 @@ function removeRoutePointMarkersFromGroup(group) {
 function buildRoutePointIcon(label, bgColor, subLabel) {
     return L.divIcon({
         className: '',
-        iconSize: [16, 24],
-        iconAnchor: [8, 8],
+        iconSize: [19, 28],
+        iconAnchor: [9.5, 9.5],
         html:
             `<div style="display:flex;flex-direction:column;align-items:center">` +
-            `<div style="width:16px;height:16px;line-height:16px;text-align:center;background:${bgColor};color:#fff;border-radius:50%;font-size:9px;font-weight:700;box-shadow:0 1px 4px rgba(0,0,0,.25);border:1.5px solid #fff">${label}</div>` +
-            `<div style="margin-top:1px;padding:0 3px;background:rgba(15,23,42,0.75);color:#fff;font-size:7px;font-weight:600;border-radius:5px;white-space:nowrap">${subLabel}</div>` +
+            `<div style="width:19px;height:19px;line-height:19px;text-align:center;background:${bgColor};color:#fff;border-radius:50%;font-size:11px;font-weight:700;box-shadow:0 1px 4px rgba(0,0,0,.25);border:2px solid #fff">${label}</div>` +
+            `<div style="margin-top:1px;padding:0 4px;background:rgba(15,23,42,0.75);color:#fff;font-size:8px;font-weight:600;border-radius:6px;white-space:nowrap">${subLabel}</div>` +
             `</div>`
     });
 }
@@ -160,6 +160,43 @@ function getRouteInfoLayerName(line) {
         return sessionName.trim();
     }
     return 'Route Info';
+}
+
+// GP guide / lane bubble markers are produced while parsing one route, and
+// carry that route's `route_session_id`. The sidebar names route layers by
+// `route_session_name` instead, so this bridges the two.
+function routeLayerNameBySessionId() {
+    const map = new Map();
+    (Array.isArray(linesData) ? linesData : []).forEach((line) => {
+        if (line?.type !== 'Route Info') return;
+        const sessionId = line?.extra?.route_session_id;
+        if (sessionId === null || sessionId === undefined) return;
+        if (!map.has(sessionId)) map.set(sessionId, getRouteInfoLayerName(line));
+    });
+    return map;
+}
+
+// Layers owned by one route session, e.g.
+//   'GP Lane Bubble (차선 버블) · Route Info 10000013'
+// Base name first so these never collide with the 'Route Info ' prefix logic.
+const ROUTE_CHILD_SEPARATOR = ' · ';
+
+function routeChildLayerName(baseName, routeLayerName) {
+    return `${baseName}${ROUTE_CHILD_SEPARATOR}${routeLayerName}`;
+}
+
+// The route layer a child layer belongs to, or null when it is not a child.
+function routeChildLayerOwner(name) {
+    if (typeof name !== 'string') return null;
+    const index = name.indexOf(ROUTE_CHILD_SEPARATOR);
+    if (index < 0) return null;
+    const owner = name.slice(index + ROUTE_CHILD_SEPARATOR.length);
+    return owner.startsWith('Route Info') ? owner : null;
+}
+
+function routeChildLayerBase(name) {
+    const index = String(name).indexOf(ROUTE_CHILD_SEPARATOR);
+    return index < 0 ? name : String(name).slice(0, index);
 }
 
 function getRouteInfoMarkerLayerName(routeLayerName) {

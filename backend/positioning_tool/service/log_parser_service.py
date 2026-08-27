@@ -25,6 +25,7 @@ from backend.positioning_tool.service.log_parsing.patterns import (
     ROUTE_REQ_WAYPOINT_PATTERN,
     SDI_DRIVE_STATUS_PATTERN,
     SDI_SELECTED_PATTERN,
+    SDI_SKIP_PATTERN,
     _SCAN_NEXT_TYPE,
     _STOP_LINE,
 )
@@ -869,19 +870,26 @@ def recompute_timestamp_range_from_coords():
 def parse_sdi_event(line, timestamp):
     """Parse SDI (Safety Drive Information) events from navisdk logs.
 
-    GetSdiSelected select (0): 0, 15 nDist: 300, 500, wptPos: 37.545592, 126.978641
-    onDriveStatusChanged SDI[15] Speed : 50 pt(126.978641,37.545592)
+    GetSdiSelected select (0): 76, 15 nDist: 300, 500, wptPos: 37.545592, 126.978641
+    GetSdiSelected select (0): skip due to distance: 15
+    MapGuidingInformationProvider::onDriveStatusChanged SDI[15] CurrentSDI Speed : 50 ...
+
+    The GetSdiSelected line reports two types: the best-so-far selection and the
+    candidate being examined. The coordinates belong to the candidate, so that
+    is what the marker is typed by; the best-so-far value is kept separately as
+    context. Skip lines share the candidate index, which is how a rejection
+    reason gets attached to the candidate it rejected.
     """
     global SDI_EVENTS
 
-    # Try onDriveStatusChanged pattern first (has both type and speed)
     drive_match = SDI_DRIVE_STATUS_PATTERN.search(line)
     if drive_match:
         sdi_type = int(drive_match.group(1))
         speed = int(drive_match.group(2))
-        # Note: onDriveStatusChanged has lon,lat order
-        longitude = float(drive_match.group(3))
-        latitude = float(drive_match.group(4))
+        sdi_code = drive_match.group(4)
+        # pt() here is (x, y) = (lon, lat).
+        longitude = float(drive_match.group(5))
+        latitude = float(drive_match.group(6))
 
         if not (30.0 < latitude < 45.0 and 120.0 < longitude < 135.0):
             return False
@@ -890,6 +898,9 @@ def parse_sdi_event(line, timestamp):
             "type": "SDI",
             "sdi_type": sdi_type,
             "speed": speed,
+            "changeable_speed": (drive_match.group(3) == "1") if drive_match.group(3) else None,
+            "sdi_code": sdi_code,
+            "priority": int(drive_match.group(7)) if drive_match.group(7) else None,
             "latitude": latitude,
             "longitude": longitude,
             "source": "onDriveStatusChanged",
@@ -897,12 +908,15 @@ def parse_sdi_event(line, timestamp):
         })
         return True
 
-    # Try GetSdiSelected pattern (has position info)
     select_match = SDI_SELECTED_PATTERN.search(line)
     if select_match:
-        current_type = int(select_match.group(2))
-        candidate_type = int(select_match.group(3))
-        # GetSdiSelected has lat,lon order
+        candidate_index = int(select_match.group(1))
+        selected_type = int(select_match.group(2))
+        # The candidate's own type — this is what wptPos belongs to.
+        sdi_type = int(select_match.group(3))
+        remain_dist = int(select_match.group(4))
+        guide_dist = int(select_match.group(5))
+        # wptPos is (y, x) = (lat, lon).
         latitude = float(select_match.group(6))
         longitude = float(select_match.group(7))
 
@@ -911,14 +925,39 @@ def parse_sdi_event(line, timestamp):
 
         SDI_EVENTS.append({
             "type": "SDI",
-            "sdi_type": current_type,
-            "candidate_type": candidate_type,
+            "sdi_type": sdi_type,
+            "selected_type": selected_type,
+            "candidate_index": candidate_index,
+            "remain_dist": remain_dist,
+            "guide_dist": guide_dist,
             "latitude": latitude,
             "longitude": longitude,
             "source": "GetSdiSelected",
             "timestamp": timestamp,
         })
         return True
+
+    skip_match = SDI_SKIP_PATTERN.search(line)
+    if skip_match:
+        # Attach to the most recent candidate with this index — the skip line
+        # always follows its candidate line within the same pass.
+        candidate_index = int(skip_match.group(1))
+        reason = skip_match.group(2).strip()
+        # 'skip due to priority' logs two types (best-so-far, candidate); every
+        # other variant logs one. The candidate is always the last number.
+        skipped_type = int(skip_match.group(4) or skip_match.group(3))
+        for event in reversed(SDI_EVENTS):
+            if event.get("source") != "GetSdiSelected":
+                continue
+            if event.get("candidate_index") != candidate_index:
+                continue
+            if event.get("sdi_type") != skipped_type:
+                continue
+            event["skip_reason"] = reason
+            return True
+        # 'skip is not service' fires before the position line, so there is
+        # nothing to attach it to; the candidate has no coordinates at all.
+        return False
 
     return False
 
@@ -1261,51 +1300,183 @@ def write_data_to_csv(out_path=None):
                 )
 
 
+# Generated from benz-ivi2 module/navisdk/src/include/rg_def.h (SDI_Type).
+# Ordinals come from declaration order: the numbers in that enum's comments
+# drifted when the backside types were inserted, so they cannot be used.
+SDI_TYPE_NAMES = {
+    0: "신호과속",  # SDI_SPEED_ACCIDENT_POS
+    1: "과속 (고정식)",  # SDI_SPEED_LIMIT_POS
+    2: "구간단속 시작",  # SDI_SPEED_BLOCK_START_POS
+    3: "구간단속 끝",  # SDI_SPEED_BLOCK_END_POS
+    4: "구간단속중",  # SDI_SPEED_BLOCK_MID_POS
+    5: "꼬리물기단속카메라",  # SDI_TAIL
+    6: "신호 단속",  # SDI_SIGNAL_ACCIDENT_POS
+    7: "과속 (이동식)",  # SDI_SPEED_LIMIT_DANGEROUS_AREA
+    8: "고정식 과속위험 구간(박스형)",  # SDI_BOX_SPEED_LIMIT_POS
+    9: "후면신호과속단속카메라",  # SDI_SPEED_ACCIDENT_BACKSIDE_POS
+    10: "후면과속단속카메라",  # SDI_SPEED_LIMIT_BACKSIDE_POS
+    11: "버스전용차로구간",  # SDI_BUS_LANE
+    12: "가변 차로 단속",  # SDI_CHANGEROAD_POS
+    13: "갓길 감시 지점",  # SDI_ROAD_CONTROL_POS
+    14: "끼어들기 금지",  # SDI_INTRUDER_AREA
+    15: "교통정보 수집지점",  # SDI_TRAFFICINFO_COLLECT_POS
+    16: "방범용CCTV(신규)",  # SDI_CCTV_AREA
+    17: "과적차량 위험구간",  # SDI_OVERLOAD_DANGEROUS_AREA
+    18: "적재 불량 단속",  # SDI_LOAD_BAD_CONTROL_POS
+    19: "주차단속 지점",  # SDI_PARKING_CONTROL_POS
+    20: "일방통행도로 (신규)",  # SDI_ONE_WAY_AREA
+    21: "철길 건널목",  # SDI_RAILWAY_CROSSING
+    22: "어린이 보호구역(스쿨존 시작 구간)",  # SDI_SCHOOL_ZONE_START
+    23: "어린이 보호구역(스쿨존 끝 구간 )",  # SDI_SCHOOL_ZONE_END
+    24: "과속방지턱",  # SDI_SPEEDBUMP
+    25: "LPG충전소",  # SDI_LPG_STATION
+    26: "터널 구간",  # SDI_TUNNEL_AREA
+    27: "휴게소",  # SDI_SERVICE_AREA
+    28: "톨게이트",  # SDI_TOLLGATE
+    29: "안개주의 지역",  # SDI_FOG_AREA
+    30: "유해물질 지역",  # SDI_HAZARDOUS_AREA
+    31: "사고다발",  # SDI_ACCIDEDNT_AREA
+    32: "급커브지역",  # SDI_SHARP_CURVE_AREA
+    33: "급커브구간1 (신규)",  # SDI_NEW_CURVE_AREA
+    34: "급경사구간 (신규)",  # SDI_SLOPE_AREA
+    35: "야생동물 교통사고 잦은 구간",  # SDI_ROAD_KILL_AREA
+    36: "우측시야불량지점(신규)",  # SDI_VISUAL_RIGHT_AREA
+    37: "시야불량지점(신규)",  # SDI_VISUAL_FRONT_AREA
+    38: "좌측시야불량지점(신규)",  # SDI_VISUAL_LEFT_AREA
+    39: "신호위반다발구간(신규)",  # SDI_SIGNAL_VIOLATION_AREA
+    40: "과속운행다발구간(신규)",  # SDI_SPEED_DRIVING_AREA
+    41: "교통혼잡지역(신규)",  # SDI_TRAFFIC_CONGEST_AREA
+    42: "방향별차로선택지점(신규)",  # SDI_DIRECTION_LANE
+    43: "무단횡단사고다발지점(신규)",  # SDI_WALK_CROSS_AREA
+    44: "갓길 사고 다발 지점 (신규)",  # SDI_ROAD_ACCIDEDNT_AREA
+    45: "과속 사발 다발 지점 (신규)",  # SDI_SPEED_ACCIDEDNT_AREA
+    46: "졸음 사고 다발 지점 (신규)",  # SDI_SLEEP_ACCIDEDNT_AREA
+    47: "사고다발지점",  # SDI_ACCIDENT_POS
+    48: "보행자 사고다발지점",  # SDI_PEDESTRIAN_ACCIDENT_POS
+    49: "노인보호구역",  # SDI_SILVER_ZONE
+    50: "차량도난사고 상습발생지점",  # SDI_VEHICLE_BURGLARY_POS
+    51: "낙석주의지역",  # SDI_FALLING_AREA
+    52: "결빙주의지역",  # SDI_FREEZING_AREA
+    53: "병목지점",  # SDI_BOTTLENECK_POINT
+    54: "합류 도로",  # SDI_MERGE_POINT
+    55: "추락주의지역",  # SDI_CRASH_AREA
+    56: "지하차도 구간",  # SDI_UNDERGROUND_AREA
+    57: "주택밀집지역(교통진정지역)",  # SDI_TRAFFIC_CALMING_AREA
+    58: "인터체인지",  # SDI_INTERCHANGE
+    59: "분기점",  # SDI_JUNCTION
+    60: "휴게소(LPG충전가능)",  # SDI_SERVICE_AREA_LPG
+    61: "교량",  # SDI_BRIDGE
+    62: "제동장치사고다발지점",  # SDI_HWA03
+    63: "중앙선침범사고다발지점",  # SDI_HWA06
+    64: "통행위반사고다발지점",  # SDI_HWA09
+    65: "목적지 건너편 안내(Tmap 전용, GP 203을 변경해서 사용)",  # SDI_GOAL_OPPOSITE
+    66: "졸음 쉼터 안내(Tmap 전용, GP 150을 변경해서 사용)",  # SDI_REST_PLACE
+    67: "노후경유차단속(8.0 신규)",  # SDI_EXHAUST_GAS_GRADE
+    68: "터널내 차로변경단속(8.0신규 - 데이터는 내려오지 않음).",  # SDI_TUNNEL_CHANGE_LANE_POS
+    69: "후면구간단속 시점",  # SDI_SPEED_BLOCK_BACKSIDE_START_POS
+    70: "후면구간단속 종점",  # SDI_SPEED_BLOCK_BACKSIDE_END_POS
+    71: "후면신호과속구간단속 시점",  # SDI_SPEED_BLOCK_BACKSIDE_SIGNAL_START_POS
+    72: "후면신호과속구간단속 종점",  # SDI_SPEED_BLOCK_BACKSIDE_SIGNAL_END_POS
+    73: "신호과속구간단속 시점",  # SDI_SIGNAL_SPEED_BLOCK_START_POS
+    74: "신호과속구간단속 종점",  # SDI_SIGNAL_SPEED_BLOCK_END_POS
+    75: "SDI_UNKNOWN",  # SDI_UNKNOWN
+    76: "SDI_MAX",  # SDI_MAX
+}
+
+# stSelected.nType starts at SDI_MAX and means 'nothing selected yet'.
+SDI_TYPE_MAX = 76
+
+
 def build_sdi_markers():
-    """Convert SDI_EVENTS to marker format."""
+    """Convert SDI_EVENTS to marker format.
+
+    GetSdiSelected logs every candidate on every pass, so the same SDI appears
+    many times. Candidates are collapsed by (type, position) while keeping the
+    number of observations and the rejection reasons seen, which is what tells
+    you whether an SDI was ever actually used.
+    """
     if not SDI_EVENTS:
         return []
 
     markers = []
     event_id_counter = 20000  # Start from 20000 to avoid conflicts
-    seen = set()
-
-    # SDI type names
-    SDI_TYPE_NAMES = {
-        0: "신호위반 단속",
-        1: "구간단속 시작",
-        2: "과속방지턱",
-        3: "버스전용차로",
-        15: "고정식 카메라",
-    }
+    by_key = {}
 
     for event in SDI_EVENTS:
-        # Dedupe by type/position
-        dedupe_key = (event["sdi_type"], event["latitude"], event["longitude"])
-        if dedupe_key in seen:
-            continue
-        seen.add(dedupe_key)
+        key = (event["sdi_type"], round(event["latitude"], 6), round(event["longitude"], 6))
+        record = by_key.get(key)
+        if record is None:
+            record = dict(event)
+            record["observation_count"] = 0
+            record["skip_reasons"] = []
+            record["ever_selected"] = False
+            by_key[key] = record
 
-        sdi_type = event["sdi_type"]
+        record["observation_count"] += 1
+        # Each source knows different things about the same SDI: GetSdiSelected
+        # has the distances, onDriveStatusChanged has the speed limit and
+        # priority. Fill in whatever the record is still missing.
+        for field in ("speed", "priority", "changeable_speed", "sdi_code",
+                      "guide_dist", "candidate_index", "selected_type"):
+            if record.get(field) is None and event.get(field) is not None:
+                record[field] = event[field]
+        reason = event.get("skip_reason")
+        if reason:
+            if reason not in record["skip_reasons"]:
+                record["skip_reasons"].append(reason)
+        elif event.get("source") == "GetSdiSelected":
+            # A candidate line with no skip line after it survived the filters.
+            record["ever_selected"] = True
+        elif event.get("source") == "onDriveStatusChanged":
+            # Reported as the current SDI to the UI — selected by definition.
+            record["ever_selected"] = True
+
+        # Keep the closest approach; that is the most informative distance.
+        remain = event.get("remain_dist")
+        if remain is not None:
+            previous = record.get("remain_dist")
+            if previous is None or remain < previous:
+                record["remain_dist"] = remain
+
+    for record in by_key.values():
+        sdi_type = record["sdi_type"]
         type_name = SDI_TYPE_NAMES.get(sdi_type, f"SDI Type {sdi_type}")
+        selected_type = record.get("selected_type")
 
         marker = {
             "id": event_id_counter,
             "dlt_id": None,
             "type": "SDI Event",
-            "latitude": event["latitude"],
-            "longitude": event["longitude"],
+            "latitude": record["latitude"],
+            "longitude": record["longitude"],
             "heading": None,
             "extra": {
                 "event_type": "SDI",
                 "sdi_type": sdi_type,
                 "sdi_type_name": type_name,
-                "speed": event.get("speed"),
-                "source": event.get("source", ""),
+                "speed": record.get("speed"),
+                "changeable_speed": record.get("changeable_speed"),
+                # Asset name the navigation UI uses for this SDI's icon.
+                "sdi_code": record.get("sdi_code"),
+                "priority": record.get("priority"),
+                "remain_dist": record.get("remain_dist"),
+                "guide_dist": record.get("guide_dist"),
+                "candidate_index": record.get("candidate_index"),
+                # Best-so-far selection at the time this candidate was examined;
+                # SDI_MAX means nothing had been selected yet.
+                "selected_type": selected_type,
+                "selected_type_name": (
+                    None if selected_type is None or selected_type >= SDI_TYPE_MAX
+                    else SDI_TYPE_NAMES.get(selected_type, f"SDI Type {selected_type}")
+                ),
+                "observation_count": record["observation_count"],
+                "skip_reasons": record["skip_reasons"],
+                "ever_selected": record["ever_selected"],
+                "source": record.get("source", ""),
                 "sdi_event": True,
             },
-            "timestamp_ms": int(event["timestamp"].timestamp() * 1000) if event["timestamp"] else 0,
-            "timestamp_str": event["timestamp"].strftime("%Y/%m/%d %H:%M:%S.%f")[:-3] if event["timestamp"] else "",
+            "timestamp_ms": int(record["timestamp"].timestamp() * 1000) if record["timestamp"] else 0,
+            "timestamp_str": record["timestamp"].strftime("%Y/%m/%d %H:%M:%S.%f")[:-3] if record["timestamp"] else "",
             "color": "#f39c12",  # Orange for SDI
             "fill": True,
         }
@@ -1793,6 +1964,7 @@ def build_runtime_payload():
 
     # Convert guide events and route info to marker coordinates
     all_coords.extend(build_guide_event_markers())
+    all_coords.extend(build_sdi_markers())
     all_coords.extend(build_route_info_markers(all_lines))
     gp_guide_markers = build_gp_guide_markers(all_lines, all_coords)
     all_coords.extend(gp_guide_markers)

@@ -516,11 +516,11 @@ function handleRequestIdSearch() {
         const requestLat = request.latitude;
         const requestLon = request.longitude;
         L.circleMarker([requestLat, requestLon], {
-            radius: 7,
+            radius: 6,
             color: '#3b82f6',
             fillColor: '#60a5fa',
             fillOpacity: 0.9,
-            weight: 2,
+            weight: 1.5,
             interactive: false
         }).addTo(highlightLayer);
 
@@ -529,8 +529,8 @@ function handleRequestIdSearch() {
             icon: L.divIcon({
                 className: 'route-label',
                 html: '<div style="background:#3b82f6;color:white;padding:1px 4px;border-radius:3px;font-size:9px;font-weight:bold;white-space:nowrap;">시작</div>',
-                iconSize: [30, 16],
-                iconAnchor: [15, 8]
+                iconSize: [28, 15],
+                iconAnchor: [14, 8]
             }),
             interactive: false
         }).addTo(highlightLayer);

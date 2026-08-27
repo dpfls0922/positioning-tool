@@ -283,6 +283,8 @@ function isRouteLayerName(name) {
     if (typeof name !== 'string') return false;
     if (name.startsWith(ROUTE_INFO_MARKER_LAYER_PREFIX)) return true;
     if (name.startsWith(ROUTE_INFO_LAYER_PREFIX)) return true;
+    // 'GP Lane Bubble (차선 버블) · Route Info 10000013' and friends.
+    if (routeChildLayerOwner(name)) return true;
     return [
         ROUTE_INFO_MARKER_LAYER,
         'Route Info',
@@ -352,6 +354,9 @@ function appendLayerRows(childWrap, groups) {
                 if (!map.hasLayer(group)) map.addLayer(group);
                 activeGroups.add(name);
 
+                // Route Info를 다시 키면 함께 껐던 하위 레이어를 복원
+                restoreRouteChildLayers(name);
+
                 // Road Node를 키면 Vertex 이전 상태 복원
                 if (name === ROAD_NODE_LAYER && vertexWasActiveBeforeNodeDisabled) {
                     const vertexGroup = featureGroups[ROAD_LINK_VERTEX_LAYER];
@@ -363,6 +368,9 @@ function appendLayerRows(childWrap, groups) {
             } else {
                 if (map.hasLayer(group)) map.removeLayer(group);
                 activeGroups.delete(name);
+
+                // Route Info를 끄면 그 경로에서 파싱된 하위 레이어도 함께 끔
+                hideRouteChildLayers(name);
 
                 // Road Node를 끄면 Vertex 상태 기억 후 함께 끔 (UI 일관성)
                 if (name === ROAD_NODE_LAYER) {
@@ -421,7 +429,116 @@ function appendLayerRows(childWrap, groups) {
         if (name !== ROAD_LINK_VERTEX_LAYER) {
             appendRoadRuleControls(childWrap, name);
         }
+        appendRouteChildLayerControls(childWrap, name);
     });
+}
+
+// Child layers follow their parent route: they describe that route, so leaving
+// them on the map after its row is unchecked reads as a bug. The set that was
+// on is remembered so re-checking the parent restores it, mirroring how
+// Road Node remembers Road Link Vertex.
+const routeChildActiveBeforeParentDisabled = new Map();
+
+// ensureTmapFeatureGroup() shows every group it creates, so a child built while
+// its route is hidden would appear orphaned. Call this right after creating one.
+function syncRouteChildLayerToParent(childName) {
+    const owner = routeChildLayerOwner(childName);
+    if (!owner) return;
+    // An owner with no layer yet has not been drawn; leave the child visible.
+    if (!featureGroups[owner] || activeGroups.has(owner)) return;
+    const group = featureGroups[childName];
+    if (group && map.hasLayer(group)) map.removeLayer(group);
+    activeGroups.delete(childName);
+}
+
+function routeChildLayerNames(routeLayerName) {
+    return layerOrder.filter((name) => routeChildLayerOwner(name) === routeLayerName);
+}
+
+function hideRouteChildLayers(routeLayerName) {
+    const children = routeChildLayerNames(routeLayerName);
+    if (children.length === 0) return;
+    routeChildActiveBeforeParentDisabled.set(
+        routeLayerName,
+        children.filter((child) => activeGroups.has(child))
+    );
+    children.forEach((child) => {
+        const group = featureGroups[child];
+        if (group && map.hasLayer(group)) map.removeLayer(group);
+        activeGroups.delete(child);
+    });
+}
+
+function restoreRouteChildLayers(routeLayerName) {
+    const remembered = routeChildActiveBeforeParentDisabled.get(routeLayerName);
+    if (!remembered) return;
+    remembered.forEach((child) => {
+        const group = featureGroups[child];
+        if (!group) return;
+        if (!map.hasLayer(group)) map.addLayer(group);
+        activeGroups.add(child);
+    });
+    routeChildActiveBeforeParentDisabled.delete(routeLayerName);
+}
+
+// GP guide / lane bubble layers parsed from one route, shown under that route's
+// row so they are managed with it rather than as unrelated top-level layers.
+function appendRouteChildLayerControls(parent, routeLayerName) {
+    if (typeof routeLayerName !== 'string' || !routeLayerName.startsWith('Route Info')) return;
+    // Only the route polyline row owns the children, not its markers row.
+    if (routeLayerName.startsWith(ROUTE_INFO_MARKER_LAYER_PREFIX) || routeLayerName === ROUTE_INFO_MARKER_LAYER) return;
+
+    const children = routeChildLayerNames(routeLayerName);
+    if (children.length === 0) return;
+    const parentActive = activeGroups.has(routeLayerName);
+
+    const wrap = document.createElement('div');
+    wrap.className = 'layer-rule-list';
+
+    children.forEach((childName) => {
+        const group = featureGroups[childName];
+        if (!group) return;
+
+        const item = document.createElement('label');
+        item.className = 'layer-rule-item';
+
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.className = 'layer-control-check';
+        checkbox.checked = activeGroups.has(childName);
+        // Turning a child on while its route is hidden would contradict the
+        // cascade, so the row is inert until the route is shown again.
+        checkbox.disabled = !parentActive;
+        checkbox.onchange = () => {
+            if (checkbox.checked) {
+                if (!map.hasLayer(group)) map.addLayer(group);
+                activeGroups.add(childName);
+            } else {
+                if (map.hasLayer(group)) map.removeLayer(group);
+                activeGroups.delete(childName);
+            }
+            renderLayerControls();
+        };
+        item.appendChild(checkbox);
+
+        const swatch = document.createElement('span');
+        swatch.className = 'layer-rule-swatch';
+        // Resolve the colour from the kind: the session suffix matches none of
+        // getLayerSwatchColor's names.
+        swatch.style.background = getLayerSwatchColor(routeChildLayerBase(childName));
+        item.appendChild(swatch);
+
+        const label = document.createElement('span');
+        label.className = 'layer-rule-label';
+        // The owning route is already the parent row, so show only the kind.
+        label.textContent = `${routeChildLayerBase(childName)} (${group.getLayers().length})`;
+        label.title = childName;
+        item.appendChild(label);
+
+        wrap.appendChild(item);
+    });
+
+    parent.appendChild(wrap);
 }
 
 function createLayerTreeCard(rootLabelText, groups, expanded = true, visibilityGroups = null, cardKey = null) {
@@ -513,7 +630,10 @@ function renderLayerControls() {
     }
 
     const resultGroups = layerOrder.filter((name) => !isRoadShapeLayerName(name) && !isRouteLayerName(name));
-    const routeGroups = layerOrder.filter((name) => isRouteLayerName(name));
+    // Session-owned GP/lane layers are nested under their route's row, so they
+    // are excluded from the top-level rows (still counted by the card checkbox).
+    const routeGroups = layerOrder.filter((name) => isRouteLayerName(name) && !routeChildLayerOwner(name));
+    const routeVisibilityGroups = layerOrder.filter((name) => isRouteLayerName(name));
     // Lane Width는 최상위 행이 아니라 Road Link 하위 체크박스로 노출한다(Vertex와 동일한 패턴).
     const roadGroups = layerOrder.filter((name) => isRoadShapeLayerName(name) && name !== ROAD_LINK_VERTEX_LAYER && name !== SEGMENT_FB_LAYER && name !== LANE_WIDTH_LAYER && name !== LANE_WIDTH_LAYER_2 && name !== LANE_WIDTH_EXT_CALC_LAYER);
     const roadShapeVisibilityGroups = layerOrder.filter((name) => isRoadShapeLayerName(name));
@@ -525,7 +645,7 @@ function renderLayerControls() {
     // Route data is derived from the result, so it sits between the two.
     if (routeGroups.length > 0) {
         list.appendChild(createLayerTreeCard(
-            '경로', routeGroups, isLayerTreeExpanded('route'), null, 'route'));
+            '경로', routeGroups, isLayerTreeExpanded('route'), routeVisibilityGroups, 'route'));
     }
     if (roadGroups.length > 0) {
         const tree = createLayerTreeCard(
@@ -877,7 +997,11 @@ function getLayerSwatchColor(name) {
         'Route Info': '#f97316',
         'Route Info Markers': '#16a34a',
         'Tmap Waypoints': '#f59e0b',
-        'Tmap Route': '#ef4444'
+        'Tmap Route': '#ef4444',
+        [GP_CROSS_IMAGE_LAYER]: '#7c3aed',
+        [GP_TURN_ONLY_LAYER]: '#0ea5e9',
+        [GP_LANE_COLOR_LAYER]: '#22c55e',
+        [GP_LANE_BUBBLE_LAYER]: '#f472b6'
     };
     return swatches[name] || '#94a3b8';
 }

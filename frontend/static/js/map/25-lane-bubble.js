@@ -62,7 +62,7 @@ function buildLaneBubbleHtml(extra, compact = false) {
         for (let i = 0; i < layout.total; i++) {
             const lit = layout.lit.includes(i);
             cells.push(
-                `<div style="min-width:${px(13, 10)}px;padding:1px 1px;border-radius:2px;text-align:center;font-size:${px(10, 8)}px;line-height:${px(12, 10)}px;` +
+                `<div style="min-width:${px(13, 11)}px;padding:1px 1px;border-radius:2px;text-align:center;font-size:${px(10, 9)}px;line-height:${px(12, 11)}px;` +
                 `background:${lit ? colorInfo.hex : 'rgba(148,163,184,.4)'};color:${lit ? '#fff' : 'rgba(255,255,255,.45)'};` +
                 `font-weight:${lit ? 700 : 400}">${lit ? glyph : '·'}</div>`
             );
@@ -94,11 +94,11 @@ function buildLaneBubbleHtml(extra, compact = false) {
 
 function buildLaneBubbleIcon(extra) {
     const layout = gpLaneLayoutFromVoiceCode(extra.voice_code);
-    const width = Math.max(34, ((layout?.total || 1) * 11) + 22);
+    const width = Math.max(38, ((layout?.total || 1) * 12) + 24);
     return L.divIcon({
         className: '',
-        iconSize: [width, 29],
-        iconAnchor: [width / 2, 29],
+        iconSize: [width, 32],
+        iconAnchor: [width / 2, 32],
         html: buildLaneBubbleHtml(extra, true)
     });
 }
@@ -138,18 +138,44 @@ function buildLaneBubblePopup(marker) {
 
 function visualizeLaneBubblesFromLog() {
     if (!Array.isArray(markersData) || markersData.length === 0) return;
-    const bubbles = markersData.filter((m) => m.extra?.lane_bubble);
-    if (bubbles.length === 0) return;
+    const allBubbles = markersData.filter((m) => m.extra?.lane_bubble);
+    // Only voice codes that decode to a lane layout say anything about lanes.
+    // The rest (colour-only codes such as 65~68) rendered as a bare colour chip
+    // with '차로 지시 없음', which is noise on the map — the same values are
+    // still in the GP Guide popups.
+    const bubbles = allBubbles.filter((m) => gpLaneLayoutFromVoiceCode(m.extra?.voice_code));
+    const skipped = allBubbles.length - bubbles.length;
+    if (bubbles.length === 0) {
+        if (skipped > 0) console.log(`📊 Lane Bubble: 0개 (차로 지시 없는 ${skipped}개 제외)`);
+        return;
+    }
 
-    console.log(`📊 Lane Bubble: ${bubbles.length}개`);
-    const group = ensureTmapFeatureGroup(GP_LANE_BUBBLE_LAYER);
-    group.clearLayers();
+    console.log(`📊 Lane Bubble: ${bubbles.length}개${skipped > 0 ? ` (차로 지시 없는 ${skipped}개 제외)` : ''}`);
+
+    // Split per owning route session so the sidebar can nest each set under the
+    // route it was parsed from; unresolvable sessions stay on the base layer.
+    const sessionNames = routeLayerNameBySessionId();
+    const buckets = new Map();
     bubbles.forEach((marker) => {
-        const layer = L.marker([marker.latitude, marker.longitude], {
-            icon: buildLaneBubbleIcon(marker.extra)
+        const routeLayerName = sessionNames.get(marker.extra?.route_session_id) || null;
+        const layerName = routeLayerName
+            ? routeChildLayerName(GP_LANE_BUBBLE_LAYER, routeLayerName)
+            : GP_LANE_BUBBLE_LAYER;
+        if (!buckets.has(layerName)) buckets.set(layerName, []);
+        buckets.get(layerName).push(marker);
+    });
+
+    buckets.forEach((bucket, layerName) => {
+        const group = ensureTmapFeatureGroup(layerName);
+        group.clearLayers();
+        bucket.forEach((marker) => {
+            const layer = L.marker([marker.latitude, marker.longitude], {
+                icon: buildLaneBubbleIcon(marker.extra)
+            });
+            layer.bindPopup(buildLaneBubblePopup(marker));
+            group.addLayer(layer);
         });
-        layer.bindPopup(buildLaneBubblePopup(marker));
-        group.addLayer(layer);
+        syncRouteChildLayerToParent(layerName);
     });
     renderLayerControls();
 }

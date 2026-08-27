@@ -149,20 +149,20 @@ function buildGpMarkerIcon(extra) {
     const color = gpMarkerColor(gpType);
     const glyph = GP_TURN_GLYPHS[Number(extra.turn_code)] || '◆';
     const isCross = !!(gpType & GP_TYPE_EXTCROSSTURN);
-    const size = 12;
+    const size = 14;
     const badge = extra.gp_index !== null && extra.gp_index !== undefined
-        ? `<div style="margin-top:1px;padding:0 2px;background:rgba(15,23,42,.75);color:#fff;font-size:6px;font-weight:600;border-radius:4px;white-space:nowrap">GP ${extra.gp_index}</div>`
+        ? `<div style="margin-top:1px;padding:0 2px;background:rgba(15,23,42,.75);color:#fff;font-size:7px;font-weight:600;border-radius:5px;white-space:nowrap">GP ${extra.gp_index}</div>`
         : '';
     return L.divIcon({
         className: '',
-        iconSize: [size, size + (badge ? 8 : 0)],
+        iconSize: [size, size + (badge ? 9 : 0)],
         iconAnchor: [size / 2, size / 2],
         html:
             `<div style="display:flex;flex-direction:column;align-items:center">` +
             `<div style="width:${size}px;height:${size}px;line-height:${size}px;text-align:center;` +
             `background:${color};color:#fff;border-radius:${isCross ? '3px' : '50%'};` +
-            `font-size:8px;font-weight:700;` +
-            `border:1px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.3)">${glyph}</div>` +
+            `font-size:10px;font-weight:700;` +
+            `border:1.5px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.3)">${glyph}</div>` +
             badge +
             `</div>`
     });
@@ -341,9 +341,31 @@ function visualizeGpGuideFromLog() {
         return group;
     };
 
-    addTo(GP_CROSS_IMAGE_LAYER, crossImageMarkers, buildGpGuidePopup, buildGpMarkerIcon);
-    addTo(GP_TURN_ONLY_LAYER, turnOnlyMarkers, buildGpGuidePopup, buildGpMarkerIcon);
-    addTo(GP_LANE_COLOR_LAYER, laneMarkers, buildGpLaneColorPopup, null);
+    // Each GP kind is split per owning route session so the sidebar can nest it
+    // under that route. Markers whose session cannot be resolved (no matching
+    // 'Route Info' line) stay on the unsuffixed layer as a top-level row.
+    const sessionNames = routeLayerNameBySessionId();
+    const perSession = (list) => {
+        const buckets = new Map();
+        list.forEach((marker) => {
+            const routeLayerName = sessionNames.get(marker.extra?.route_session_id) || null;
+            if (!buckets.has(routeLayerName)) buckets.set(routeLayerName, []);
+            buckets.get(routeLayerName).push(marker);
+        });
+        return buckets;
+    };
+
+    [
+        [GP_CROSS_IMAGE_LAYER, crossImageMarkers, buildGpGuidePopup, buildGpMarkerIcon],
+        [GP_TURN_ONLY_LAYER, turnOnlyMarkers, buildGpGuidePopup, buildGpMarkerIcon],
+        [GP_LANE_COLOR_LAYER, laneMarkers, buildGpLaneColorPopup, null]
+    ].forEach(([baseName, list, popupBuilder, iconBuilder]) => {
+        perSession(list).forEach((bucket, routeLayerName) => {
+            const layerName = routeLayerName ? routeChildLayerName(baseName, routeLayerName) : baseName;
+            addTo(layerName, bucket, popupBuilder, iconBuilder);
+            syncRouteChildLayerToParent(layerName);
+        });
+    });
 
     renderLayerControls();
 }
