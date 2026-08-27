@@ -27,29 +27,34 @@ def render_html(markers_data=None, lines_data=None):
                     <span id="sidebar-brand">positioning map</span>
                 </div>
                 <div id="sidebar-search">
-                    <div class="search-group search-group-full">
-                        <input id="searchBox" type="text" placeholder="DLT ID 검색">
-                        <button id="searchButton">DLT 검색</button>
+                    <div id="omnibox-wrap">
+                        <div id="omnibox-field">
+                            <span id="omnibox-icon">⌕</span>
+                            <input id="omnibox" type="text" autocomplete="off"
+                                placeholder="검색 — DLT/ID/좌표/RID/경로/장소">
+                            <button id="omniboxClear" type="button" title="지우기">✕</button>
+                        </div>
+                        <div id="omnibox-results" class="hidden"></div>
+                        <div id="omnibox-hint">
+                            <code>dlt:</code><code>id:</code><code>rid:</code><code>req:</code><code>@좌표</code>
+                        </div>
                     </div>
-                    <div class="search-group search-group-full">
-                        <input id="idSearchBox" type="text" placeholder="Marker/Line ID 검색">
-                        <button id="idSearchButton">ID 검색</button>
-                    </div>
-                    <div class="search-group search-group-full">
-                        <input id="latLonSearchBox" type="text" placeholder="Lat, Lon 검색">
-                        <button id="latLonSearchButton">좌표 검색</button>
-                    </div>
-                    <div class="search-group search-group-full">
-                        <input id="ridSearchBox" type="text" placeholder="RID / LINK_ID 검색">
-                        <button id="ridSearchButton">RID 검색</button>
-                    </div>
-                    <div class="search-group search-group-full">
-                        <input id="requestIdSearchBox" type="text" placeholder="Request ID 검색 (예: 10000011)">
-                        <button id="requestIdSearchButton">경로 검색</button>
-                    </div>
-                    <div class="search-group search-group-full">
-                        <input id="placeSearchBox" type="text" placeholder="상호명 검색 (예: 스타벅스 강남역)">
-                        <button id="placeSearchButton">장소 검색</button>
+                    <!-- The original inputs stay in the DOM (hidden) so the existing
+                         search handlers keep working untouched; the omnibox fills the
+                         one matching the chosen candidate and invokes its handler. -->
+                    <div id="legacy-search-inputs" hidden>
+                        <input id="searchBox" type="text">
+                        <input id="idSearchBox" type="text">
+                        <input id="latLonSearchBox" type="text">
+                        <input id="ridSearchBox" type="text">
+                        <input id="requestIdSearchBox" type="text">
+                        <input id="placeSearchBox" type="text">
+                        <button id="searchButton"></button>
+                        <button id="idSearchButton"></button>
+                        <button id="latLonSearchButton"></button>
+                        <button id="ridSearchButton"></button>
+                        <button id="requestIdSearchButton"></button>
+                        <button id="placeSearchButton"></button>
                     </div>
                     <div class="interaction-mode-group">
                         <button id="markerInspectModeButton" class="interaction-mode-btn active" type="button">마커 클릭</button>
@@ -682,13 +687,6 @@ def add_legend():
             <div><i style="background:#808080; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> 주차장 상태 (ParkingLot)</div>
             <div><i style="background:#ff1493; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> 주차장 상태 (진입 평가/준비)</div>
             <div><img src="https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-grey.png" style="width:10px; height:15px; display:inline-block;"> Request</div>
-            <div style="margin-top:6px; font-size:11px; font-weight:600; color:#334155;">GP (Guide Point)</div>
-            <div>Route Info 링크: 선 색은 그대로. 링크 클릭 시 팝업 하단에 그 링크의 GP 정보가 붙습니다</div>
-            <div><i style="background:#7c3aed; width:10px; height:10px; display:inline-block; border-radius:2px;"></i> 교차로 이미지 있음 (EXTCROSSTURN) — 사각형 마커</div>
-            <div><i style="background:#0d9488; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> 교차로 이미지 없음 (TURN) — 원형 마커, 차선 버블만</div>
-            <div>안내 없는 통과 링크(GPTYPE_NON)는 마커를 만들지 않습니다 — 해당 링크의 turnCode/nGPType은 Route Info 링크 팝업에서 확인</div>
-            <div><i style="background:#22c55e; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> laneColor GREEN / <i style="background:#ec4899; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> PINK / <i style="background:#3b82f6; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> BLUE / <i style="background:#eab308; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> YELLOW</div>
-            <div style="margin-top:4px;">차선 버블: 색상은 nVoiceCode → ToLaneColor, 차로 힌트도 nVoiceCode(IDV_RG_* 차로 코드) 유래. '…' 칸은 로그로 알 수 없는 나머지 차로</div>
         </div>
     </div>
     """

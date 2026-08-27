@@ -204,6 +204,99 @@ function gpCrossImageSummary(extra) {
     return parts.join(' · ');
 }
 
+// ===========================================================================
+// Navigation-style guidance card.
+//
+// tbt_1st_*.png in app/_res/image is NOT indexed by turnCode, and only 14 of
+// its 36 slots have artwork — basic turns exist only as a left and a right
+// arrow, with no U-turn, P-turn or clock-direction variants. So each turnCode is
+// mapped to the slot whose artwork actually depicts it (verified by rendering
+// every slot), and codes with no matching artwork keep the arrow glyph instead
+// of borrowing a wrong picture.
+// ===========================================================================
+const TBT_ICON_DIR = '/static/img/tbt/';
+
+const TBT_TURN_IMAGE = {
+    12: 'tbt_03.png',          // 좌회전
+    13: 'tbt_02.png',          // 우회전
+    // 고속도로 / 도시고속 입구·출구: IN/OUT shield + approach direction
+    101: 'tbt_16.png', 102: 'tbt_14.png', 103: 'tbt_12.png',   // 입구 우/좌/직진
+    104: 'tbt_17.png', 105: 'tbt_15.png', 106: 'tbt_13.png',   // 출구 우/좌/직진
+    111: 'tbt_16.png', 112: 'tbt_14.png', 113: 'tbt_12.png',
+    114: 'tbt_17.png', 115: 'tbt_15.png', 116: 'tbt_13.png',
+    117: 'tbt_31.png',         // 오른쪽 도로
+    118: 'tbt_31_mirror.png',  // 왼쪽 도로 — mirrored, no left-hand asset exists
+    120: 'tbt_36.png',         // 고가도로
+    121: 'tbt_29.png',         // 터널
+    233: 'tbt_33.png'          // 직진(임시)
+};
+
+function tbtImageForTurnCode(turnCode) {
+    return TBT_TURN_IMAGE[Number(turnCode)] || null;
+}
+
+let gpGuidanceCardEl = null;
+
+function closeGpGuidanceCard() {
+    if (gpGuidanceCardEl) {
+        gpGuidanceCardEl.remove();
+        gpGuidanceCardEl = null;
+    }
+}
+
+// Opened from the GP popup. Shows what the device would have drawn at this guide
+// point: the turn figure, the lane bubble, and the values behind both.
+function openGpGuidanceCard(gpIndex) {
+    const marker = (markersData || []).find((m) => m.extra?.gp_guide
+        && String(m.extra.gp_index) === String(gpIndex));
+    if (!marker) return;
+
+    closeGpGuidanceCard();
+    const extra = marker.extra || {};
+    const gpType = Number(extra.gp_type) || 0;
+    const image = tbtImageForTurnCode(extra.turn_code);
+    const glyph = GP_TURN_GLYPHS[Number(extra.turn_code)] || '◆';
+    const turnName = gpTurnCodeName(extra.turn_code) || gpTurnCodeLabel(extra.turn_code);
+
+    const figure = image
+        ? `<img src="${TBT_ICON_DIR}${image}" width="72" height="72" style="display:block" alt="">`
+        : `<div style="width:72px;height:72px;display:flex;align-items:center;justify-content:center;
+             font-size:44px;line-height:1;color:#f8fafc">${glyph}</div>`;
+
+    const laneBubble = (gpType & GP_TYPE_TURN)
+        ? buildLaneBubbleHtml(extra)
+        : '<div style="color:#94a3b8;font-size:11px">차선 버블 없음 (GPTYPE_TURN 아님)</div>';
+
+    const el = document.createElement('div');
+    el.className = 'gp-guidance-card';
+    el.innerHTML = `
+        <div class="gp-guidance-head">
+            <span>안내 화면 재현</span>
+            <button type="button" class="gp-guidance-close" aria-label="닫기">✕</button>
+        </div>
+        <div class="gp-guidance-body">
+            <div class="gp-guidance-turn">
+                ${figure}
+                <div class="gp-guidance-turn-text">
+                    <div class="gp-guidance-turn-name">${escapeHtml(turnName)}</div>
+                    <div class="gp-guidance-turn-sub">
+                        GP ${extra.gp_index ?? '-'} · turnCode ${extra.turn_code ?? '-'}
+                        ${image ? '' : ' · 해당 TBT 이미지 없음'}
+                    </div>
+                </div>
+            </div>
+            <div class="gp-guidance-lane">${laneBubble}</div>
+            <div class="gp-guidance-meta">
+                <span>nLinkID ${extra.link_id ?? '-'}</span>
+                <span>linkIndex ${extra.link_index ?? '-'}</span>
+                <span>${escapeHtml(gpTypeLabel(gpType))}</span>
+            </div>
+        </div>`;
+    el.querySelector('.gp-guidance-close').onclick = closeGpGuidanceCard;
+    document.body.appendChild(el);
+    gpGuidanceCardEl = el;
+}
+
 function buildGpGuidePopup(marker) {
     const extra = marker.extra || {};
     const gpType = Number(extra.gp_type) || 0;
@@ -228,6 +321,10 @@ function buildGpGuidePopup(marker) {
             <div style="font-size:11px;color:#64748b;margin-bottom:8px">
                 차선 버블은 GPTYPE_TURN, 교차로 이미지는 GPTYPE_EXTCROSSTURN 에서 나온다
             </div>
+            <button type="button" class="gp-guidance-open"
+                onclick="openGpGuidanceCard('${extra.gp_index}')">
+                안내 화면으로 보기
+            </button>
             <table style="font-size:12px">
                 ${row('turnCode', escapeHtml(gpTurnCodeLabel(extra.turn_code)))}
                 ${row('nGPType', escapeHtml(gpTypeLabel(gpType)))}

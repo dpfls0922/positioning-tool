@@ -26,6 +26,8 @@ function drawMarkers(coordinates) {
             if (coordtype === 'GP Guide' || coordtype === 'GP Lane Color') continue;
             if (coordtype === 'Guide Event') continue;
             if (coordtype === 'GP Lane Bubble') continue;
+            //   SDI Event  -> 'SDI Events' (visualizeGuideEventsFromLog)
+            if (coordtype === 'SDI Event') continue;
             const latitude = coord.latitude;
             const longitude = coord.longitude;
             if (latitude === undefined || longitude === undefined) continue;

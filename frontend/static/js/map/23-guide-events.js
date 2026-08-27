@@ -274,6 +274,53 @@ const C2X_EVENT_ASSET = {
 
 const C2X_ICON_DIR = '/static/img/c2x/';
 
+const MFS_ICON_DIR = '/static/img/mfs/';
+
+// MFS (Map Feature Service) content icons, from the list commented out above
+// g_sResourcePath in MapObjectProvider.cpp — the app moved to server-supplied
+// icons, but the files are still in app/_res/image and match the incident
+// categories one for one.
+//
+// The log gives only a Korean `name`, and in practice that name is often a POI
+// label rather than an incident type (a real log had a single MFS content named
+// '서울숲'), so anything unmatched falls back to the generic place pin instead of
+// being forced into an incident icon.
+const MFS_NAME_ICONS = [
+    [/교통사고|차량사고|추돌/, 'car_accident.png'],
+    [/보행자/, 'pedestrian_accident.png'],
+    [/고장|정차|차량고장/, 'car_breakdown.png'],
+    [/통제|폐쇄|차단/, 'closure.png'],
+    [/공사|작업/, 'construction.png'],
+    [/복구/, 'disaster_recovery.png'],
+    [/행사|집회/, 'event.png'],
+    [/결빙|블랙아이스/, 'road_icing.png'],
+    [/낙석/, 'rockfall.png'],
+    [/파손|포트홀|침하/, 'road_damage.png'],
+    [/재해|재난|침수|산사태/, 'other_disasters.png'],
+    [/유고|지정체|정체/, 'incident.png']
+];
+
+function mfsIconFile(name) {
+    const text = String(name || '');
+    const hit = MFS_NAME_ICONS.find(([re]) => re.test(text));
+    return hit ? hit[1] : 'pin_place.png';
+}
+
+function createMfsMarkerIcon(name) {
+    const file = mfsIconFile(name);
+    // pin_place is a pin (tip marks the spot); the incident icons are discs.
+    const isPin = file === 'pin_place.png';
+    const size = isPin ? 26 : 24;
+    return L.divIcon({
+        html: `<img src="${MFS_ICON_DIR}${file}" width="${size}" height="${size}"`
+            + ` style="display:block;filter:drop-shadow(0 1px 3px rgba(0,0,0,.3))" alt="">`,
+        className: 'mfs-marker',
+        iconSize: [size, size],
+        iconAnchor: isPin ? [size / 2, size] : [size / 2, size / 2],
+        popupAnchor: [0, isPin ? -size : -size / 2]
+    });
+}
+
 // One palette per category, so a camera reads as a camera regardless of which
 // of the 14 camera types it is.
 const SDI_CATEGORY_STYLE = {
@@ -605,7 +652,7 @@ function visualizeGuideEventsFromLog() {
         mfsEvents.forEach((marker) => {
             const code = mfsNameToEventCode(marker.extra.name);
             const typeConfig = getEventIconConfig(code);
-            const icon = createEventMarkerIcon(code);
+            const icon = createMfsMarkerIcon(marker.extra.name);
             const markerObj = L.marker([marker.latitude, marker.longitude], { icon });
 
             markerObj.bindPopup(`

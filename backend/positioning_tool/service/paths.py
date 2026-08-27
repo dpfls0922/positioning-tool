@@ -52,6 +52,7 @@ JS_MAP_PART_FILES = (
     "24-gp-guide.js",
     "25-lane-bubble.js",
     "26-place-search.js",
+    "27-omnibox.js",
 )
 
 PATHS = AppPaths()

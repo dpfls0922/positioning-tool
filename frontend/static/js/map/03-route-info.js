@@ -75,16 +75,34 @@ function removeRoutePointMarkersFromGroup(group) {
 
 // Compact circular waypoint icon for route point sets (smaller than the
 // Tmap route planner icons so parsed routes stay readable at a glance)
+// Real navigation assets from benz-ivi2's app/_res/image: the origin/destination
+// pins are tbt_1st_23/24 (which literally read 출발/도착) and the waypoints are
+// destination_flag_waypoint_1..4. Anchored at the bottom because these are pins
+// and flags — their tip marks the point, unlike a centred circle.
+const ROUTE_POINT_ICON_DIR = '/static/img/route/';
+const ROUTE_POINT_ICON_HEIGHT = 30;
+
+// Role text comes from the request's route_points ('출발지' / '경유지' / '목적지').
+function routePointAsset(label, subLabel) {
+    const text = `${label || ''} ${subLabel || ''}`;
+    if (/출발|^S$/.test(text)) return { file: 'origin.png', w: 22 };
+    if (/도착|목적|^E$/.test(text)) return { file: 'destination.png', w: 22 };
+    const via = text.match(/(\d+)/);
+    const index = via ? Math.min(Math.max(parseInt(via[1], 10), 1), 4) : 1;
+    return { file: `flag_waypoint_${index}.png`, w: 34 };
+}
+
 function buildRoutePointIcon(label, bgColor, subLabel) {
+    const asset = routePointAsset(label, subLabel);
+    const h = ROUTE_POINT_ICON_HEIGHT;
+    const w = Math.round(asset.w * h / 30);
     return L.divIcon({
         className: '',
-        iconSize: [19, 28],
-        iconAnchor: [9.5, 9.5],
-        html:
-            `<div style="display:flex;flex-direction:column;align-items:center">` +
-            `<div style="width:19px;height:19px;line-height:19px;text-align:center;background:${bgColor};color:#fff;border-radius:50%;font-size:11px;font-weight:700;box-shadow:0 1px 4px rgba(0,0,0,.25);border:2px solid #fff">${label}</div>` +
-            `<div style="margin-top:1px;padding:0 4px;background:rgba(15,23,42,0.75);color:#fff;font-size:8px;font-weight:600;border-radius:6px;white-space:nowrap">${subLabel}</div>` +
-            `</div>`
+        iconSize: [w, h],
+        iconAnchor: [w / 2, h],
+        popupAnchor: [0, -h],
+        html: `<img src="${ROUTE_POINT_ICON_DIR}${asset.file}" width="${w}" height="${h}"`
+            + ` style="display:block;filter:drop-shadow(0 1px 3px rgba(0,0,0,.35))" alt="">`
     });
 }
 
