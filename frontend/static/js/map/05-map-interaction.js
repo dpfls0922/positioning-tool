@@ -11,6 +11,7 @@ function bindSearchControls() {
     bind('latLonSearchButton', 'click', handleLatLonSearch);
     bind('ridSearchButton', 'click', handleRidSearch);
     bind('requestIdSearchButton', 'click', handleRequestIdSearch);
+    bind('placeSearchButton', 'click', handlePlaceSearch);
 
     document.getElementById('searchBox')?.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') handleDltSearch();
@@ -26,6 +27,9 @@ function bindSearchControls() {
     });
     document.getElementById('requestIdSearchBox')?.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') handleRequestIdSearch();
+    });
+    document.getElementById('placeSearchBox')?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') handlePlaceSearch();
     });
 }
 

@@ -51,6 +51,7 @@ JS_MAP_PART_FILES = (
     "23-guide-events.js",
     "24-gp-guide.js",
     "25-lane-bubble.js",
+    "26-place-search.js",
 )
 
 PATHS = AppPaths()

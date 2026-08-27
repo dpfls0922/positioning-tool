@@ -47,6 +47,10 @@ def render_html(markers_data=None, lines_data=None):
                         <input id="requestIdSearchBox" type="text" placeholder="Request ID 검색 (예: 10000011)">
                         <button id="requestIdSearchButton">경로 검색</button>
                     </div>
+                    <div class="search-group search-group-full">
+                        <input id="placeSearchBox" type="text" placeholder="상호명 검색 (예: 스타벅스 강남역)">
+                        <button id="placeSearchButton">장소 검색</button>
+                    </div>
                     <div class="interaction-mode-group">
                         <button id="markerInspectModeButton" class="interaction-mode-btn active" type="button">마커 클릭</button>
                         <button id="roadInspectModeButton" class="interaction-mode-btn" type="button">Road 클릭</button>

@@ -14,6 +14,11 @@ from backend.positioning_tool.service.log_service import LogService
 from backend.positioning_tool.service.html_renderer_service import render_html
 from backend.positioning_tool.service.road_shape_service import RoadShapeService
 from backend.positioning_tool.service.paths import PATHS
+from backend.positioning_tool.service.place_search_service import (
+    PlaceApiKeyMissingError,
+    PlaceSearchService,
+    ReviewSourceUnavailableError,
+)
 
 
 def _validate_upload_file(req):
@@ -155,6 +160,21 @@ def _export_last_result(export_fn):
         )
     except Exception as ex:
         return jsonify({"ok": False, "error": str(ex)}), 500
+
+
+def _place_api_error_response(ex):
+    if isinstance(ex, urllib_error.HTTPError):
+        detail = ex.read().decode("utf-8", errors="replace")
+        if ex.code in (401, 403):
+            message = "장소 검색 API 인증에 실패했습니다. 발급한 키와 API 이용 신청 상태를 확인해주세요."
+        elif ex.code == 429:
+            message = "장소 검색 API 호출 한도를 초과했습니다. 잠시 후 다시 시도해주세요."
+        else:
+            message = f"장소 검색 API HTTP {ex.code}"
+        return jsonify({"ok": False, "error": message, "detail": detail}), ex.code
+    if isinstance(ex, urllib_error.URLError):
+        return jsonify({"ok": False, "error": f"장소 검색 API 연결 실패: {ex.reason}"}), 502
+    return jsonify({"ok": False, "error": str(ex)}), 500
 
 
 def create_log_controller() -> Blueprint:
@@ -308,5 +328,36 @@ def create_log_controller() -> Blueprint:
         else:
             RoadShapeService.clear()
         return jsonify({"ok": True})
+
+    @bp.get("/api/place/search")
+    def search_place_api():
+        try:
+            result = PlaceSearchService.search_places(
+                request.args.get("query"),
+                display=request.args.get("display", 5),
+            )
+            return jsonify({"ok": True, **result})
+        except PlaceApiKeyMissingError as ex:
+            return jsonify({"ok": False, "error": str(ex), "reason": "no_api_key"}), 503
+        except ValueError as ex:
+            return jsonify({"ok": False, "error": str(ex)}), 400
+        except Exception as ex:
+            return _place_api_error_response(ex)
+
+    @bp.get("/api/place/reviews")
+    def place_reviews_api():
+        try:
+            result = PlaceSearchService.search_reviews(
+                request.args.get("name"),
+                address=request.args.get("address", ""),
+                display=request.args.get("display", 10),
+            )
+            return jsonify({"ok": True, **result})
+        except ReviewSourceUnavailableError as ex:
+            return jsonify({"ok": False, "error": str(ex), "reason": "no_review_source"}), 503
+        except ValueError as ex:
+            return jsonify({"ok": False, "error": str(ex)}), 400
+        except Exception as ex:
+            return _place_api_error_response(ex)
 
     return bp
