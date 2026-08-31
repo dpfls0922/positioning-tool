@@ -20,7 +20,8 @@ function naviStack() {
     if (!el) {
         el = document.createElement('div');
         el.id = 'naviStack';
-        (document.getElementById('map') || document.body).appendChild(el);
+        // Lives outside #map so the heading-up rotation does not rotate the UI.
+        (document.getElementById('main-content') || document.body).appendChild(el);
     }
     return el;
 }

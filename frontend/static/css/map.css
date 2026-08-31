@@ -2353,7 +2353,7 @@ html, body {
 /* ===== 모의주행 패널 ===== */
 .sim-note {
     font-size: 11px;
-    color: #94a3b8;
+    color: #475569;
     line-height: 1.5;
     margin-bottom: 10px;
 }
@@ -2366,35 +2366,36 @@ html, body {
 .sim-btn {
     width: 34px;
     height: 30px;
-    background: rgba(148, 163, 184, 0.14);
-    border: 1px solid rgba(148, 163, 184, 0.28);
+    background: #fff;
+    border: 1px solid #c7ceda;
     border-radius: 6px;
-    color: #e2e8f0;
+    color: #1e293b;
     cursor: pointer;
     font-size: 12px;
 }
-.sim-btn:hover { background: rgba(148, 163, 184, 0.26); }
-.sim-btn.active { background: #0d9488; border-color: #0d9488; color: #f0fdfa; }
+.sim-btn:hover { background: #eef2f7; }
+.sim-btn.active { background: #0d9488; border-color: #0b7f75; color: #f0fdfa; }
 
 .sim-speed-group {
     display: flex;
     margin-left: 2px;
-    border: 1px solid rgba(148, 163, 184, 0.28);
+    border: 1px solid #c7ceda;
     border-radius: 6px;
     overflow: hidden;
 }
 .sim-speed-btn {
     padding: 0 10px;
     height: 30px;
-    background: rgba(148, 163, 184, 0.1);
+    background: #fff;
     border: none;
-    border-right: 1px solid rgba(148, 163, 184, 0.22);
-    color: #cbd5e1;
+    border-right: 1px solid #d8dde5;
+    color: #334155;
     font-size: 11px;
     font-weight: 700;
     cursor: pointer;
 }
 .sim-speed-btn:last-child { border-right: none; }
+.sim-speed-btn:hover { background: #eef2f7; }
 .sim-speed-btn.active { background: #0d9488; color: #f0fdfa; }
 
 .sim-status {
@@ -2404,19 +2405,19 @@ html, body {
     margin-top: 10px;
     font-size: 12px;
     font-weight: 700;
-    color: #e2e8f0;
+    color: #1e293b;
 }
 .sim-progress {
     flex: 1;
     height: 4px;
-    background: rgba(148, 163, 184, 0.22);
+    background: #d8dde5;
     border-radius: 2px;
     overflow: hidden;
 }
 .sim-progress > div {
     height: 100%;
     width: 0;
-    background: #14b8a6;
+    background: #0d9488;
 }
 
 .floating-panel-header {
@@ -3068,4 +3069,47 @@ html, body {
     font-weight: 700;
     letter-spacing: .03em;
     margin-bottom: 5px;
+}
+
+/* ===== 모의주행 — 정차/주차장/피드백 칩, 진행바 seek, 헤딩업 회전 ===== */
+.sim-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+}
+.sim-chips.hidden { display: none; }
+.sim-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    border: 1px solid transparent;
+}
+.sim-chip-stop {
+    background: #b45309;
+    color: #fffbeb;
+    cursor: pointer;
+}
+.sim-chip-stop:hover { background: #d97706; }
+.sim-chip-lot { background: #e2e8f0; color: #334155; border-color: #c7ceda; }
+.sim-chip-fb { background: #6d28d9; color: #f5f3ff; }
+
+/* 진행바는 눌러서 이동할 수 있으므로 잡기 쉬운 높이를 준다. */
+#simProgress {
+    height: 10px;
+    border-radius: 5px;
+    cursor: pointer;
+    touch-action: none;
+}
+#simProgress > div { border-radius: 5px; }
+
+/* 헤딩업: 지도 요소 자체를 돌리므로 모서리가 비지 않게 확대하고,
+   회전 중 타일 경계가 도는 것을 부드럽게 보이도록 전환을 준다. */
+#map.map-heading-up {
+    transform-origin: 50% 50%;
+    transition: transform 260ms ease-out;
 }

@@ -735,12 +735,15 @@ def add_simulation_panel():
                     <button class="sim-speed-btn" data-speed="3" type="button">3x</button>
                 </div>
                 <button id="simFollowBtn" class="sim-btn active" type="button" title="지도 따라가기"><i class="fa fa-crosshairs"></i></button>
+                <button id="simHeadingUpBtn" class="sim-btn" type="button" title="헤딩 방향으로 지도 회전"><i class="fa fa-location-arrow"></i></button>
+                <button id="simBlockSeekBtn" class="sim-btn" type="button" title="구간단속 구간으로 이동"><i class="fa fa-tachometer"></i></button>
             </div>
             <div id="simStatus" class="sim-status">
                 <span data-role="clock">--:--:--</span>
                 <span data-role="speed">0 km/h</span>
-                <div class="sim-progress"><div data-role="bar"></div></div>
+                <div id="simProgress" class="sim-progress" title="눌러서 이동"><div data-role="bar"></div></div>
             </div>
+            <div id="simChips" class="sim-chips hidden"></div>
         </div>
     </div>
     """
