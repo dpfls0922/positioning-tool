@@ -3374,3 +3374,36 @@ html[data-theme="light"] .info-extra,
 html[data-theme="light"] .place-review-head {
     border-color: var(--border);
 }
+
+/* ===== 모의주행 상태 카드 — 고정 슬롯(좌하단) ===== */
+/* 정차·주차장·터널·맵매칭 피드백이 모두 같은 카드 형태를 쓰고, 위쪽 안내 UI 가
+   늘거나 줄어도 위치가 흔들리지 않도록 안내 스택과 분리해 고정한다. */
+#simStateStrip {
+    position: absolute;
+    left: 14px;
+    bottom: 18px;
+    z-index: 1105;
+    display: flex;
+    flex-direction: column-reverse;
+    gap: 6px;
+    pointer-events: none;
+}
+#simStateStrip.hidden { display: none; }
+#simStateStrip > * { pointer-events: auto; }
+
+.sim-state-shade { border-left-color: #38bdf8; }
+.sim-state-value {
+    font-size: 15px;
+    font-weight: 800;
+    color: #f8fafc;
+    white-space: nowrap;
+}
+
+/* 아이콘만으로 뜻이 전달되지 않던 버튼들 — 글자를 함께 둔다. */
+.sim-btn-wide {
+    width: auto;
+    padding: 0 9px;
+    font-size: 11px;
+    font-weight: 700;
+}
+.sim-btn-wide i { margin-right: 3px; }

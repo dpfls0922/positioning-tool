@@ -10,6 +10,7 @@ class ParseResult:
     coords: list[dict[str, Any]]
     parking_lot_state_markers: list[dict[str, Any]]
     sdi_block_timeline: list[dict[str, Any]]
+    shade_timeline: list[dict[str, Any]]
     lines: list[dict[str, Any]]
 
     @staticmethod
@@ -21,6 +22,7 @@ class ParseResult:
             coords=list(payload.get("coords", [])),
             parking_lot_state_markers=list(payload.get("parking_lot_state_markers", [])),
             sdi_block_timeline=list(payload.get("sdi_block_timeline", [])),
+            shade_timeline=list(payload.get("shade_timeline", [])),
             lines=list(payload.get("lines", [])),
         )
 
@@ -32,5 +34,6 @@ class ParseResult:
             "coords": self.coords,
             "parking_lot_state_markers": self.parking_lot_state_markers,
             "sdi_block_timeline": self.sdi_block_timeline,
+            "shade_timeline": self.shade_timeline,
             "lines": self.lines,
         }

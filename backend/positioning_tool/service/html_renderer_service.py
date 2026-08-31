@@ -738,9 +738,9 @@ def add_simulation_panel():
                     <button class="sim-speed-btn" data-speed="10" type="button">10x</button>
                     <button class="sim-speed-btn" data-speed="20" type="button">20x</button>
                 </div>
-                <button id="simFollowBtn" class="sim-btn active" type="button" title="지도 따라가기"><i class="fa fa-crosshairs"></i></button>
-                <button id="simBlockSeekBtn" class="sim-btn" type="button" title="구간단속 구간으로 이동"><i class="fa fa-tachometer"></i></button>
-                <button id="simPickBtn" class="sim-btn" type="button" title="지도에서 시작 위치 선택"><i class="fa fa-map-marker"></i></button>
+                <button id="simFollowBtn" class="sim-btn sim-btn-wide active" type="button" title="카바타를 화면 중앙에 유지 (지도를 드래그하면 자동 해제)"><i class="fa fa-crosshairs"></i> 따라가기</button>
+                <button id="simBlockSeekBtn" class="sim-btn sim-btn-wide" type="button" title="구간단속 구간 시작 시점으로 이동"><i class="fa fa-tachometer"></i> 구간단속</button>
+                <button id="simPickBtn" class="sim-btn sim-btn-wide" type="button" title="지도를 클릭하면 가장 가까운 VPM 지점부터 주행"><i class="fa fa-map-marker"></i> 위치 선택</button>
             </div>
             <div id="simStatus" class="sim-status">
                 <span data-role="clock">--:--:--</span>

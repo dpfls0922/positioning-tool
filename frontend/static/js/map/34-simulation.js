@@ -43,6 +43,7 @@ let simRouteLayerNames = [];
 let simRouteHiddenFor = null;
 let simRouteSavedActive = null;
 let simParkingSpans = [];
+let simShadeTimeline = [];
 let simFeedbackPoints = [];
 // 정차로 볼 속도 상한과, 그보다 오래 멈춰야 '정차'로 취급할 시간
 const SIM_STOP_SPEED_KMH = 2;
@@ -258,6 +259,29 @@ function simEnsureAlertBox() {
 
 // The SDI / C2X strip, drawn with the same real icons the map markers use so the
 // simulation and the map read as one thing.
+function setSimShadeTimeline(timeline) {
+    simShadeTimeline = Array.isArray(timeline) ? timeline : [];
+}
+
+// 터널/지하차도 샘플은 GPS 주기마다 찍히므로, 최근 몇 초 안에 샘플이 있으면 그
+// 구간에 있는 것으로 본다(구간을 벗어나면 로그가 끊긴다).
+const SIM_SHADE_MAX_AGE_MS = 4000;
+
+function simCurrentShade(timeMs) {
+    if (simShadeTimeline.length === 0) return null;
+    let lo = 0;
+    let hi = simShadeTimeline.length - 1;
+    let found = -1;
+    while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (simShadeTimeline[mid].timestamp_ms <= timeMs) { found = mid; lo = mid + 1; }
+        else hi = mid - 1;
+    }
+    if (found < 0) return null;
+    const sample = simShadeTimeline[found];
+    return (timeMs - sample.timestamp_ms) <= SIM_SHADE_MAX_AGE_MS ? sample : null;
+}
+
 function simInParkingLot(timeMs) {
     return simParkingSpans.some((sp) => timeMs >= sp.start && timeMs <= sp.end);
 }
@@ -517,7 +541,9 @@ function simEnsureStateStrip() {
         el.addEventListener('click', (e) => {
             if (e.target.closest('[data-action="skip-stop"]')) simSkipStop();
         });
-        naviStack().appendChild(el);
+        // 안내 스택과 분리된 고정 슬롯에 둔다 — 위쪽 안내가 늘거나 줄어도
+        // 상태 카드의 위치가 흔들리지 않는다.
+        (document.getElementById('main-content') || document.body).appendChild(el);
     }
     return el;
 }
@@ -531,31 +557,39 @@ function simRenderStateStrip(state) {
     const el = simEnsureStateStrip();
     const stop = simCurrentStop(state.t);
     const inLot = simInParkingLot(state.t);
+    const shade = simCurrentShade(state.t);
     const fb = simRecentFeedback(state.t);
 
-    const key = `${stop ? 'stop' : ''}|${inLot ? 'lot' : ''}|${fb ? 'fb' : ''}`;
+    const key = [stop ? 'stop' : '', inLot ? 'lot' : '',
+        shade ? 'shade' + shade.facil : '', fb ? 'fb' : ''].join('|');
     if (key !== simStateStripKey) {
         simStateStripKey = key;
+        // 네 상태 모두 같은 카드 구조(아이콘 · 제목/부제 · 우측 값 또는 버튼)를
+        // 쓰고, 좌측 색 띠만 상태별로 다르다.
+        const card = (cls, icon, name, sub, right) => '<div class="sim-state ' + cls + '">'
+            + '<div class="sim-state-icon"><i class="fa ' + icon + '"></i></div>'
+            + '<div class="sim-state-text"><div class="sim-state-name">' + name + '</div>'
+            + '<div class="sim-state-sub">' + sub + '</div></div>'
+            + (right || '') + '</div>';
+
         const parts = [];
         if (stop) {
-            parts.push('<div class="sim-state sim-state-stop">'
-                + '<div class="sim-state-icon"><i class="fa fa-pause"></i></div>'
-                + '<div class="sim-state-text"><div class="sim-state-name">정차 중</div>'
-                + '<div class="sim-state-sub">남은 <span data-role="stop-left">-</span>초</div></div>'
-                + '<button type="button" class="sim-state-btn" data-action="skip-stop">건너뛰기</button>'
-                + '</div>');
+            parts.push(card('sim-state-stop', 'fa-pause', '정차 중',
+                '남은 <span data-role="stop-left">-</span>초',
+                '<button type="button" class="sim-state-btn" data-action="skip-stop">건너뛰기</button>'));
         }
         if (inLot) {
-            parts.push('<div class="sim-state sim-state-lot">'
-                + '<div class="sim-state-icon"><i class="fa fa-building"></i></div>'
-                + '<div class="sim-state-text"><div class="sim-state-name">주차장 주행 중</div>'
-                + '<div class="sim-state-sub">안내 없음</div></div></div>');
+            parts.push(card('sim-state-lot', 'fa-building', '주차장 주행 중', '안내 없음'));
+        }
+        if (shade) {
+            // 터널·지하차도는 GPS 음영 — DR 이 위치를 끌고 가는 구간이다.
+            parts.push(card('sim-state-shade', 'fa-arrow-circle-right',
+                escapeHtml(shade.facil_name) + ' 주행 중', 'GPS 음영 · DR 유지',
+                '<div class="sim-state-value"><span data-role="shade-left">-</span></div>'));
         }
         if (fb) {
-            parts.push('<div class="sim-state sim-state-fb">'
-                + '<div class="sim-state-icon"><i class="fa fa-magnet"></i></div>'
-                + '<div class="sim-state-text"><div class="sim-state-name">맵매칭 피드백</div>'
-                + '<div class="sim-state-sub" data-role="fb-kind"></div></div></div>');
+            parts.push(card('sim-state-fb', 'fa-magnet', '맵매칭 피드백',
+                '<span data-role="fb-kind"></span>'));
         }
         el.innerHTML = parts.join('');
         el.classList.toggle('hidden', parts.length === 0);
@@ -565,6 +599,11 @@ function simRenderStateStrip(state) {
         const left = el.querySelector('[data-role="stop-left"]');
         const secs = String(Math.max(0, Math.round((stop.end - state.t) / 1000)));
         if (left && left.textContent !== secs) left.textContent = secs;
+    }
+    if (shade) {
+        const left = el.querySelector('[data-role="shade-left"]');
+        const text = shade.length_to_end + 'm';
+        if (left && left.textContent !== text) left.textContent = text;
     }
     if (fb) {
         const kindEl = el.querySelector('[data-role="fb-kind"]');

@@ -192,6 +192,7 @@ function handleUploadAndParse() {
         parkingLotStateMarkersData = response.parking_lot_state_markers || [];
         linesData = response.lines || [];
         setSdiBlockTimeline(response.sdi_block_timeline || []);
+        setSimShadeTimeline(response.shade_timeline || []);
         console.log('[DEBUG] Loaded data:', {
             markersCount: markersData.length,
             parkingLotStateMarkersCount: parkingLotStateMarkersData.length,

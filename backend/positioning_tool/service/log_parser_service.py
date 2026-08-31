@@ -25,6 +25,7 @@ from backend.positioning_tool.service.log_parsing.patterns import (
     ROUTE_REQ_WAYPOINT_PATTERN,
     SDI_DRIVE_STATUS_PATTERN,
     SDI_BLOCK_INFO_PATTERN,
+    TUNNEL_CHECK_PATTERN,
     SDI_BLOCK_STATUS_PATTERN,
     SDI_SELECTED_PATTERN,
     SDI_SKIP_PATTERN,
@@ -69,6 +70,8 @@ GUIDE_EVENTS = []  # C2X events and accident events
 SDI_EVENTS = []  # SDI (Safety Drive Information) events
 # 구간단속 HUD 타임라인 원본 샘플 (평균속도 / 남은거리 / 구간 제한속도)
 SDI_BLOCK_SAMPLES = []
+# 터널/지하차도(GPS 음영) 구간 샘플
+SHADE_SAMPLES = []
 GP_ENTRIES = []  # Route guidance points (GP) collected when a route is applied
 GP_RENDER_POINTS = []  # TVAS GP table from GetRenderData pGuidePoint logs
 ROUTE_MATCH_LINKS = []  # (route link index, route vertex index, timestamp) while driving
@@ -94,7 +97,7 @@ ROUTE_SESSION_CONTENT_IDS = {}  # route_session_id -> request content_id(str)
 
 
 def reset_runtime_state():
-    global COORDINATES, LINES, GUIDE_EVENTS, SDI_EVENTS, SDI_BLOCK_SAMPLES, PARKING_LOT_EVENTS, last_gnss_coordinate
+    global COORDINATES, LINES, GUIDE_EVENTS, SDI_EVENTS, SDI_BLOCK_SAMPLES, SHADE_SAMPLES, PARKING_LOT_EVENTS, last_gnss_coordinate
     global GP_ENTRIES, GP_RENDER_POINTS, GP_LANE_EVENTS, gp_pending, ROUTE_MATCH_LINKS
     global min_timestamp, max_timestamp
     global last_road_match_state, last_route_match_state, last_threshold_info, log_base_timestamp, last_tvas_header_info
@@ -108,6 +111,7 @@ def reset_runtime_state():
     GUIDE_EVENTS = []
     SDI_EVENTS = []
     SDI_BLOCK_SAMPLES = []
+    SHADE_SAMPLES = []
     PARKING_LOT_EVENTS = []
     GP_ENTRIES = []
     GP_RENDER_POINTS = []
@@ -251,6 +255,7 @@ def _collect_standalone_events(line, timestamp):
     parse_guide_event(line, timestamp)
     parse_sdi_event(line, timestamp)
     parse_sdi_block_status(line, timestamp)
+    parse_tunnel_check(line, timestamp)
     parse_parking_lot_event(line, timestamp)
     parse_gp_guide_event(line, timestamp)
     parse_route_request_points(line)
@@ -1004,6 +1009,45 @@ def parse_sdi_block_status(line, timestamp):
             return True
 
     return False
+
+
+LINK_FACIL_NAMES = {1: "교량", 2: "터널", 3: "고가도로", 4: "지하차도", 5: "교차로 통과"}
+# IsShadeLink(link_util.h): 터널 또는 지하차도 — GPS 가 끊기는 구간.
+SHADE_FACILS = (2, 4)
+
+
+def parse_tunnel_check(line, timestamp):
+    """터널·지하차도 진행 상태와 남은 거리를 모은다.
+
+    이 로그는 GPS 주기마다 나오므로 그대로 타임라인이 된다. 음영 구간은 GPS 가
+    끊겨 DR 이 위치를 끌고 가는 구간이라, 이 도구에서 특히 볼 값이다.
+    """
+    global SHADE_SAMPLES
+
+    match = TUNNEL_CHECK_PATTERN.search(line)
+    if not match:
+        return False
+    SHADE_SAMPLES.append({
+        "facil": int(match.group(2)),
+        "next_facil": int(match.group(3)),
+        "length_to_end": int(match.group(4)),
+        "timestamp_ms": int(timestamp.timestamp() * 1000) if timestamp else 0,
+    })
+    return True
+
+
+def build_shade_timeline():
+    """음영 구간(터널/지하차도) 샘플만 시간순으로 남긴다."""
+    return [
+        {
+            "timestamp_ms": item["timestamp_ms"],
+            "facil": item["facil"],
+            "facil_name": LINK_FACIL_NAMES.get(item["facil"], f"시설 {item['facil']}"),
+            "length_to_end": item["length_to_end"],
+        }
+        for item in sorted(SHADE_SAMPLES, key=lambda x: x["timestamp_ms"])
+        if item["facil"] in SHADE_FACILS
+    ]
 
 
 def build_sdi_block_timeline():
@@ -2055,6 +2099,7 @@ def build_runtime_payload():
         "coords": all_coords,
         "parking_lot_state_markers": parking_lot_state_markers,
         "sdi_block_timeline": build_sdi_block_timeline(),
+        "shade_timeline": build_shade_timeline(),
         "lines": all_lines,
     }
 

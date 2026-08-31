@@ -26,6 +26,7 @@ DLT_RELEVANT_BYTE_KEYWORDS = [
     b"GetSdiSelected select",
     b"onDriveStatusChanged SDI",
     b"SDIBlock:",
+    b"check tunnel",
     b"GetSDIInfo[",
     b"ApplyParkingLotDetector",
     b"ParkingLotDetector transition",
@@ -174,6 +175,20 @@ SDI_BLOCK_STATUS_PATTERN = re.compile(
 SDI_BLOCK_INFO_PATTERN = re.compile(
     r"GetSDIInfo\[(\d+)\]\s*\[Type:(\d+),\s*speed:(\d+),"
     r"\s*blockspeed:(\d+),\s*isBlock:(\d+)\]"
+)
+
+# 터널·지하차도(GPS 음영) 구간. link_util.h 의 정의:
+#   linkFacil 1=교량, 2=터널, 3=고가, 4=지하차도, 5=교차로내통과
+#   IsShadeLink = 터널 또는 지하차도 → GPS 가 끊겨 DR 이 위치를 끌고 가는 구간
+#
+#   GPS Data : check tunnel m_matchData.prevlinkfacilLocal 0,
+#     m_matchData.curlinkfacilLocal 2, m_matchData.nextlinkfacilLocal 0,
+#     lengthtoend 44
+TUNNEL_CHECK_PATTERN = re.compile(
+    r"check tunnel m_matchData\.prevlinkfacilLocal (-?\d+),"
+    r"\s*m_matchData\.curlinkfacilLocal (-?\d+),"
+    r"\s*m_matchData\.nextlinkfacilLocal (-?\d+),"
+    r"\s*lengthtoend (-?\d+)"
 )
 
 # ParkingLot Detector application results:
