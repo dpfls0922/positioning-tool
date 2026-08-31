@@ -25,6 +25,8 @@ DLT_RELEVANT_BYTE_KEYWORDS = [
     b"processContents",
     b"GetSdiSelected select",
     b"onDriveStatusChanged SDI",
+    b"SDIBlock:",
+    b"GetSDIInfo[",
     b"ApplyParkingLotDetector",
     b"ParkingLotDetector transition",
     b"TVAS server route",
@@ -152,6 +154,26 @@ SDI_DRIVE_STATUS_PATTERN = re.compile(
     r"(?:\s*\|\s*([A-Za-z0-9_]+))?"
     r".*?pt\((-?\d+\.\d+),\s*(-?\d+\.\d+)\)"
     r"(?:\s*priority:\s*(-?\d+))?"
+)
+
+# 구간단속 (section speed enforcement) HUD values. The navigation UI shows two
+# plates while inside a section — 평균속도 and 남은거리 — and this line carries
+# both plus the current speed:
+#
+#   MapGuidingInformationProvider::onDriveStatusChanged SDIBlock:0->1,
+#     SdiChanged:1, SdiBlockUpdate:1 Speed:42 Avg:38 Dist:1240, callback size:1,
+#     calculatedTime:3
+#
+# SDIBlock is <이전 상태>-><현재 상태>; 1 means inside a section.
+SDI_BLOCK_STATUS_PATTERN = re.compile(
+    r"SDIBlock:(\d+)->(\d+),\s*SdiChanged:(\d+),\s*SdiBlockUpdate:(\d+)"
+    r"\s*Speed:(\d+)\s*Avg:(\d+)\s*Dist:(\d+)"
+)
+
+# 구간단속 제한속도 — GetSDIInfo[i] [Type:4, speed:0, blockspeed:60, isBlock:1]
+SDI_BLOCK_INFO_PATTERN = re.compile(
+    r"GetSDIInfo\[(\d+)\]\s*\[Type:(\d+),\s*speed:(\d+),"
+    r"\s*blockspeed:(\d+),\s*isBlock:(\d+)\]"
 )
 
 # ParkingLot Detector application results:

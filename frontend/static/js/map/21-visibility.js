@@ -143,6 +143,8 @@ function updateMap() {
     scheduleVisibleMarkerRefresh();
     handleRoadZoomChanged();
     updateRangeLabel(minVal, maxVal);
+    // 구간단속 HUD 는 타임라인의 현재 끝 시점을 따라간다.
+    refreshSdiBlockHud(maxVal);
 }
 
 function applyTimeVisibility(layer, visible) {

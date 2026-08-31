@@ -24,6 +24,8 @@ from backend.positioning_tool.service.log_parsing.patterns import (
     ROUTE_REQ_DEST_PATTERN,
     ROUTE_REQ_WAYPOINT_PATTERN,
     SDI_DRIVE_STATUS_PATTERN,
+    SDI_BLOCK_INFO_PATTERN,
+    SDI_BLOCK_STATUS_PATTERN,
     SDI_SELECTED_PATTERN,
     SDI_SKIP_PATTERN,
     _SCAN_NEXT_TYPE,
@@ -65,6 +67,8 @@ COORDINATES = {coord_type: [] for coord_type in CoordType}
 LINES = {line_type: [] for line_type in LineType}
 GUIDE_EVENTS = []  # C2X events and accident events
 SDI_EVENTS = []  # SDI (Safety Drive Information) events
+# 구간단속 HUD 타임라인 원본 샘플 (평균속도 / 남은거리 / 구간 제한속도)
+SDI_BLOCK_SAMPLES = []
 GP_ENTRIES = []  # Route guidance points (GP) collected when a route is applied
 GP_RENDER_POINTS = []  # TVAS GP table from GetRenderData pGuidePoint logs
 ROUTE_MATCH_LINKS = []  # (route link index, route vertex index, timestamp) while driving
@@ -90,7 +94,7 @@ ROUTE_SESSION_CONTENT_IDS = {}  # route_session_id -> request content_id(str)
 
 
 def reset_runtime_state():
-    global COORDINATES, LINES, GUIDE_EVENTS, SDI_EVENTS, PARKING_LOT_EVENTS, last_gnss_coordinate
+    global COORDINATES, LINES, GUIDE_EVENTS, SDI_EVENTS, SDI_BLOCK_SAMPLES, PARKING_LOT_EVENTS, last_gnss_coordinate
     global GP_ENTRIES, GP_RENDER_POINTS, GP_LANE_EVENTS, gp_pending, ROUTE_MATCH_LINKS
     global min_timestamp, max_timestamp
     global last_road_match_state, last_route_match_state, last_threshold_info, log_base_timestamp, last_tvas_header_info
@@ -103,6 +107,7 @@ def reset_runtime_state():
     LINES = {line_type: [] for line_type in LineType}
     GUIDE_EVENTS = []
     SDI_EVENTS = []
+    SDI_BLOCK_SAMPLES = []
     PARKING_LOT_EVENTS = []
     GP_ENTRIES = []
     GP_RENDER_POINTS = []
@@ -245,6 +250,7 @@ def _collect_standalone_events(line, timestamp):
     """좌표 상태와 무관하게 자기 완결적으로 수집되는 이벤트들."""
     parse_guide_event(line, timestamp)
     parse_sdi_event(line, timestamp)
+    parse_sdi_block_status(line, timestamp)
     parse_parking_lot_event(line, timestamp)
     parse_gp_guide_event(line, timestamp)
     parse_route_request_points(line)
@@ -960,6 +966,69 @@ def parse_sdi_event(line, timestamp):
         return False
 
     return False
+
+
+def parse_sdi_block_status(line, timestamp):
+    """Collect the 구간단속 HUD values the navigation UI displays.
+
+    The section plates (평균속도 / 남은거리) need Avg and Dist, which only the
+    onDriveStatusChanged SDIBlock line carries; the section's own speed limit
+    comes from GetSDIInfo's blockspeed, logged separately. Both are sampled over
+    time so the HUD can follow the timeline instead of showing one frozen value.
+    """
+    global SDI_BLOCK_SAMPLES
+
+    match = SDI_BLOCK_STATUS_PATTERN.search(line)
+    if match:
+        SDI_BLOCK_SAMPLES.append({
+            "kind": "status",
+            "state_from": int(match.group(1)),
+            "state": int(match.group(2)),
+            "speed": int(match.group(5)),
+            "avg_speed": int(match.group(6)),
+            "remain_dist": int(match.group(7)),
+            "timestamp_ms": int(timestamp.timestamp() * 1000) if timestamp else 0,
+        })
+        return True
+
+    match = SDI_BLOCK_INFO_PATTERN.search(line)
+    if match and match.group(5) == "1":
+        block_speed = int(match.group(4))
+        if block_speed > 0:
+            SDI_BLOCK_SAMPLES.append({
+                "kind": "limit",
+                "sdi_type": int(match.group(2)),
+                "block_speed": block_speed,
+                "timestamp_ms": int(timestamp.timestamp() * 1000) if timestamp else 0,
+            })
+            return True
+
+    return False
+
+
+def build_sdi_block_timeline():
+    """Merge both sample kinds into one timeline of in-section states.
+
+    Only samples taken inside a section (state == 1) reach the HUD; the limit is
+    carried forward from the most recent GetSDIInfo blockspeed.
+    """
+    timeline = []
+    current_limit = None
+    for sample in sorted(SDI_BLOCK_SAMPLES, key=lambda item: item["timestamp_ms"]):
+        if sample["kind"] == "limit":
+            current_limit = sample["block_speed"]
+            continue
+        if sample["state"] != 1:
+            continue
+        timeline.append({
+            "timestamp_ms": sample["timestamp_ms"],
+            "speed": sample["speed"],
+            "avg_speed": sample["avg_speed"],
+            "remain_dist": sample["remain_dist"],
+            "block_speed": current_limit,
+            "entered": sample["state_from"] != 1,
+        })
+    return timeline
 
 
 def parse_parking_lot_event(line, timestamp):
@@ -1985,6 +2054,7 @@ def build_runtime_payload():
         "max_id": max_id,
         "coords": all_coords,
         "parking_lot_state_markers": parking_lot_state_markers,
+        "sdi_block_timeline": build_sdi_block_timeline(),
         "lines": all_lines,
     }
 
