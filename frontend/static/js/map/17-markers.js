@@ -450,11 +450,9 @@ function makePopupText(coordinate, coordtype) {
         ? buildCandidateLinkPopupHtml(coordinate?.extra)
         : '';
 
-    const detailBody = details.filter(Boolean).join('') + candidateHtml;
-    const detailBlock = detailBody
-        ? `<details class="mk-more"><summary>상세</summary><div class="mk-more-body">${detailBody}</div></details>`
-        : '';
+    const extraRows = details.filter(Boolean).join('');
+    const extraBlock = extraRows ? `<div class="mk-rows mk-rows-extra">${extraRows}</div>` : '';
 
-    return `<div class="mk-popup">${head}<div class="mk-rows">${primary}</div>${detailBlock}</div>`;
+    return `<div class="mk-popup">${head}<div class="mk-rows">${primary}</div>${extraBlock}${candidateHtml}</div>`;
 }
 

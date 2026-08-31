@@ -1,3 +1,7 @@
+/* Leaflet 기본 팝업 최대 폭은 300px 이다. DR 후보 링크 표처럼 가로로 넓은
+   내용이 잘리지 않게 넉넉히 올린다(세로는 CSS 에서 제한). */
+L.Popup.mergeOptions({ maxWidth: 720 });
+
 /* ===================== 사이드바 탭 (결과 / 레이어) ===================== */
 /* 결과 패널과 레이어 관리가 세로로 나뉘어 둘 다 좁았다. 탭으로 묶어
    한 번에 하나만 전체 높이를 쓰게 하고, 새 검색 결과가 오면 결과 탭으로
@@ -37,7 +41,8 @@ function bindSidebarTabs() {
     document.querySelectorAll('.sidebar-tab').forEach((tab) => {
         tab.addEventListener('click', () => setSidebarTab(tab.dataset.sidebarTab));
     });
-    setSidebarTab('results');
+    // 기본은 레이어 탭. 검색 결과가 생기면 자동으로 결과 탭으로 넘어간다.
+    setSidebarTab('layers');
     updateSidebarTabCounts();
 }
 

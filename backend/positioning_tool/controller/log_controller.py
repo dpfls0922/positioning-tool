@@ -14,10 +14,6 @@ from backend.positioning_tool.service.log_service import LogService
 from backend.positioning_tool.service.html_renderer_service import render_html
 from backend.positioning_tool.service.road_shape_service import RoadShapeService
 from backend.positioning_tool.service.paths import PATHS
-from backend.positioning_tool.service.kakao_local_service import (
-    KakaoLocalService,
-    KakaoRestKeyMissingError,
-)
 from backend.positioning_tool.service.place_search_service import (
     PlaceApiKeyMissingError,
     PlaceSearchService,
@@ -346,12 +342,5 @@ def create_log_controller() -> Blueprint:
             return jsonify({"ok": False, "error": str(ex)}), 400
         except Exception as ex:
             return _place_api_error_response(ex)
-
-    @bp.get("/api/kakao/reverse-geocode")
-    def kakao_reverse_geocode_api():
-        return _kakao_local_call(lambda: KakaoLocalService.reverse_geocode(
-            request.args.get("lat"),
-            request.args.get("lon"),
-        ))
 
     return bp

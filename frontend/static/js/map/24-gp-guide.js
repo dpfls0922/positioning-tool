@@ -302,105 +302,106 @@ function openGpGuidanceCard(markerId) {
     gpGuidanceCardEl = el;
 }
 
+/** 팝업 행. 값이 없으면 줄 자체를 만들지 않는다. */
+function gpRow(label, value) {
+    if (value === null || value === undefined || value === '') return '';
+    return `<div class="mk-row"><span class="mk-key">${label}</span><span class="mk-val">${value}</span></div>`;
+}
+
 function buildGpGuidePopup(marker) {
     const extra = marker.extra || {};
     const gpType = Number(extra.gp_type) || 0;
     const color = gpMarkerColor(gpType);
+    const isTurn = !!(gpType & GP_TYPE_TURN);
     const title = gpType & GP_TYPE_EXTCROSSTURN
-        ? '복잡교차로 GP (차선 버블 + 교차로 이미지)'
-        : (gpType & GP_TYPE_TURN ? '회전 GP (차선 버블)' : '안내 없는 통과 링크');
+        ? '복잡교차로 GP'
+        : (isTurn ? '회전 GP' : '통과 링크');
 
-    const row = (label, value) => (value === null || value === undefined || value === '')
-        ? ''
-        : `<tr><td style="padding-right:8px;white-space:nowrap"><strong>${label}</strong></td><td>${value}</td></tr>`;
+    // 자주 보는 값만 위로. 원시 필드는 아래 '상세' 안에 접어둔다.
+    const primary = [
+        gpRow('안내', escapeHtml(gpTurnCodeLabel(extra.turn_code))),
+        isTurn ? gpRow('차선색', gpLaneColorChip(extra.lane_color)) : '',
+        gpRow('교차로', gpCrossImageSummary(extra)),
+        gpRow('링크', extra.link_id !== undefined && extra.link_id !== null
+            ? `${extra.link_id}${extra.link_ordinal !== undefined && extra.link_ordinal !== null ? ` <span class="gp-dim">(순번 ${extra.link_ordinal})</span>` : ''}`
+            : ''),
+        gpRow('좌표', `${marker.latitude.toFixed(6)}, ${marker.longitude.toFixed(6)}`),
+        gpRow('시간', escapeHtml(marker.timestamp_str || '-'))
+    ].join('');
 
     const laneColors = Array.isArray(extra.lane_colors) ? extra.lane_colors : [];
-    const crossImageRow = extra.cross_image === null || extra.cross_image === undefined
+    const crossImageDetail = extra.cross_image === null || extra.cross_image === undefined
         ? ''
-        : row('bCrossImage', `${extra.cross_image}${extra.cross_image_raw !== undefined && extra.cross_image_raw !== extra.cross_image
-            ? ` (필터 전 ${extra.cross_image_raw})` : ''}`);
+        : gpRow('bCrossImage', `${extra.cross_image}${extra.cross_image_raw !== undefined && extra.cross_image_raw !== extra.cross_image
+            ? ` <span class="gp-dim">(필터 전 ${extra.cross_image_raw})</span>` : ''}`);
+
+    const details = [
+        gpRow('nGPType', escapeHtml(gpTypeLabel(gpType))),
+        gpRow('GPIdx', extra.gp_index),
+        gpRow('TVAS GPIdx', extra.render_gp_index),
+        gpRow('linkIndex', extra.link_index),
+        crossImageDetail,
+        gpRow('nVoiceCode', extra.voice_code === null || extra.voice_code === undefined
+            ? '' : escapeHtml(gpTurnCodeLabel(extra.voice_code))),
+        gpRow('ucSndCode', extra.snd_code === null || extra.snd_code === undefined
+            ? '' : escapeHtml(gpTurnCodeLabel(extra.snd_code))),
+        gpRow('이미지 ID', extra.cross_img_code),
+        gpRow('이미지 사용', extra.cross_img_available),
+        gpRow('vertexEnd', extra.vertex_end),
+        gpRow('관측 laneColor', laneColors.length ? laneColors.map(gpLaneColorChip).join(' ') : ''),
+        gpRow('위치 근거', escapeHtml(String(extra.position_source || '-'))
+            + (extra.link_ordinal_from_log ? ' <span class="gp-dim">— nLinkID가 맵 링크ID가 아니라 순번</span>' : '')),
+        gpRow('관측 위치', extra.observed_gap_m === null || extra.observed_gap_m === undefined
+            ? '' : `${Number(extra.observed_lat).toFixed(6)}, ${Number(extra.observed_lon).toFixed(6)}`
+                + ` <span class="${extra.observed_gap_m > 50 ? 'gp-warn' : 'gp-ok'}">(차이 ${extra.observed_gap_m}m)</span>`),
+        gpRow('경로', escapeHtml(String(extra.route_session_name || extra.route_session_id || '-')))
+    ].filter(Boolean).join('');
 
     return `
-        <div class="popup-content" style="min-width:280px">
-            <div style="font-weight:bold;color:${color};margin-bottom:6px">${escapeHtml(title)}</div>
-            <div style="font-size:11px;color:#64748b;margin-bottom:8px">
-                차선 버블은 GPTYPE_TURN, 교차로 이미지는 GPTYPE_EXTCROSSTURN 에서 나온다
+        <div class="mk-popup gp-popup">
+            <div class="mk-head">
+                <span class="mk-head-id" style="color:${color}">${escapeHtml(title)}</span>
+                <span class="mk-head-type">GP ${extra.gp_index ?? '-'}</span>
             </div>
-            <button type="button" class="gp-guidance-open"
-                onclick="openGpGuidanceCard('${marker.id}')">
+            ${isTurn ? `<div class="gp-bubble-preview">${buildLaneBubbleHtml(extra)}</div>` : ''}
+            <div class="mk-rows">${primary}</div>
+            <button type="button" class="gp-guidance-open" onclick="openGpGuidanceCard('${marker.id}')">
                 안내 화면으로 보기
             </button>
-            <table style="font-size:12px">
-                ${row('turnCode', escapeHtml(gpTurnCodeLabel(extra.turn_code)))}
-                ${row('nGPType', escapeHtml(gpTypeLabel(gpType)))}
-                ${row('GPIdx', extra.gp_index)}
-                ${row('TVAS GP Idx', extra.render_gp_index)}
-                ${row('linkIndex', extra.link_index)}
-                ${row('nLinkID', extra.link_id)}
-                ${row('링크 순번', extra.link_ordinal)}
-                ${row('교차로 이미지', gpCrossImageSummary(extra))}
-                ${crossImageRow}
-                ${row('nVoiceCode', extra.voice_code === null || extra.voice_code === undefined
-                    ? '' : escapeHtml(gpTurnCodeLabel(extra.voice_code)))}
-                ${row('ucSndCode (원본)', extra.snd_code === null || extra.snd_code === undefined
-                    ? '' : escapeHtml(gpTurnCodeLabel(extra.snd_code)))}
-                ${row('교차로 이미지 ID', extra.cross_img_code)}
-                ${row('이미지 사용가능', extra.cross_img_available)}
-                ${row('vertexEnd', extra.vertex_end)}
-                ${row('laneColor', (Number(extra.gp_type) || 0) & GP_TYPE_TURN
-                    ? `${gpLaneColorChip(extra.lane_color)} <span style="color:#64748b">(nVoiceCode 유래)</span>` : '')}
-                ${row('주행 중 관측 laneColor', laneColors.length ? laneColors.map(gpLaneColorChip).join(', ') : '')}
-                ${row('위치 근거', escapeHtml(String(extra.position_source || '-'))
-                    + (extra.link_ordinal_from_log
-                        ? ' <span style="color:#94a3b8">— nLinkID가 맵 링크ID가 아니라 순번</span>' : ''))}
-                ${row('주행 중 관측 위치', extra.observed_gap_m === null || extra.observed_gap_m === undefined
-                    ? '' : `${Number(extra.observed_lat).toFixed(6)}, ${Number(extra.observed_lon).toFixed(6)}`
-                        + ` <span style="color:${extra.observed_gap_m > 50 ? '#dc2626' : '#16a34a'}">(차이 ${extra.observed_gap_m}m)</span>`
-                        + ` <span style="color:#94a3b8">vertex ${extra.observed_vertex_index}</span>`)}
-                ${row('경로', escapeHtml(String(extra.route_session_name || extra.route_session_id || '-')))}
-                ${row('좌표', `${marker.latitude.toFixed(6)}, ${marker.longitude.toFixed(6)}`)}
-                ${row('로그 시간', escapeHtml(marker.timestamp_str || '-'))}
-            </table>
-            ${buildGpBubbleSection(extra)}
+            ${details ? `<div class="mk-rows mk-rows-extra">${details}</div>` : ''}
         </div>
     `;
-}
-
-// 이 GP에서 그려지는 차선 버블 — nVoiceCode / nTurnCode 로 구성
-function buildGpBubbleSection(extra) {
-    const gpType = Number(extra.gp_type) || 0;
-    if (!(gpType & GP_TYPE_TURN)) return '';
-    return `<div style="margin-top:8px">` +
-        `<div style="font-size:11px;color:#64748b;margin-bottom:4px">이 GP에서 그려지는 차선 버블</div>` +
-        buildLaneBubbleHtml(extra) + `</div>`;
 }
 
 function buildGpLaneColorPopup(marker) {
     const extra = marker.extra || {};
     const info = GP_LANE_COLORS[Number(extra.lane_color)] || GP_LANE_COLORS[0];
-    const row = (label, value) => (value === null || value === undefined || value === '')
-        ? ''
-        : `<tr><td style="padding-right:8px;white-space:nowrap"><strong>${label}</strong></td><td>${value}</td></tr>`;
+
+    const primary = [
+        gpRow('차선색', gpLaneColorChip(extra.lane_color)),
+        gpRow('nVoiceCode', escapeHtml(gpTurnCodeLabel(extra.voice_code))),
+        gpRow('좌표', `${marker.latitude.toFixed(6)}, ${marker.longitude.toFixed(6)}`),
+        gpRow('시간', escapeHtml(marker.timestamp_str || '-'))
+    ].join('');
+
+    const details = [
+        gpRow('gpTurnCode', escapeHtml(gpTurnCodeLabel(extra.turn_code))),
+        gpRow('guidePointIdx', extra.gp_index),
+        gpRow('linkIndex', extra.link_index),
+        gpRow('gpLinkIndex', extra.gp_link_index)
+    ].filter(Boolean).join('');
 
     return `
-        <div class="popup-content" style="min-width:260px">
-            <div style="font-weight:bold;color:${info.hex};margin-bottom:6px">차선 버블 색상 (주행 중)</div>
-            <div style="font-size:11px;color:#64748b;margin-bottom:8px">
-                setLaneColor 호출 시점의 차량 위치에 표시
+        <div class="mk-popup gp-popup">
+            <div class="mk-head">
+                <span class="mk-head-id" style="color:${info.hex}">차선 버블 색상</span>
+                <span class="mk-head-type">주행 중</span>
             </div>
-            <table style="font-size:12px">
-                ${row('laneColor', gpLaneColorChip(extra.lane_color))}
-                ${row('nVoiceCode', escapeHtml(gpTurnCodeLabel(extra.voice_code)))}
-                ${row('gpTurnCode', escapeHtml(gpTurnCodeLabel(extra.turn_code)))}
-                ${row('guidePointIndex', extra.gp_index)}
-                ${row('linkIndex', extra.link_index)}
-                ${row('gpLinkIndex', extra.gp_link_index)}
-                ${extra.link_mismatch
-                    ? '<tr><td colspan="2" style="color:#dc2626"><strong>gpLinkIndex ≠ linkIndex</strong> — GP 매핑 확인 필요</td></tr>'
-                    : ''}
-                ${row('좌표', `${marker.latitude.toFixed(6)}, ${marker.longitude.toFixed(6)}`)}
-                ${row('로그 시간', escapeHtml(marker.timestamp_str || '-'))}
-            </table>
+            <div class="mk-rows">${primary}</div>
+            ${extra.link_mismatch
+                ? '<div class="gp-mismatch">gpLinkIndex ≠ linkIndex — GP 매핑 확인 필요</div>'
+                : ''}
+            ${details ? `<div class="mk-rows mk-rows-extra">${details}</div>` : ''}
         </div>
     `;
 }
@@ -472,40 +473,50 @@ function visualizeGpGuideFromLog() {
     renderLayerControls();
 }
 
+/** GP 에서 그려지는 차선 버블 그림. 회전 GP 에서만 나온다. */
+function buildGpBubbleSection(extra) {
+    const gpType = Number(extra?.gp_type) || 0;
+    if (!(gpType & GP_TYPE_TURN)) return '';
+    return `<div class="gp-bubble-preview">${buildLaneBubbleHtml(extra)}</div>`;
+}
+
 // Route Info 링크 팝업에 붙는 GP 요약 — 해당 링크에서 안내엔진이 내린 결정
 function buildRouteGuideSection(guide) {
     if (!guide) {
-        return `<hr style="margin:6px 0;border:none;border-top:1px solid #e2e8f0">` +
-            `<span style="color:#94a3b8">GP 로그 없음 (이 링크의 ServiceDataCollect 미수집)</span>`;
+        return `<div class="gp-section"><div class="gp-section-title">GP 로그 없음</div>`
+            + `<div class="gp-dim">이 링크의 ServiceDataCollect 미수집</div></div>`;
     }
 
     const gpType = Number(guide.gp_type) || 0;
     const color = gpMarkerColor(gpType);
+    const isTurn = !!(gpType & GP_TYPE_TURN);
     const title = gpType & GP_TYPE_EXTCROSSTURN
         ? '복잡교차로 GP'
-        : (gpType & GP_TYPE_TURN ? '회전 GP' : '안내 없음 (통과 링크)');
+        : (isTurn ? '회전 GP' : '안내 없음 (통과 링크)');
 
-    const rows = [
-        `turnCode: ${escapeHtml(gpTurnCodeLabel(guide.turn_code))}`,
-        `nGPType: ${escapeHtml(gpTypeLabel(gpType))}`,
-        `교차로 이미지: ${gpCrossImageSummary(guide)}`
-    ];
-    if (guide.gp_index !== null && guide.gp_index !== undefined) rows.push(`GPIdx: ${guide.gp_index}`);
-    if (guide.link_index !== null && guide.link_index !== undefined) rows.push(`linkIndex: ${guide.link_index}`);
-    if (guide.voice_code !== null && guide.voice_code !== undefined) {
-        rows.push(`nVoiceCode: ${escapeHtml(gpTurnCodeLabel(guide.voice_code))}`);
-    }
-    if (guide.lane_color !== undefined && (Number(guide.gp_type) || 0) & GP_TYPE_TURN) {
-        rows.push(`laneColor: ${gpLaneColorChip(guide.lane_color)} (nVoiceCode 유래)`);
-    }
+    const primary = [
+        gpRow('안내', escapeHtml(gpTurnCodeLabel(guide.turn_code))),
+        isTurn && guide.lane_color !== undefined ? gpRow('차선색', gpLaneColorChip(guide.lane_color)) : '',
+        gpRow('교차로', gpCrossImageSummary(guide))
+    ].join('');
+
     const observed = Array.isArray(guide.lane_colors_observed) ? guide.lane_colors_observed : [];
-    if (observed.length > 0) {
-        rows.push(`주행 중 관측 laneColor: ${observed.map(gpLaneColorChip).join(', ')}`);
-    }
+    const details = [
+        gpRow('nGPType', escapeHtml(gpTypeLabel(gpType))),
+        gpRow('GPIdx', guide.gp_index),
+        gpRow('linkIndex', guide.link_index),
+        gpRow('nVoiceCode', guide.voice_code === null || guide.voice_code === undefined
+            ? '' : escapeHtml(gpTurnCodeLabel(guide.voice_code))),
+        gpRow('관측 laneColor', observed.length ? observed.map(gpLaneColorChip).join(' ') : '')
+    ].filter(Boolean).join('');
 
-    return `<hr style="margin:6px 0;border:none;border-top:1px solid #e2e8f0">` +
-        `<strong style="color:${color}">[GP] ${escapeHtml(title)}</strong><br>` +
-        rows.join('<br>') +
-        buildGpBubbleSection(guide);
+    return `
+        <div class="gp-section gp-popup">
+            <div class="gp-section-title" style="color:${color}">GP · ${escapeHtml(title)}</div>
+            ${buildGpBubbleSection(guide)}
+            <div class="mk-rows">${primary}</div>
+            ${details ? `<div class="mk-rows mk-rows-extra">${details}</div>` : ''}
+        </div>
+    `;
 }
 

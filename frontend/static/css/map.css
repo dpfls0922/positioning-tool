@@ -87,9 +87,24 @@ html, body {
 #sidebar.collapsed #sidebar-search,
 #sidebar.collapsed #sidebar-filter,
 #sidebar.collapsed #sidebar-result-header,
+#sidebar.collapsed #sidebar-tabs,
+#sidebar.collapsed .sidebar-pane,
 #sidebar.collapsed #infoPanel {
     opacity: 0;
     pointer-events: none;
+}
+
+/* 접히면 사이드바 폭이 0 이라 내부 absolute 버튼이 클리핑된다.
+   fixed 로 바꿔 화면 왼쪽 끝에 남겨 다시 열 수 있게 한다. */
+#sidebar.collapsed #btnCloseSidebar {
+    position: fixed;
+    left: 0;
+    right: auto;
+    opacity: 1;
+    pointer-events: auto;
+    border-left: none;
+    border-radius: 0 8px 8px 0;
+    box-shadow: 2px 3px 10px rgba(0, 0, 0, .35);
 }
 
 #sidebar.collapsed #sidebar-brand {
@@ -1423,6 +1438,12 @@ html, body {
         min-width: 300px;
     }
 
+    /* 좁은 화면 규칙이 접힘 상태의 width:0 을 덮지 않게 같은 컨텍스트에서 다시 지정한다. */
+    #sidebar.collapsed {
+        width: 0;
+        min-width: 0;
+    }
+
     .tool-panel,
     #playbackPanel {
         width: calc(100vw - 96px);
@@ -2419,62 +2440,6 @@ html, body {
     border-radius: 4px;
 }
 
-/* --- 마커 팝업의 주소 버튼/결과 --- */
-
-.popup-address-wrap {
-    margin-top: 6px;
-}
-
-.popup-address-btn {
-    padding: 4px 8px;
-    font-size: 11px;
-    font-weight: 600;
-    color: #0c4a6e;
-    background: #bae6fd;
-    border: 1px solid #0ea5e9;
-    border-radius: 4px;
-    cursor: pointer;
-}
-
-.popup-address-btn:hover:not(:disabled) {
-    background: #7dd3fc;
-}
-
-.popup-address-btn:disabled {
-    opacity: .6;
-    cursor: progress;
-}
-
-.popup-address-result:not(:empty) {
-    margin-top: 5px;
-    padding-top: 5px;
-    border-top: 1px solid #d8dee8;
-}
-
-.popup-address-row {
-    font-size: 11px;
-    line-height: 1.45;
-    color: #333;
-}
-
-.popup-address-row span {
-    display: inline-block;
-    min-width: 44px;
-    color: #6b7280;
-}
-
-.popup-address-loading,
-.popup-address-empty {
-    font-size: 11px;
-    color: #6b7280;
-}
-
-.popup-address-error {
-    font-size: 11px;
-    line-height: 1.45;
-    color: #b91c1c;
-}
-
 /* ===================== 타이포/가독성 정리 =====================
    글자 크기가 8~13px로 흩어져 있어 화면마다 톤이 달랐다.
    아래 네 단계로 통일하고, 사이드바·레이어·팝업에 같은 규칙을 적용한다. */
@@ -2629,7 +2594,8 @@ html, body {
 
 .mk-popup {
     min-width: 168px;
-    max-width: 260px;
+    /* 후보 링크 표처럼 넓은 내용이 있으므로 가로 폭을 묶지 않는다. */
+    max-width: none;
     font-size: var(--fs-body);
     line-height: var(--lh-tight);
     color: #1f2937;
@@ -2647,7 +2613,7 @@ html, body {
 
 .mk-head-id {
     font-size: var(--fs-title);
-    font-weight: 700;
+    font-weight: 400;
     color: #111827;
 }
 
@@ -2683,48 +2649,18 @@ html, body {
     word-break: break-word;
 }
 
-.mk-more {
-    margin-top: 6px;
+.mk-rows-extra {
+    margin-top: 5px;
+    padding-top: 5px;
     border-top: 1px solid #e2e8f0;
-    padding-top: 4px;
 }
 
-.mk-more > summary {
-    font-size: var(--fs-meta);
-    font-weight: 600;
-    color: #2563eb;
-    cursor: pointer;
-    list-style: none;
-}
-
-.mk-more > summary::marker,
-.mk-more > summary::-webkit-details-marker {
-    display: none;
-}
-
-.mk-more > summary::before {
-    content: '＋ ';
-    color: #9ca3af;
-}
-
-.mk-more[open] > summary::before {
-    content: '－ ';
-}
-
-.mk-more-body {
-    margin-top: 4px;
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-    max-height: 220px;
-    overflow-y: auto;
-}
-
-/* 팝업 전체 높이 제한 — 내용이 길어도 지도를 덮지 않는다. */
+/* 세로만 제한한다(후보 링크 표는 가로로 길게 봐야 한다). */
 .leaflet-popup-content {
     margin: 9px 11px;
-    max-height: 340px;
+    max-height: 62vh;
     overflow-y: auto;
+    overflow-x: visible;
 }
 
 /* --- 떠 있는 패널 --- */
@@ -3000,66 +2936,6 @@ html, body {
     flex: 0 0 auto;
 }
 
-/* ===================== 마커 팝업 주소 결과 ===================== */
-
-.popup-address-wrap {
-    margin-top: 6px;
-}
-
-.popup-address-btn {
-    padding: 3px 9px;
-    font-size: var(--fs-meta);
-    font-weight: 600;
-    color: #0c4a6e;
-    background: #e0f2fe;
-    border: 1px solid #7dd3fc;
-    border-radius: 4px;
-    cursor: pointer;
-}
-
-.popup-address-btn:hover:not(:disabled) {
-    background: #bae6fd;
-    border-color: #0ea5e9;
-}
-
-.popup-address-btn:disabled {
-    opacity: .55;
-    cursor: progress;
-}
-
-.popup-address-result:not(:empty) {
-    margin-top: 5px;
-    padding: 5px 7px;
-    background: #f1f5f9;
-    border-left: 2px solid #0ea5e9;
-    border-radius: 3px;
-}
-
-.popup-address-main {
-    font-size: var(--fs-body);
-    font-weight: 600;
-    line-height: var(--lh-tight);
-    color: #0f172a;
-}
-
-.popup-address-sub {
-    margin-top: 1px;
-    font-size: var(--fs-meta);
-    color: #64748b;
-}
-
-.popup-address-loading,
-.popup-address-empty {
-    font-size: var(--fs-meta);
-    color: #64748b;
-}
-
-.popup-address-error {
-    font-size: var(--fs-meta);
-    line-height: var(--lh-body);
-    color: #b91c1c;
-}
-
 /* ===================== 검색 결과 카드 마무리 ===================== */
 
 #infoPanel:empty::after {
@@ -3099,6 +2975,7 @@ html, body {
     line-height: var(--lh-body);
     color: #fca5a5;
 }
+
 
 /* ===== 내비게이션 스택 — HUD·안내·알림을 한 곳에 모은다 ===== */
 /* 각 요소가 지도 위 서로 다른 자리에 떠서 산만했기에, 좌상단 한 열로 쌓는다. */

@@ -56,7 +56,6 @@ JS_MAP_PART_FILES = (
     "29-sdi-block-hud.js",
     "30-panel-utils.js",
     "31-roadview.js",
-    "32-kakao-local.js",
     "33-skyview.js",
     "35-search-results.js",
     "34-simulation.js",
