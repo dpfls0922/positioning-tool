@@ -14,6 +14,10 @@ from backend.positioning_tool.service.log_service import LogService
 from backend.positioning_tool.service.html_renderer_service import render_html
 from backend.positioning_tool.service.road_shape_service import RoadShapeService
 from backend.positioning_tool.service.paths import PATHS
+from backend.positioning_tool.service.kakao_local_service import (
+    KakaoLocalService,
+    KakaoRestKeyMissingError,
+)
 from backend.positioning_tool.service.place_search_service import (
     PlaceApiKeyMissingError,
     PlaceSearchService,
@@ -359,5 +363,50 @@ def create_log_controller() -> Blueprint:
             return jsonify({"ok": False, "error": str(ex)}), 400
         except Exception as ex:
             return _place_api_error_response(ex)
+
+    def _kakao_local_call(handler):
+        """카카오 로컬 API 라우트들의 공통 예외 처리."""
+        try:
+            return jsonify({"ok": True, **handler()})
+        except KakaoRestKeyMissingError as ex:
+            return jsonify({"ok": False, "error": str(ex), "reason": "no_api_key"}), 503
+        except ValueError as ex:
+            return jsonify({"ok": False, "error": str(ex)}), 400
+        except Exception as ex:
+            return _place_api_error_response(ex)
+
+    @bp.get("/api/kakao/reverse-geocode")
+    def kakao_reverse_geocode_api():
+        return _kakao_local_call(lambda: KakaoLocalService.reverse_geocode(
+            request.args.get("lat"),
+            request.args.get("lon"),
+        ))
+
+    @bp.get("/api/kakao/address")
+    def kakao_address_api():
+        return _kakao_local_call(lambda: KakaoLocalService.address_search(
+            request.args.get("query"),
+            size=request.args.get("size", 10),
+        ))
+
+    @bp.get("/api/kakao/transcoord")
+    def kakao_transcoord_api():
+        raw_systems = (request.args.get("systems") or "").strip()
+        systems = [s for s in raw_systems.split(",") if s.strip()] or None
+        return _kakao_local_call(lambda: KakaoLocalService.transcoord(
+            request.args.get("lat"),
+            request.args.get("lon"),
+            systems=systems,
+        ))
+
+    @bp.get("/api/kakao/transcoord-back")
+    def kakao_transcoord_back_api():
+        return _kakao_local_call(lambda: {
+            "wgs84": KakaoLocalService.wgs84_from(
+                request.args.get("x"),
+                request.args.get("y"),
+                request.args.get("system"),
+            )
+        })
 
     return bp

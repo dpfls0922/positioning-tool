@@ -54,6 +54,10 @@ JS_MAP_PART_FILES = (
     "26-place-search.js",
     "27-omnibox.js",
     "29-sdi-block-hud.js",
+    "30-panel-utils.js",
+    "31-roadview.js",
+    "32-kakao-local.js",
+    "33-skyview.js",
     "34-simulation.js",
 )
 

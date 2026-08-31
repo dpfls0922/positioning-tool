@@ -96,6 +96,15 @@ def write_html_file(markers_data=None, lines_data=None, out_path=None):
 
 
 def build_html_head(static_version):
+    kakao_js_key = (os.environ.get("KAKAO_JS_KEY") or "").strip()
+    # 로드뷰는 카카오맵 JS SDK 로만 가능하다. 키가 없으면 스크립트를 넣지 않고,
+    # 프론트에서 kakaoJsKeySet 플래그로 기능을 비활성화한다.
+    kakao_sdk_tag = (
+        f'<script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey={kakao_js_key}&autoload=false"'
+        f' onerror="window.__kakaoSdkLoadFailed = true;"></script>'
+        if kakao_js_key
+        else "<!-- KAKAO_JS_KEY 미설정: 로드뷰 비활성 -->"
+    )
     return dedent(
         f"""
         <meta charset="UTF-8">
@@ -108,6 +117,7 @@ def build_html_head(static_version):
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/Leaflet.awesome-markers/2.0.2/leaflet.awesome-markers.css" />
         <script src="https://cdnjs.cloudflare.com/ajax/libs/Leaflet.awesome-markers/2.0.2/leaflet.awesome-markers.min.js"></script>
         <script src="https://unpkg.com/shpjs@latest/dist/shp.min.js"></script>
+        {kakao_sdk_tag}
         <script src="./static/js/tmap_coord.js?v={static_version}"></script>
         <script src="./static/js/tmap_tvas_parser.js?v={static_version}"></script>
         <link rel="stylesheet" href="./static/css/map.css?v={static_version}" type="text/css">
@@ -352,6 +362,7 @@ def init_data_vars(markers_data, lines_data):
 
     markers_json = json.dumps(markers_data)
     lines_json = json.dumps(lines_data)
+    kakao_js_key_set = json.dumps(bool((os.environ.get("KAKAO_JS_KEY") or "").strip()))
 
     return dedent(
         f"""
@@ -360,6 +371,7 @@ def init_data_vars(markers_data, lines_data):
         let minTs = {min_ts};
         let maxTs = {max_ts};
         let maxId = {max_id};
+        let kakaoJsKeySet = {kakao_js_key_set};
         """
     ).strip()
 

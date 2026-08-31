@@ -3,3 +3,6 @@
 __pycache__/
 *.pyc
 result_*.html
+
+# API 키 등 로컬 환경변수
+.env
