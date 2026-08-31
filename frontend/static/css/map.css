@@ -2939,7 +2939,7 @@ html, body {
 /* 구간단속 HUD 아래에 쌓이도록 top 을 맞춘다. */
 .sim-alerts {
     position: absolute;
-    top: 78px;
+    top: 14px;
     left: 50%;
     transform: translateX(-50%);
     z-index: 1090;
@@ -2989,6 +2989,81 @@ html, body {
 .sim-reroute-toast {
     position: absolute;
     top: 78px;
+    right: 16px;
+    z-index: 1095;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: rgba(13, 148, 136, 0.95);
+    color: #f0fdfa;
+    border-radius: 10px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+    font-size: 12px;
+    font-weight: 700;
+    pointer-events: none;
+}
+.sim-reroute-toast.hidden { display: none; }
+.sim-reroute-id {
+    font-size: 10px;
+    font-weight: 600;
+    opacity: 0.8;
+}
+
+/* ===== 모의주행 중 안내 표시 (SDI / C2X / 재탐색) ===== */
+/* 구간단속 HUD 아래에 쌓이도록 top 을 맞춘다. */
+.sim-alerts {
+    position: absolute;
+    top: 14px;   /* simStackBelowHud() 가 HUD 높이에 맞춰 갱신 */
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1090;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    pointer-events: none;
+}
+.sim-alerts.hidden { display: none; }
+
+.sim-alert {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    min-width: 230px;
+    padding: 7px 12px;
+    background: rgba(15, 23, 42, 0.92);
+    border: 1px solid rgba(148, 163, 184, 0.3);
+    border-radius: 10px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+}
+/* 로그상 선택되지 않은 SDI 후보 — 지도 마커와 같은 규칙으로 흐리게. */
+.sim-alert.muted { opacity: 0.55; }
+.sim-alert-icon { display: flex; align-items: center; }
+.sim-alert-icon img { display: block; }
+.sim-alert-text { flex: 1; min-width: 0; }
+.sim-alert-name {
+    font-size: 12px;
+    font-weight: 700;
+    color: #f1f5f9;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.sim-alert-sub {
+    font-size: 10px;
+    color: #94a3b8;
+    margin-top: 1px;
+}
+.sim-alert-dist {
+    font-size: 15px;
+    font-weight: 800;
+    color: #f8fafc;
+    white-space: nowrap;
+}
+
+.sim-reroute-toast {
+    position: absolute;
+    top: 14px;
     right: 16px;
     z-index: 1095;
     display: flex;
