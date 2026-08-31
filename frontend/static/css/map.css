@@ -3251,3 +3251,75 @@ html, body {
 .gp-popup .gp-guidance-open:hover {
     background: #bfdbfe;
 }
+
+/* ===================== 아이콘·버튼 색상 통일 =====================
+   기능마다 파랑/초록/청록이 섞여 있어서 같은 성격의 버튼이 다른 색으로 보였다.
+   역할별로 세 가지만 쓴다: 중립(기본) / 강조(활성·주요 동작) / 경고(파괴적).
+   아이콘은 항상 버튼의 글자색을 물려받는다(currentColor). */
+
+.tool-btn i,
+.interaction-mode-btn i,
+.panel-close-btn i,
+.layer-ctx-trigger i,
+#exportHtmlMenuButton i,
+#exportCsvMenuButton i,
+#exportJsonMenuButton i,
+.kakao-btn i,
+.place-btn i {
+    color: inherit;
+}
+
+/* 중립 버튼(다크 표면) — 사이드바 톤 */
+.interaction-mode-btn {
+    background: #2f343c;
+    border: 1px solid #454b55;
+    color: var(--muted);
+}
+
+.interaction-mode-btn:hover:not(.active) {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    color: #ffffff;
+}
+
+/* 밝은 도구 패널 안의 주요 동작 버튼 — 색은 하나(강조 파랑 계열)로 통일하고
+   기능은 아이콘/문구로 구분한다(기존엔 HTML=파랑, CSV=초록으로 갈렸다). */
+#exportHtmlMenuButton,
+#exportCsvMenuButton,
+#exportJsonMenuButton {
+    background: #dbeafe;
+    border: 1px solid #93c5fd;
+    color: #1e3a8a;
+}
+
+#exportHtmlMenuButton:hover,
+#exportCsvMenuButton:hover,
+#exportJsonMenuButton:hover {
+    background: #bfdbfe;
+    border-color: #60a5fa;
+    color: #16233d;
+}
+
+/* 강조 — 활성 상태는 툴바 아이콘과 같은 파랑 하나로 */
+.interaction-mode-btn.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #16233d;
+}
+
+/* 진행 표시도 같은 강조색 계열로 */
+#uploadProgressBar {
+    background: linear-gradient(90deg, var(--accent), #4f7fe6);
+}
+
+/* 경고 — 파괴적 동작만 빨강을 쓴다 */
+.distance-delete-btn {
+    background: #b91c1c;
+    border-color: #b91c1c;
+    color: #fee2e2;
+}
+
+.distance-delete-btn:hover {
+    background: #dc2626;
+    border-color: #dc2626;
+}
