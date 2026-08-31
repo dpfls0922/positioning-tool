@@ -311,6 +311,7 @@ def build_html_body():
         {add_distance_tool()}
         {add_radius_tool()}
         {add_marker_table_panel()}
+        {add_simulation_panel()}
         {add_playback_tool()}
         {add_legend()}
         <div id="toolBackdrop"></div>
@@ -692,6 +693,35 @@ def add_legend():
     """
 
 
+def add_simulation_panel():
+    return """
+    <div id="simulationPanel" class="tool-panel hidden">
+        <div class="tool-panel-header">
+            <span>모의주행</span>
+            <button class="panel-close-btn" data-close-panel="simulationPanel">닫기</button>
+        </div>
+        <div class="tool-panel-body">
+            <div class="sim-note">VPM 궤적을 로그의 타임스탬프대로 재생합니다 — 카바타가 heading 방향으로 움직이고, 구간단속 HUD와 안내 화면이 그 시점에 맞춰 뜹니다.</div>
+            <div class="sim-controls">
+                <button id="simPlayBtn" class="sim-btn" type="button" title="재생"><i class="fa fa-play"></i></button>
+                <button id="simStopBtn" class="sim-btn" type="button" title="정지"><i class="fa fa-stop"></i></button>
+                <div class="sim-speed-group">
+                    <button class="sim-speed-btn active" data-speed="1" type="button">1x</button>
+                    <button class="sim-speed-btn" data-speed="2" type="button">2x</button>
+                    <button class="sim-speed-btn" data-speed="3" type="button">3x</button>
+                </div>
+                <button id="simFollowBtn" class="sim-btn active" type="button" title="지도 따라가기"><i class="fa fa-crosshairs"></i></button>
+            </div>
+            <div id="simStatus" class="sim-status">
+                <span data-role="clock">--:--:--</span>
+                <span data-role="speed">0 km/h</span>
+                <div class="sim-progress"><div data-role="bar"></div></div>
+            </div>
+        </div>
+    </div>
+    """
+
+
 def add_right_toolbar():
     return """
     <div id="rightToolbar">
@@ -708,6 +738,7 @@ def add_right_toolbar():
             <button class="tool-btn" id="toolUploadBtn" title="업로드/파싱"><i class="fa fa-upload"></i></button>
             <button class="tool-btn" id="toolExportBtn" title="내보내기"><i class="fa fa-share-square-o"></i></button>
             <button class="tool-btn" id="toolMarkerTableBtn" title="마커 테이블"><i class="fa fa-table"></i></button>
+            <button class="tool-btn" id="toolSimulationBtn" title="모의주행"><i class="fa fa-car"></i></button>
             <button class="tool-btn" id="toolPlaybackBtn" title="타임라인"><i class="fa fa-clock-o"></i></button>
             <button class="tool-btn" id="toolLegendBtn" title="범례"><i class="fa fa-list"></i></button>
         </div>

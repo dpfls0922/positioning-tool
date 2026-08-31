@@ -8,6 +8,7 @@ function initToolPanels() {
         toolRouteBtn: 'routePanel',
         toolDistanceBtn: 'distancePanel',
         toolRadiusBtn: 'radiusPanel',
+        toolSimulationBtn: 'simulationPanel',
         toolPlaybackBtn: 'playbackPanel',
         toolLegendBtn: 'legendPanel'
     };
@@ -46,7 +47,7 @@ function closeToolPanel(panelId) {
 }
 
 function closeAllToolPanels() {
-    ['uploadPanel', 'exportPanel', 'markerTablePanel', 'routePanel', 'distancePanel', 'radiusPanel', 'playbackPanel', 'legendPanel']
+    ['uploadPanel', 'exportPanel', 'markerTablePanel', 'routePanel', 'distancePanel', 'radiusPanel', 'playbackPanel', 'simulationPanel', 'legendPanel']
         .forEach((panelId) => document.getElementById(panelId)?.classList.add('hidden'));
     syncToolButtonState();
 }
@@ -59,6 +60,7 @@ function syncToolButtonState() {
         toolRouteBtn: 'routePanel',
         toolDistanceBtn: 'distancePanel',
         toolRadiusBtn: 'radiusPanel',
+        toolSimulationBtn: 'simulationPanel',
         toolPlaybackBtn: 'playbackPanel',
         toolLegendBtn: 'legendPanel'
     };

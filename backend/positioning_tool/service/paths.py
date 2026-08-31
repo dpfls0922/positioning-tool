@@ -54,6 +54,7 @@ JS_MAP_PART_FILES = (
     "26-place-search.js",
     "27-omnibox.js",
     "29-sdi-block-hud.js",
+    "34-simulation.js",
 )
 
 PATHS = AppPaths()

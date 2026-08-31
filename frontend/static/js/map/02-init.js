@@ -19,6 +19,7 @@ function init() {
     initMarkerTablePanel();
     bindSearchControls();
     initOmnibox();
+    initSimulation();
     bind('markerInspectModeButton', 'click', () => setInspectMode('marker'));
     bind('roadInspectModeButton', 'click', () => setInspectMode('road'));
     bind('toolZoomInBtn', 'click', () => map.zoomIn());
