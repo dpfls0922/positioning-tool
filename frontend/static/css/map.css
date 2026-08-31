@@ -6,12 +6,14 @@
     --border: #3a3f46;
     --text: #e6e8eb;
     --muted: #a3a9b3;
-    /* 파란 계열은 이 값들로만 쓴다 — 곳곳에 청록(var(--accent-strong))이 섞여 있어 같은
-       의미의 강조가 서로 다른 색으로 보였다. */
-    --accent: #60a5fa;
+    /* 파란 계열은 이 값들로만 쓴다 — 예전에는 곳곳에 청록이 섞여 있어 같은 의미의
+       강조가 서로 다른 색으로 보였다. */
+    --accent: #86b4f0;
     --accent-soft: #2f3640;
-    --accent-strong: #2563eb;
-    --accent-weak: #1d4ed8;
+    /* 한 단계 연한 파랑. 더 밝히면(#3b82f6 = 3.7:1) 활성 버튼의 흰 글자가
+       대비 기준 4.5:1 아래로 떨어져 읽기 어려워진다 — 이 값이 4.63:1. */
+    --accent-strong: #2f6ded;
+    --accent-weak: #2563eb;
     --accent-fg: #ffffff;
     /* 지도 위 화이트 컨트롤 */
     --control-bg: rgba(255, 255, 255, 0.97);
