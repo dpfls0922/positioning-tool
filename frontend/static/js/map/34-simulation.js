@@ -44,6 +44,7 @@ let simRouteHiddenFor = null;
 let simRouteSavedActive = null;
 let simParkingSpans = [];
 let simShadeTimeline = [];
+let simAutoSkipStops = false;
 let simFeedbackPoints = [];
 // 정차로 볼 속도 상한과, 그보다 오래 멈춰야 '정차'로 취급할 시간
 const SIM_STOP_SPEED_KMH = 2;
@@ -312,6 +313,13 @@ function simCurrentStop(timeMs) {
     return { start: simTrack[start].t, end: simTrack[end].t, resumeAt: simTrack[Math.min(end + 1, simTrack.length - 1)].t };
 }
 
+function simSetAutoSkip(on) {
+    simAutoSkipStops = !!on;
+    simSyncButtons();
+    // 이미 정차 안에 있으면 켜는 즉시 넘어가야 한다.
+    if (simAutoSkipStops) simSkipStop();
+}
+
 function simSkipStop() {
     const stop = simCurrentStop(simTimeMs);
     if (!stop) return;
@@ -560,7 +568,7 @@ function simRenderStateStrip(state) {
     const shade = simCurrentShade(state.t);
     const fb = simRecentFeedback(state.t);
 
-    const key = [stop ? 'stop' : '', inLot ? 'lot' : '',
+    const key = [stop ? (simAutoSkipStops ? 'stopAuto' : 'stop') : '', inLot ? 'lot' : '',
         shade ? 'shade' + shade.facil : '', fb ? 'fb' : ''].join('|');
     if (key !== simStateStripKey) {
         simStateStripKey = key;
@@ -575,8 +583,12 @@ function simRenderStateStrip(state) {
         const parts = [];
         if (stop) {
             parts.push(card('sim-state-stop', 'fa-pause', '정차 중',
-                '남은 <span data-role="stop-left">-</span>초',
-                '<button type="button" class="sim-state-btn" data-action="skip-stop">건너뛰기</button>'));
+                simAutoSkipStops
+                    ? '자동 건너뛰기 켜짐'
+                    : '남은 <span data-role="stop-left">-</span>초',
+                simAutoSkipStops
+                    ? ''
+                    : '<button type="button" class="sim-state-btn" data-action="skip-stop">건너뛰기</button>'));
         }
         if (inLot) {
             parts.push(card('sim-state-lot', 'fa-building', '주차장 주행 중', '안내 없음'));
@@ -595,7 +607,7 @@ function simRenderStateStrip(state) {
         el.classList.toggle('hidden', parts.length === 0);
     }
 
-    if (stop) {
+    if (stop && !simAutoSkipStops) {
         const left = el.querySelector('[data-role="stop-left"]');
         const secs = String(Math.max(0, Math.round((stop.end - state.t) / 1000)));
         if (left && left.textContent !== secs) left.textContent = secs;
@@ -626,6 +638,13 @@ function simFrame(now) {
     const deltaMs = Math.min(Math.max(rawDelta, 0), SIM_MAX_FRAME_MS);
     simLastFrameAt = now;
     simTimeMs += deltaMs * simSpeed;
+
+    // 자동 건너뛰기: 정차를 만나면 다음 주행 샘플로 시간을 밀어버린다. 재생 중에만
+    // 동작하므로 진행바나 위치 선택으로 정차 구간을 직접 살펴보는 것은 그대로 된다.
+    if (simAutoSkipStops) {
+        const stop = simCurrentStop(simTimeMs);
+        if (stop && stop.resumeAt > simTimeMs) simTimeMs = stop.resumeAt;
+    }
 
     const end = simTrack[simTrack.length - 1].t;
     if (simTimeMs >= end) {
@@ -712,6 +731,8 @@ function simSyncButtons() {
     if (followBtn) followBtn.classList.toggle('active', simFollow);
     const pickBtn = document.getElementById('simPickBtn');
     if (pickBtn) pickBtn.classList.toggle('active', simPickMode);
+    const autoBtn = document.getElementById('simAutoSkipBtn');
+    if (autoBtn) autoBtn.classList.toggle('active', simAutoSkipStops);
 }
 
 let simLastHeading = 0;
@@ -755,6 +776,7 @@ function initSimulation() {
     });
     document.getElementById('simBlockSeekBtn')?.addEventListener('click', simSeekToBlockSection);
     document.getElementById('simPickBtn')?.addEventListener('click', () => simSetPickMode(!simPickMode));
+    document.getElementById('simAutoSkipBtn')?.addEventListener('click', () => simSetAutoSkip(!simAutoSkipStops));
 
     // 진행바를 눌러/끌어서 원하는 지점으로 이동
     const track = document.getElementById('simProgress');
