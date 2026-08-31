@@ -1702,7 +1702,7 @@ html, body {
 .gp-guidance-card {
     position: relative;
     z-index: 1200;
-    width: 100%;
+    width: 236px;
     background: #0f172a;
     color: #f8fafc;
     border: 1px solid rgba(148, 163, 184, 0.35);
@@ -1729,14 +1729,14 @@ html, body {
     padding: 0 2px;
 }
 .gp-guidance-close:hover { color: #f8fafc; }
-.gp-guidance-body { padding: 10px; }
+.gp-guidance-body { padding: 8px 9px; }
 .gp-guidance-turn {
     display: flex;
     align-items: center;
     gap: 10px;
 }
 .gp-guidance-turn-name {
-    font-size: 15px;
+    font-size: 13px;
     font-weight: 800;
     line-height: 1.25;
 }
@@ -2181,13 +2181,14 @@ html, body {
 
 .sim-speed-group {
     display: flex;
+    flex-wrap: wrap;
     margin-left: 2px;
     border: 1px solid #c7ceda;
     border-radius: 6px;
     overflow: hidden;
 }
 .sim-speed-btn {
-    padding: 0 10px;
+    padding: 0 7px;
     height: 30px;
     background: #fff;
     border: none;
@@ -2800,7 +2801,7 @@ html, body {
 /* 구간단속 플레이트는 라벨이 새겨진 190x44 고정 이미지다 — 늘리면 글자가 뭉갠다.
    그래서 스택 안에서도 자기 크기를 유지하고, 스택이 폭을 맞춘다. */
 #naviStack .sim-alert { min-width: 236px; box-sizing: border-box; }
-#naviStack .gp-guidance-card { width: 268px; }
+#naviStack .gp-guidance-card { width: 236px; }
 
 /* ===================== GP 안내 팝업 ===================== */
 
@@ -2874,34 +2875,44 @@ html, body {
     margin-bottom: 5px;
 }
 
-/* ===== 모의주행 — 정차/주차장/피드백 칩, 진행바 seek, 헤딩업 회전 ===== */
-.sim-chips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    margin-top: 8px;
-}
-.sim-chips.hidden { display: none; }
-.sim-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    padding: 4px 8px;
-    border-radius: 999px;
-    font-size: 11px;
-    font-weight: 700;
-    border: 1px solid transparent;
-}
-.sim-chip-stop {
-    background: #b45309;
-    color: #fffbeb;
-    cursor: pointer;
-}
-.sim-chip-stop:hover { background: #d97706; }
-.sim-chip-lot { background: #e2e8f0; color: #334155; border-color: #c7ceda; }
-.sim-chip-fb { background: #6d28d9; color: #f5f3ff; }
 
 /* 진행바는 눌러서 이동할 수 있으므로 잡기 쉬운 높이를 준다. */
+/* 정차·주차장·맵매칭 피드백은 패널 안이 아니라 안내 UI 와 같은 자리에 둔다. */
+.sim-state-strip { display: flex; flex-direction: column; gap: 6px; }
+.sim-state-strip.hidden { display: none; }
+
+.sim-state {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    min-width: 236px;
+    padding: 7px 10px;
+    background: rgba(15, 23, 42, 0.92);
+    border: 1px solid rgba(148, 163, 184, 0.3);
+    border-left-width: 3px;
+    border-radius: 10px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+    box-sizing: border-box;
+}
+.sim-state-stop { border-left-color: #f59e0b; }
+.sim-state-lot { border-left-color: #64748b; }
+.sim-state-fb { border-left-color: #a78bfa; }
+.sim-state-icon { width: 22px; text-align: center; color: #cbd5e1; font-size: 13px; }
+.sim-state-text { flex: 1; min-width: 0; }
+.sim-state-name { font-size: 12px; font-weight: 700; color: #f1f5f9; }
+.sim-state-sub { font-size: 10px; color: #94a3b8; margin-top: 1px; }
+.sim-state-btn {
+    padding: 4px 9px;
+    background: #b45309;
+    border: none;
+    border-radius: 6px;
+    color: #fffbeb;
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+}
+.sim-state-btn:hover { background: #d97706; }
+
 #simProgress {
     height: 10px;
     border-radius: 5px;
@@ -2910,12 +2921,6 @@ html, body {
 }
 #simProgress > div { border-radius: 5px; }
 
-/* 헤딩업: 지도 요소 자체를 돌리므로 모서리가 비지 않게 확대하고,
-   회전 중 타일 경계가 도는 것을 부드럽게 보이도록 전환을 준다. */
-#map.map-heading-up {
-    transform-origin: 50% 50%;
-    transition: transform 260ms ease-out;
-}
 
 /* ===================== 우측 툴바 · 지도 컨트롤 테마 통일 =====================
    사이드바와 떠 있는 패널은 다크인데 우측 아이콘과 지도 컨트롤만 흰 카드라
