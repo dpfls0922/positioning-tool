@@ -114,6 +114,10 @@ function buildLaneBubblePopup(marker) {
     return `
         <div class="popup-content" style="min-width:280px">
             <div style="font-weight:bold;color:${colorInfo.hex};margin-bottom:6px">차선 버블</div>
+            <button type="button" class="gp-guidance-open"
+                onclick="openGpGuidanceCard('${marker.id}')">
+                안내 화면으로 보기
+            </button>
             <div style="margin-bottom:8px">${buildLaneBubbleHtml(extra)}</div>
             <table style="font-size:12px">
                 ${row('laneColor', `${gpLaneColorChip(extra.lane_color)} <span style="color:#64748b">(nVoiceCode ${extra.voice_code ?? '-'} → ToLaneColor)</span>`)}

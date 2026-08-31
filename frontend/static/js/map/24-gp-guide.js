@@ -246,9 +246,13 @@ function closeGpGuidanceCard() {
 
 // Opened from the GP popup. Shows what the device would have drawn at this guide
 // point: the turn figure, the lane bubble, and the values behind both.
-function openGpGuidanceCard(gpIndex) {
-    const marker = (markersData || []).find((m) => m.extra?.gp_guide
-        && String(m.extra.gp_index) === String(gpIndex));
+// Keyed by the marker's own id, not gp_index: gp_index is absent in real logs
+// (every GP in a 3.6GB sample had it null), and String(undefined) matched the
+// first GP every time, so every card showed the same guide point.
+function openGpGuidanceCard(markerId) {
+    const wanted = String(markerId);
+    const marker = (markersData || []).find((m) =>
+        (m.extra?.gp_guide || m.extra?.lane_bubble) && String(m.id) === wanted);
     if (!marker) return;
 
     closeGpGuidanceCard();
@@ -280,7 +284,8 @@ function openGpGuidanceCard(gpIndex) {
                 <div class="gp-guidance-turn-text">
                     <div class="gp-guidance-turn-name">${escapeHtml(turnName)}</div>
                     <div class="gp-guidance-turn-sub">
-                        GP ${extra.gp_index ?? '-'} · turnCode ${extra.turn_code ?? '-'}
+                        ${extra.gp_index === null || extra.gp_index === undefined
+                            ? '' : `GP ${extra.gp_index} · `}turnCode ${extra.turn_code ?? '-'}
                         ${image ? '' : ' · 해당 TBT 이미지 없음'}
                     </div>
                 </div>
@@ -322,7 +327,7 @@ function buildGpGuidePopup(marker) {
                 차선 버블은 GPTYPE_TURN, 교차로 이미지는 GPTYPE_EXTCROSSTURN 에서 나온다
             </div>
             <button type="button" class="gp-guidance-open"
-                onclick="openGpGuidanceCard('${extra.gp_index}')">
+                onclick="openGpGuidanceCard('${marker.id}')">
                 안내 화면으로 보기
             </button>
             <table style="font-size:12px">
