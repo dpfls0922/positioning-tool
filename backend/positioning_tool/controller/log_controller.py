@@ -382,31 +382,4 @@ def create_log_controller() -> Blueprint:
             request.args.get("lon"),
         ))
 
-    @bp.get("/api/kakao/address")
-    def kakao_address_api():
-        return _kakao_local_call(lambda: KakaoLocalService.address_search(
-            request.args.get("query"),
-            size=request.args.get("size", 10),
-        ))
-
-    @bp.get("/api/kakao/transcoord")
-    def kakao_transcoord_api():
-        raw_systems = (request.args.get("systems") or "").strip()
-        systems = [s for s in raw_systems.split(",") if s.strip()] or None
-        return _kakao_local_call(lambda: KakaoLocalService.transcoord(
-            request.args.get("lat"),
-            request.args.get("lon"),
-            systems=systems,
-        ))
-
-    @bp.get("/api/kakao/transcoord-back")
-    def kakao_transcoord_back_api():
-        return _kakao_local_call(lambda: {
-            "wgs84": KakaoLocalService.wgs84_from(
-                request.args.get("x"),
-                request.args.get("y"),
-                request.args.get("system"),
-            )
-        })
-
     return bp

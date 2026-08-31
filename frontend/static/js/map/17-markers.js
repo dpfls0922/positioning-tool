@@ -378,77 +378,83 @@ function showRequestGroupPopup(request, groupMarker) {
     }, 50);
 }
 
+function popupRow(key, value) {
+    if (value === null || value === undefined || value === '') return '';
+    return `<div class="mk-row"><span class="mk-key">${key}</span><span class="mk-val">${value}</span></div>`;
+}
+
+/** 팝업 본문. 자주 보는 값만 위에 두고, 나머지는 '상세' 안에 접어둔다. */
 function makePopupText(coordinate, coordtype) {
     const dltId = Number.isFinite(coordinate?.dlt_id) ? coordinate.dlt_id : 0;
-    const formatted = dltId > 0 ? dltId.toLocaleString() : '-';
     const markerId = Number.isFinite(coordinate?.id) ? coordinate.id : '-';
     const lat = Number.isFinite(coordinate?.latitude) ? coordinate.latitude.toFixed(6) : '-';
     const lon = Number.isFinite(coordinate?.longitude) ? coordinate.longitude.toFixed(6) : '-';
-    const ts = coordinate?.timestamp_str ? coordinate.timestamp_str : '-';
+    const ts = coordinate?.timestamp_str || '-';
 
-    let text = `DLT: ${formatted}<br>ID: ${markerId}<br>TS: ${ts}<br>${lat}, ${lon}`;
+    const head = `
+        <div class="mk-head">
+            <span class="mk-head-id">DLT ${dltId > 0 ? dltId.toLocaleString() : '-'}</span>
+            <span class="mk-head-type">${escapeHtml(coordtype || '')}</span>
+        </div>
+    `;
 
-    if (coordinate.heading !== null && coordinate.heading !== undefined) {
-        text += `<br>Heading: ${coordinate.heading.toFixed(2)}°`;
-    }
+    const primary = [
+        popupRow('ID', markerId),
+        popupRow('시간', escapeHtml(String(ts))),
+        popupRow('좌표', `${lat}, ${lon}`),
+        Number.isFinite(coordinate?.heading) ? popupRow('방위', `${coordinate.heading.toFixed(1)}°`) : '',
+        coordinate?.extra?.Speed !== undefined ? popupRow('속도', parseFloat(coordinate.extra.Speed).toFixed(1)) : ''
+    ].join('');
 
-    if (coordinate.extra && coordinate.extra.Speed !== undefined) {
-        text += `<br>Speed: ${parseFloat(coordinate.extra.Speed).toFixed(2)}`;
-    }
+    // 상세: 좌표 타입별 값들. 접혀 있으므로 팝업이 길어지지 않는다.
+    const details = [];
 
-    if (coordtype === "Filtered GNSS") {
-        const gnssMode = coordinate.extra?.gnss_mode;
-        if (gnssMode) {
-            text += `<br>GNSS mode: ${gnssMode}`;
-        }
+    if (coordtype === 'Filtered GNSS') {
+        details.push(popupRow('GNSS 모드', escapeHtml(String(coordinate.extra?.gnss_mode || ''))));
         const transition = coordinate.extra?.gnss_mode_transition;
         if (transition?.from && transition?.to) {
-            text += `<br>Mode transition: ${transition.from} -> ${transition.to}`;
+            details.push(popupRow('모드 전환', `${escapeHtml(transition.from)} → ${escapeHtml(transition.to)}`));
         }
     }
 
-    if (coordtype === "DR-based") {
-        text += `<br>isDRGps: ${coordinate.extra?.isDRGps ?? ""}`;
-        if (coordinate.extra?.mm_feedback_reason) {
-            text += `<br><b>MM Feedback:</b> ${coordinate.extra.mm_feedback_reason}`;
-        }
+    if (coordtype === 'DR-based') {
+        details.push(popupRow('isDRGps', escapeHtml(String(coordinate.extra?.isDRGps ?? ''))));
+        details.push(popupRow('MM Feedback', escapeHtml(String(coordinate.extra?.mm_feedback_reason || ''))));
+    }
 
-        // Add parking lot state information
+    if (coordtype === 'DR-based' || coordtype === 'Parking Lot State') {
         if (coordinate.extra?.parking_state) {
-            text += `<br><b>주차장 상태:</b> ${coordinate.extra.parking_state}`;
-            if (coordinate.extra.parking_state !== 'ParkingLot') {
-                text += `<br>후보 링크 개수: ${coordinate.extra.parking_candidate_count || 0}`;
-                if (coordinate.extra.parking_best_link_id && coordinate.extra.parking_best_link_id > 0) {
-                    text += `<br>최고 매칭 Link ID: ${coordinate.extra.parking_best_link_id}`;
+            details.push(popupRow('주차장 상태', escapeHtml(String(coordinate.extra.parking_state))));
+            if (coordtype === 'Parking Lot State' || coordinate.extra.parking_state !== 'ParkingLot') {
+                details.push(popupRow('후보 링크', coordinate.extra.parking_candidate_count || 0));
+                if (coordinate.extra.parking_best_link_id > 0) {
+                    details.push(popupRow('최고 매칭', coordinate.extra.parking_best_link_id));
                 }
             }
         }
-
-        text += buildCandidateLinkPopupHtml(coordinate?.extra);
-    }
-    if (coordtype === "Parking Lot State") {
-        if (coordinate.extra?.parking_state) {
-            text += `<br><b>주차장 상태:</b> ${coordinate.extra.parking_state}`;
-            text += `<br>후보 링크 개수: ${coordinate.extra.parking_candidate_count || 0}`;
-            if (coordinate.extra.parking_best_link_id && coordinate.extra.parking_best_link_id > 0) {
-                text += `<br>최고 매칭 Link ID: ${coordinate.extra.parking_best_link_id}`;
-            }
-        }
-
-        text += buildCandidateLinkPopupHtml(coordinate?.extra);
     }
 
-    if (coordtype === "Request") {
-        text += `<br>Content ID: ${coordinate.extra?.group_1 ?? "-"}`;
-        text += `<br>요청 타입: ${coordinate.extra?.group_2_text ?? ""}`;
+    if (coordtype === 'Request') {
+        details.push(popupRow('Content ID', escapeHtml(String(coordinate.extra?.group_1 ?? '-'))));
+        details.push(popupRow('요청 타입', escapeHtml(String(coordinate.extra?.group_2_text ?? ''))));
     }
-    if (coordtype === "Route Match" || coordtype === "Road Match") {
-        const state = coordinate.extra?.match_state || "";
-        if (!(state === "MATCH_OK_GOOD" || state === "MATCH_OK_TRANSIENT")) {
-            text += `<br>${state}`;
+
+    if (coordtype === 'Route Match' || coordtype === 'Road Match') {
+        const state = coordinate.extra?.match_state || '';
+        if (state && state !== 'MATCH_OK_GOOD' && state !== 'MATCH_OK_TRANSIENT') {
+            details.push(popupRow('매칭 상태', escapeHtml(state)));
         }
     }
 
-    return text;
+    const candidateHtml = (coordtype === 'DR-based' || coordtype === 'Parking Lot State')
+        ? buildCandidateLinkPopupHtml(coordinate?.extra)
+        : '';
+
+    const detailBody = details.filter(Boolean).join('') + candidateHtml;
+    const detailBlock = detailBody
+        ? `<details class="mk-more"><summary>상세</summary><div class="mk-more-body">${detailBody}</div></details>`
+        : '';
+
+    return `<div class="mk-popup">${head}<div class="mk-rows">${primary}</div>${detailBlock}</div>`;
 }
 

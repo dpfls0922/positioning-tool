@@ -1,4 +1,4 @@
-"""카카오 로컬 API (REST) 래퍼 — 좌표→주소, 주소 검색, 좌표계 변환.
+"""카카오 로컬 API (REST) 래퍼 — 좌표 → 주소/행정구역 변환.
 
 인증: KAKAO_REST_API_KEY (카카오 개발자센터 > 앱 키 > REST API 키)
 로컬 API 는 일 100,000건 무료이며 결제수단 등록이 필요 없다.
@@ -17,11 +17,6 @@ KAKAO_BASE = "https://dapi.kakao.com"
 
 COORD_TO_ADDRESS_PATH = "/v2/local/geo/coord2address.json"
 COORD_TO_REGION_PATH = "/v2/local/geo/coord2regioncode.json"
-ADDRESS_SEARCH_PATH = "/v2/local/search/address.json"
-TRANSCOORD_PATH = "/v2/local/geo/transcoord.json"
-
-# 카카오가 지원하는 좌표계 중 검증에 쓸 만한 것들
-TRANSCOORD_SYSTEMS = ("WCONGNAMUL", "CONGNAMUL", "WTM", "TM", "KTM", "UTM", "BESSEL", "WKTM", "WUTM")
 
 CACHE_TTL_SECONDS = 300
 REQUEST_TIMEOUT_SECONDS = 10
@@ -124,75 +119,3 @@ class KakaoLocalService:
             **_pick_address(documents[0] if documents else {}),
             "region": _pick_region(region_payload.get("documents")),
         }
-
-    @staticmethod
-    def address_search(query, size=10):
-        """주소 → 좌표."""
-        keyword = (query or "").strip()
-        if not keyword:
-            raise ValueError("검색할 주소를 입력해주세요.")
-        count = max(1, min(int(size or 10), 30))
-
-        payload = _get(
-            ADDRESS_SEARCH_PATH,
-            {"query": keyword, "size": count},
-            cache_key=("addrsearch", keyword, count),
-        )
-
-        results = []
-        for doc in payload.get("documents") or []:
-            road = doc.get("road_address") or {}
-            jibun = doc.get("address") or {}
-            results.append({
-                "address_name": (doc.get("address_name") or "").strip(),
-                "road_address": (road.get("address_name") or "").strip(),
-                "address": (jibun.get("address_name") or "").strip(),
-                "building_name": (road.get("building_name") or "").strip(),
-                "zone_no": (road.get("zone_no") or "").strip(),
-                "lat": float(doc["y"]) if doc.get("y") else None,
-                "lon": float(doc["x"]) if doc.get("x") else None,
-            })
-        return {"query": keyword, "results": results}
-
-    @staticmethod
-    def transcoord(lat, lon, systems=None):
-        """WGS84 좌표를 여러 좌표계로 변환한다(자체 변환 검증용)."""
-        lat_f, lon_f = _require_coord(lat, lon)
-        targets = [s.strip().upper() for s in (systems or TRANSCOORD_SYSTEMS) if s]
-        unknown = [s for s in targets if s not in TRANSCOORD_SYSTEMS]
-        if unknown:
-            raise ValueError(f"지원하지 않는 좌표계입니다: {', '.join(unknown)}")
-
-        converted = {}
-        for system in targets:
-            payload = _get(
-                TRANSCOORD_PATH,
-                {
-                    "x": f"{lon_f:.7f}",
-                    "y": f"{lat_f:.7f}",
-                    "input_coord": "WGS84",
-                    "output_coord": system,
-                },
-                cache_key=("trans", system, round(lat_f, 6), round(lon_f, 6)),
-            )
-            documents = payload.get("documents") or []
-            if documents:
-                converted[system] = {"x": documents[0].get("x"), "y": documents[0].get("y")}
-
-        return {"lat": lat_f, "lon": lon_f, "converted": converted}
-
-    @staticmethod
-    def wgs84_from(x, y, system):
-        """다른 좌표계 → WGS84 (왕복 검증용)."""
-        target = (system or "").strip().upper()
-        if target not in TRANSCOORD_SYSTEMS:
-            raise ValueError(f"지원하지 않는 좌표계입니다: {system}")
-        payload = _get(
-            TRANSCOORD_PATH,
-            {"x": x, "y": y, "input_coord": target, "output_coord": "WGS84"},
-            cache_key=("trans-back", target, str(x), str(y)),
-        )
-        documents = payload.get("documents") or []
-        if not documents:
-            return None
-        return {"lat": float(documents[0]["y"]), "lon": float(documents[0]["x"])}

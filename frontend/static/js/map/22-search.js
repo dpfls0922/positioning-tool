@@ -32,7 +32,7 @@ function handleDltSearch() {
             const data = item.obj.data || {};
             highlightMarker(item.obj);
             div.innerHTML = `
-                <div class="info-title">[MARKER] ${data.type || 'Unknown'} #${idx + 1}</div>
+                <div class="info-title">${infoTitleHtml('MARKER', data.type || 'Unknown', idx + 1)}</div>
                 <div class="info-detail">
                     <div class="info-row"><span class="info-key">ID</span><span>${data.id ?? '-'}</span></div>
                     <div class="info-row"><span class="info-key">TS</span><span>${data.timestamp_str ?? '-'}</span></div>
@@ -47,7 +47,7 @@ function handleDltSearch() {
             const data = item.obj.lineData || {};
             highlightLine(item.obj);
             div.innerHTML = `
-                <div class="info-title">[LINE] ${data.type || 'Unknown'} #${idx + 1}</div>
+                <div class="info-title">${infoTitleHtml('LINE', data.type || 'Unknown', idx + 1)}</div>
                 <div class="info-detail">
                     <div class="info-row"><span class="info-key">ID</span><span>${data.id ?? '-'}</span></div>
                     <div class="info-row"><span class="info-key">TS</span><span>${data.timestamp_str ?? '-'}</span></div>
@@ -284,7 +284,7 @@ function handleLatLonSearch() {
     openSidebar(`좌표 검색 결과 (마커 ${matched.length}개)`);
     infoPanel.innerHTML = `
         <div class="info-item marker">
-            <div class="info-title">[COORD] 지정 좌표</div>
+            <div class="info-title">${infoTitleHtml('COORD', '지정 좌표')}</div>
             <div class="info-detail">
                 <div class="info-row"><span class="info-key">Lat</span><span>${parsed.lat.toFixed(7)}</span></div>
                 <div class="info-row"><span class="info-key">Lon</span><span>${parsed.lon.toFixed(7)}</span></div>
@@ -374,7 +374,7 @@ function focusRoadLinkFeature(feature, titlePrefix = 'RID 검색 결과') {
         openSidebar(`${titlePrefix}: ${linkId}`);
         infoPanel.innerHTML = `
             <div class="info-item line">
-                <div class="info-title">[ROAD LINK] ${escapeHtml(linkId)}</div>
+                <div class="info-title">${infoTitleHtml('ROAD', escapeHtml(linkId))}</div>
                 <div class="info-detail">${makeRoadPopupContent(props, 'Road Link')}</div>
             </div>
         `;
@@ -585,17 +585,6 @@ function handleRequestIdSearch() {
         }
 
         infoMsg += `<br><b>경로 세그먼트:</b> ${routeInfos.length}개<br>`;
-        infoMsg += `<br><b>경로 상세:</b><br>`;
-        for (let i = 0; i < routeInfos.length; i++) {
-            const route = routeInfos[i];
-            const startLat = route.extra?.route_start_lat?.toFixed(6) || '-';
-            const startLon = route.extra?.route_start_lon?.toFixed(6) || '-';
-            const endLat = route.extra?.route_end_lat?.toFixed(6) || '-';
-            const endLon = route.extra?.route_end_lon?.toFixed(6) || '-';
-            const linkId = route.extra?.link_id || '-';
-            infoMsg += `Link ${i + 1}: [${startLat}, ${startLon}] → [${endLat}, ${endLon}] (ID: ${linkId})<br>`;
-        }
-
         showInfoMessage(
             'Request 경로 검색 상세 정보',
             infoMsg

@@ -63,6 +63,7 @@ def render_html(markers_data=None, lines_data=None):
                 </div>
                 <div id="sidebar-result-header">
                     <span id="sidebar-title">검색 결과</span>
+                    <button id="clearResultsButton" type="button" title="검색 결과 지우기">지우기</button>
                 </div>
                 <div id="sidebar-filter">
                     <div class="filter-title">레이어 관리</div>

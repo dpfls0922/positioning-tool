@@ -2554,3 +2554,458 @@ html, body {
     line-height: 1.45;
     color: #b91c1c;
 }
+
+/* ===================== 타이포/가독성 정리 =====================
+   글자 크기가 8~13px로 흩어져 있어 화면마다 톤이 달랐다.
+   아래 네 단계로 통일하고, 사이드바·레이어·팝업에 같은 규칙을 적용한다. */
+
+:root {
+    --fs-meta: 10px;   /* 보조 정보, 배지 */
+    --fs-body: 11px;   /* 기본 본문 */
+    --fs-title: 12px;  /* 항목 제목 */
+    --fs-head: 13px;   /* 패널/브랜드 제목 */
+    --lh-tight: 1.35;
+    --lh-body: 1.5;
+}
+
+/* --- 검색창 --- */
+
+#sidebar-search {
+    padding: 10px;
+}
+
+#omnibox {
+    font-size: var(--fs-title);
+}
+
+#omnibox-hint code {
+    font-size: 9px;
+    letter-spacing: .02em;
+}
+
+#omnibox-results {
+    font-size: var(--fs-body);
+}
+
+.interaction-mode-btn {
+    font-size: var(--fs-body);
+    padding: 6px 8px;
+}
+
+/* --- 결과 헤더 + 지우기 --- */
+
+#sidebar-result-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+#sidebar-title {
+    font-size: var(--fs-title);
+    font-weight: 700;
+    letter-spacing: .01em;
+}
+
+#clearResultsButton {
+    flex: 0 0 auto;
+    padding: 3px 8px;
+    font-size: var(--fs-meta);
+    font-weight: 600;
+    color: #cbd5e1;
+    background: #2f343c;
+    border: 1px solid #454b55;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+#clearResultsButton:hover:not(:disabled) {
+    border-color: #7aa2ff;
+    color: #ffffff;
+}
+
+#clearResultsButton:disabled {
+    opacity: .35;
+    cursor: default;
+}
+
+/* --- 레이어 관리 --- */
+
+.filter-title {
+    font-size: var(--fs-meta);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: #94a3b8;
+}
+
+#layerControlList {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.layer-control-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 24px;
+    padding: 2px 4px;
+    border-radius: 4px;
+}
+
+.layer-control-item:hover {
+    background: #2b3037;
+}
+
+.layer-control-label {
+    flex: 1 1 auto;
+    font-size: var(--fs-body);
+    line-height: var(--lh-tight);
+    color: #dbe4f0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.layer-count {
+    flex: 0 0 auto;
+    font-size: 9px;
+    font-variant-numeric: tabular-nums;
+    color: #8b95a3;
+}
+
+.layer-color-swatch {
+    flex: 0 0 auto;
+}
+
+.layer-ctx-trigger {
+    flex: 0 0 auto;
+    font-size: 9px;
+    opacity: .55;
+}
+
+.layer-control-item:hover .layer-ctx-trigger {
+    opacity: 1;
+}
+
+/* --- 검색 결과 항목 --- */
+
+.info-title {
+    font-size: var(--fs-body);
+}
+
+.info-detail,
+.info-row {
+    font-size: var(--fs-body);
+    line-height: var(--lh-body);
+}
+
+.info-key {
+    min-width: 62px;
+}
+
+/* --- 마커 팝업 --- */
+
+.mk-popup {
+    min-width: 168px;
+    max-width: 260px;
+    font-size: var(--fs-body);
+    line-height: var(--lh-tight);
+    color: #1f2937;
+}
+
+.mk-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 6px;
+    margin-bottom: 5px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.mk-head-id {
+    font-size: var(--fs-title);
+    font-weight: 700;
+    color: #111827;
+}
+
+.mk-head-type {
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    color: #6b7280;
+    white-space: nowrap;
+}
+
+.mk-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.mk-row {
+    display: flex;
+    gap: 6px;
+}
+
+.mk-key {
+    flex: 0 0 56px;
+    font-size: var(--fs-meta);
+    line-height: 1.5;
+    color: #6b7280;
+}
+
+.mk-val {
+    flex: 1 1 auto;
+    font-variant-numeric: tabular-nums;
+    word-break: break-word;
+}
+
+.mk-more {
+    margin-top: 6px;
+    border-top: 1px solid #e2e8f0;
+    padding-top: 4px;
+}
+
+.mk-more > summary {
+    font-size: var(--fs-meta);
+    font-weight: 600;
+    color: #2563eb;
+    cursor: pointer;
+    list-style: none;
+}
+
+.mk-more > summary::marker,
+.mk-more > summary::-webkit-details-marker {
+    display: none;
+}
+
+.mk-more > summary::before {
+    content: '＋ ';
+    color: #9ca3af;
+}
+
+.mk-more[open] > summary::before {
+    content: '－ ';
+}
+
+.mk-more-body {
+    margin-top: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    max-height: 220px;
+    overflow-y: auto;
+}
+
+/* 팝업 전체 높이 제한 — 내용이 길어도 지도를 덮지 않는다. */
+.leaflet-popup-content {
+    margin: 9px 11px;
+    max-height: 340px;
+    overflow-y: auto;
+}
+
+/* --- 떠 있는 패널 --- */
+
+.floating-panel-title {
+    font-size: var(--fs-body);
+}
+
+.floating-panel-subtitle {
+    font-size: var(--fs-meta);
+}
+
+/* ===================== 검색 결과 카드 =====================
+   한 줄짜리 제목 + 좌우 정렬 행이라 눈이 붙을 곳이 없었다.
+   종류 배지 / 이름 / 번호를 분리하고, 값은 고정폭 숫자로 정렬한다. */
+
+#infoPanel {
+    padding: 8px 8px 10px;
+}
+
+.info-item {
+    position: relative;
+    margin-bottom: 5px;
+    padding: 7px 9px;
+    background: #23272e;
+    border: 1px solid #343a43;
+    border-left-width: 2px;
+    border-radius: 5px;
+    transition: background .12s ease, border-color .12s ease;
+}
+
+.info-item:hover {
+    background: #2a2f37;
+    border-color: #4a5261;
+}
+
+.info-item.marker {
+    border-left-color: #7aa2ff;
+}
+
+.info-item.line {
+    border-left-color: #f7c948;
+}
+
+.info-title {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 5px;
+}
+
+.info-badge {
+    flex: 0 0 auto;
+    padding: 1px 5px;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: .05em;
+    border-radius: 3px;
+    background: #334155;
+    color: #cbd5e1;
+}
+
+.info-badge-marker {
+    background: #1e3a8a;
+    color: #bfdbfe;
+}
+
+.info-badge-line {
+    background: #713f12;
+    color: #fde68a;
+}
+
+.info-badge-coord {
+    background: #14532d;
+    color: #bbf7d0;
+}
+
+.info-badge-road {
+    background: #3f3f46;
+    color: #e4e4e7;
+}
+
+.info-name {
+    flex: 1 1 auto;
+    font-size: var(--fs-body);
+    font-weight: 600;
+    color: #f1f5f9;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.info-idx {
+    flex: 0 0 auto;
+    font-size: 9px;
+    color: #7e8794;
+    font-variant-numeric: tabular-nums;
+}
+
+.info-detail {
+    color: #dbe4f0;
+}
+
+.info-row {
+    justify-content: flex-start;
+    gap: 8px;
+    margin: 0;
+    padding: 1px 0;
+}
+
+.info-row span:last-child {
+    flex: 1 1 auto;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    color: #e8eef7;
+}
+
+.info-key {
+    flex: 0 0 58px;
+    color: #94a3b8;
+    font-size: var(--fs-meta);
+    text-align: left;
+}
+
+.info-extra {
+    border-top: 1px solid #343a43;
+    margin-top: 5px;
+    padding-top: 4px;
+}
+
+/* ===== 모의주행 중 안내 표시 (SDI / C2X / 재탐색) ===== */
+/* 구간단속 HUD 아래에 쌓이도록 top 을 맞춘다. */
+.sim-alerts {
+    position: absolute;
+    top: 78px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1090;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    pointer-events: none;
+}
+.sim-alerts.hidden { display: none; }
+
+.sim-alert {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    min-width: 230px;
+    padding: 7px 12px;
+    background: rgba(15, 23, 42, 0.92);
+    border: 1px solid rgba(148, 163, 184, 0.3);
+    border-radius: 10px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+}
+/* 로그상 선택되지 않은 SDI 후보 — 지도 마커와 같은 규칙으로 흐리게. */
+.sim-alert.muted { opacity: 0.55; }
+.sim-alert-icon { display: flex; align-items: center; }
+.sim-alert-icon img { display: block; }
+.sim-alert-text { flex: 1; min-width: 0; }
+.sim-alert-name {
+    font-size: 12px;
+    font-weight: 700;
+    color: #f1f5f9;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.sim-alert-sub {
+    font-size: 10px;
+    color: #94a3b8;
+    margin-top: 1px;
+}
+.sim-alert-dist {
+    font-size: 15px;
+    font-weight: 800;
+    color: #f8fafc;
+    white-space: nowrap;
+}
+
+.sim-reroute-toast {
+    position: absolute;
+    top: 78px;
+    right: 16px;
+    z-index: 1095;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: rgba(13, 148, 136, 0.95);
+    color: #f0fdfa;
+    border-radius: 10px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+    font-size: 12px;
+    font-weight: 700;
+    pointer-events: none;
+}
+.sim-reroute-toast.hidden { display: none; }
+.sim-reroute-id {
+    font-size: 10px;
+    font-weight: 600;
+    opacity: 0.8;
+}
