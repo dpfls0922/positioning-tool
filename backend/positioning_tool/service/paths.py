@@ -58,6 +58,7 @@ JS_MAP_PART_FILES = (
     "31-roadview.js",
     "33-skyview.js",
     "35-search-results.js",
+    "36-theme.js",
     "34-simulation.js",
 )
 
