@@ -6,10 +6,18 @@
     --border: #3a3f46;
     --text: #e6e8eb;
     --muted: #a3a9b3;
-    --accent: #7aa2ff;
+    /* 파란 계열은 이 값들로만 쓴다 — 곳곳에 청록(var(--accent-strong))이 섞여 있어 같은
+       의미의 강조가 서로 다른 색으로 보였다. */
+    --accent: #60a5fa;
     --accent-soft: #2f3640;
     --accent-strong: #2563eb;
+    --accent-weak: #1d4ed8;
     --accent-fg: #ffffff;
+    /* 지도 위 화이트 컨트롤 */
+    --control-bg: rgba(255, 255, 255, 0.97);
+    --control-border: #d2d8e1;
+    --control-fg: #475569;
+    --control-hover: #eef2f7;
     --shadow: 0 12px 28px rgba(17, 24, 39, 0.18);
 }
 
@@ -2652,7 +2660,7 @@ html, body {
     gap: 8px;
     padding: 8px 12px;
     background: rgba(13, 148, 136, 0.95);
-    color: #f0fdfa;
+    color: var(--accent-fg);
     border-radius: 10px;
     box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
     font-size: 12px;
@@ -2922,15 +2930,16 @@ html, body {
 #simProgress > div { border-radius: 5px; }
 
 
-/* ===================== 우측 툴바 · 지도 컨트롤 테마 통일 =====================
-   사이드바와 떠 있는 패널은 다크인데 우측 아이콘과 지도 컨트롤만 흰 카드라
-   화면 안에서 두 가지 테마가 섞여 보였다. 사이드바와 같은 토큰으로 맞춘다. */
+/* ===================== 우측 툴바 · 지도 컨트롤 테마 =====================
+   지도 위에 얹히는 컨트롤은 화이트로 둔다. 사이드바 다크 톤에 맞춰 어둡게 했을
+   때는 밝은 지도 타일과 싸워서 아이콘이 잘 보이지 않았고, 활성 상태도 구분이
+   어려웠다. 파란 강조색(--accent-strong)만 공유해 한 벌로 읽히게 한다. */
 
 .tool-stack {
-    border: 1px solid var(--border);
+    border: 1px solid var(--control-border);
     border-radius: 8px;
-    background: var(--surface);
-    box-shadow: 0 4px 14px rgba(0, 0, 0, .35);
+    background: var(--control-bg);
+    box-shadow: 0 3px 12px rgba(15, 23, 42, .18);
 }
 
 .tool-btn {
@@ -2938,18 +2947,18 @@ html, body {
     height: 34px;
     background: transparent;
     border: none;
-    color: var(--muted);
+    color: var(--control-fg);
     box-shadow: none;
     transition: background .12s ease, color .12s ease;
 }
 
 .tool-stack .tool-btn + .tool-btn {
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--control-border);
 }
 
 .tool-btn:hover:not(:disabled) {
-    background: var(--accent-soft);
-    color: #ffffff;
+    background: var(--control-hover);
+    color: var(--accent-strong);
 }
 
 .tool-btn.active {
@@ -2967,38 +2976,35 @@ html, body {
     font-size: 13px;
 }
 
-/* Leaflet 기본 컨트롤(레이어 토글 등)도 같은 톤으로 */
+/* Leaflet 기본 컨트롤(레이어 토글 등)도 우측 툴바와 같은 화이트 톤으로 */
 .leaflet-touch .leaflet-bar,
 .leaflet-bar,
 .leaflet-control-layers {
-    border: 1px solid var(--border) !important;
+    border: 1px solid var(--control-border) !important;
     border-radius: 8px !important;
-    background: var(--surface) !important;
-    box-shadow: 0 4px 14px rgba(0, 0, 0, .35) !important;
-    color: var(--text);
+    background: var(--control-bg) !important;
+    box-shadow: 0 3px 12px rgba(15, 23, 42, .18) !important;
+    color: var(--control-fg);
 }
 
 .leaflet-bar a,
 .leaflet-bar a:hover,
 .leaflet-control-layers-toggle {
     background-color: transparent;
-    border-bottom-color: var(--border);
-    color: var(--muted);
+    border-bottom-color: var(--control-border);
+    color: var(--control-fg);
 }
 
 .leaflet-bar a:hover {
-    background-color: var(--accent-soft);
-    color: #ffffff;
+    background-color: var(--control-hover);
+    color: var(--accent-strong);
 }
-
-.leaflet-control-layers-toggle {
-    filter: invert(88%) sepia(6%) saturate(220%) hue-rotate(185deg);
-}
+/* 레이어 토글은 원본이 어두운 아이콘이라 화이트 배경에서 반전이 필요 없다. */
 
 .leaflet-control-layers-expanded {
     padding: 8px 10px;
     font-size: var(--fs-body);
-    color: var(--text);
+    color: var(--control-fg);
 }
 
 .leaflet-control-layers-expanded label {
