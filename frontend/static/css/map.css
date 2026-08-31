@@ -1675,11 +1675,9 @@ html, body {
 .gp-guidance-open:hover { background: #334155; }
 
 .gp-guidance-card {
-    position: absolute;
-    top: 16px;
-    right: 16px;
+    position: relative;
     z-index: 1200;
-    width: 268px;
+    width: 100%;
     background: #0f172a;
     color: #f8fafc;
     border: 1px solid rgba(148, 163, 184, 0.35);
@@ -2008,10 +2006,7 @@ html, body {
 /* ===== 구간단속 HUD (실제 내비게이션 표시 재현) ===== */
 /* 지도 상단 중앙 — 실제 내비가 구간단속 진입 시 띄우는 위치와 같다. */
 .sdi-block-hud {
-    position: absolute;
-    top: 14px;
-    left: 50%;
-    transform: translateX(-50%);
+    position: relative;
     z-index: 1100;
     display: flex;
     align-items: center;
@@ -2863,10 +2858,7 @@ html, body {
 /* ===== 모의주행 중 안내 표시 (SDI / C2X / 재탐색) ===== */
 /* 구간단속 HUD 아래에 쌓이도록 top 을 맞춘다. */
 .sim-alerts {
-    position: absolute;
-    top: 14px;   /* simStackBelowHud() 가 HUD 높이에 맞춰 갱신 */
-    left: 50%;
-    transform: translateX(-50%);
+    position: relative;
     z-index: 1090;
     display: flex;
     flex-direction: column;
@@ -2912,9 +2904,7 @@ html, body {
 }
 
 .sim-reroute-toast {
-    position: absolute;
-    top: 14px;
-    right: 16px;
+    position: relative;
     z-index: 1095;
     display: flex;
     align-items: center;
@@ -3108,4 +3098,97 @@ html, body {
     font-size: var(--fs-body);
     line-height: var(--lh-body);
     color: #fca5a5;
+}
+
+/* ===== 내비게이션 스택 — HUD·안내·알림을 한 곳에 모은다 ===== */
+/* 각 요소가 지도 위 서로 다른 자리에 떠서 산만했기에, 좌상단 한 열로 쌓는다. */
+#naviStack {
+    position: absolute;
+    top: 14px;
+    left: 14px;
+    z-index: 1100;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+    pointer-events: none;
+    max-width: min(320px, calc(100% - 28px));
+}
+#naviStack > * { pointer-events: auto; }
+#naviStack:empty { display: none; }
+/* 구간단속 플레이트는 라벨이 새겨진 190x44 고정 이미지다 — 늘리면 글자가 뭉갠다.
+   그래서 스택 안에서도 자기 크기를 유지하고, 스택이 폭을 맞춘다. */
+#naviStack .sim-alert { min-width: 236px; box-sizing: border-box; }
+#naviStack .gp-guidance-card { width: 268px; }
+
+/* ===================== GP 안내 팝업 ===================== */
+
+.gp-popup .mk-key {
+    flex: 0 0 78px;
+}
+
+.gp-bubble-preview {
+    display: flex;
+    justify-content: center;
+    margin: 0 0 7px;
+    padding: 6px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 4px;
+}
+
+.gp-popup .gp-guidance-open {
+    display: block;
+    width: 100%;
+    margin-top: 7px;
+    padding: 5px 8px;
+    font-size: var(--fs-meta);
+    font-weight: 600;
+    color: #1e3a8a;
+    background: #e0e7ff;
+    border: 1px solid #a5b4fc;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.gp-popup .gp-guidance-open:hover {
+    background: #c7d2fe;
+}
+
+.gp-dim {
+    color: #94a3b8;
+}
+
+.gp-ok {
+    color: #16a34a;
+    font-weight: 600;
+}
+
+.gp-warn {
+    color: #dc2626;
+    font-weight: 600;
+}
+
+.gp-mismatch {
+    margin-top: 6px;
+    padding: 4px 6px;
+    font-size: var(--fs-meta);
+    font-weight: 600;
+    color: #991b1b;
+    background: #fee2e2;
+    border-left: 2px solid #dc2626;
+    border-radius: 3px;
+}
+
+.gp-section {
+    margin-top: 7px;
+    padding-top: 6px;
+    border-top: 1px solid #e2e8f0;
+}
+
+.gp-section-title {
+    font-size: var(--fs-meta);
+    font-weight: 700;
+    letter-spacing: .03em;
+    margin-bottom: 5px;
 }

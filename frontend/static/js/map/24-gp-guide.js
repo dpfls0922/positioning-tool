@@ -298,7 +298,7 @@ function openGpGuidanceCard(markerId) {
             </div>
         </div>`;
     el.querySelector('.gp-guidance-close').onclick = closeGpGuidanceCard;
-    document.body.appendChild(el);
+    naviStack().appendChild(el);
     gpGuidanceCardEl = el;
 }
 

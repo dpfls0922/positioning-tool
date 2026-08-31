@@ -38,6 +38,10 @@ let simGuidePoints = [];
 let simSdiPoints = [];
 let simEventPoints = [];
 let simReroutes = [];
+let simRouteEpochs = [];
+let simRouteLayerNames = [];
+let simRouteHiddenFor = null;
+let simRouteSavedActive = null;
 let simFiredRerouteIds = new Set();
 let simRerouteToast = null;
 let simRerouteToastUntil = 0;
@@ -96,11 +100,24 @@ function buildSimTrack() {
         .map((m) => ({
             id: m.id, t: m.timestamp_ms,
             reason: m.extra?.group_2_text || '재탐색',
-            requestId: m.extra?.group_1
+            requestId: m.extra?.group_1,
+            sessionId: m.extra?.route_session_id
         }))
         .sort((a, b) => a.t - b.t);
 
     simFiredRerouteIds = new Set();
+
+    // Which route layer is live at a given moment. Each Request starts a session,
+    // so the active one is the newest request at or before that time; replaying a
+    // reroute should swap the drawn route rather than pile another on top.
+    simRouteLayerNames = [...new Set((linesData || [])
+        .filter((l) => l?.type === 'Route Info')
+        .map((l) => getRouteInfoLayerName(l)))];
+    const sessionByName = routeLayerNameBySessionId();
+    simRouteEpochs = simReroutes
+        .map((r) => ({ t: r.t, layer: sessionByName.get(r.sessionId) || null }))
+        .filter((e) => e.layer);
+
     return rows.length;
 }
 
@@ -214,7 +231,7 @@ function simEnsureAlertBox() {
         el = document.createElement('div');
         el.id = 'simAlerts';
         el.className = 'sim-alerts';
-        (document.getElementById('map') || document.body).appendChild(el);
+        naviStack().appendChild(el);
     }
     return el;
 }
@@ -260,20 +277,8 @@ function simRenderAlerts(state) {
 
     el.innerHTML = rows.join('');
     el.classList.toggle('hidden', rows.length === 0);
-    simStackBelowHud(el);
 }
 
-// The 구간단속 HUD is only present sometimes and its height depends on how many
-// plates it draws, so the strip is placed under whatever is actually there
-// rather than at a guessed offset.
-function simStackBelowHud(el) {
-    const hud = document.getElementById('sdiBlockHud');
-    const visible = hud && !hud.classList.contains('hidden');
-    const top = visible ? hud.getBoundingClientRect().height + 22 : 14;
-    el.style.top = `${top}px`;
-    const toast = document.getElementById('simRerouteToast');
-    if (toast) toast.style.top = `${top}px`;
-}
 
 // A reroute has a time but no place, so it flashes as a toast when playback
 // crosses it. Ids already fired are remembered so scrubbing back does not
@@ -283,7 +288,7 @@ function simRenderReroute(state) {
         const el = document.createElement('div');
         el.id = 'simRerouteToast';
         el.className = 'sim-reroute-toast hidden';
-        (document.getElementById('map') || document.body).appendChild(el);
+        naviStack().appendChild(el);
         return el;
     })();
 
@@ -312,6 +317,7 @@ function simApply(state) {
     simUpdateGuideCard(state);
     simRenderAlerts(state);
     simRenderReroute(state);
+    simApplyActiveRoute(state);
     simRenderStatus(state);
 }
 
@@ -337,6 +343,42 @@ function simFollowTo(state) {
     simSelfPanning = true;
     map.panTo([state.lat, state.lon], { animate: false });
     simSelfPanning = false;
+}
+
+// Shows only the route that was live at this moment. The layers people had
+// toggled on are remembered so stopping the simulation puts the map back.
+function simApplyActiveRoute(state) {
+    if (simRouteLayerNames.length === 0) return;
+    let active = null;
+    simRouteEpochs.forEach((e) => { if (e.t <= state.t) active = e.layer; });
+    if (active === simRouteHiddenFor) return;
+
+    if (simRouteSavedActive === null) {
+        simRouteSavedActive = simRouteLayerNames.filter((n) => activeGroups.has(n));
+    }
+    simRouteHiddenFor = active;
+    simRouteLayerNames.forEach((name) => {
+        const group = featureGroups[name];
+        if (!group) return;
+        const show = name === active;
+        if (show && !map.hasLayer(group)) { map.addLayer(group); activeGroups.add(name); }
+        if (!show && map.hasLayer(group)) { map.removeLayer(group); activeGroups.delete(name); }
+    });
+    renderLayerControls();
+}
+
+function simRestoreRoutes() {
+    if (simRouteSavedActive === null) return;
+    simRouteLayerNames.forEach((name) => {
+        const group = featureGroups[name];
+        if (!group) return;
+        const show = simRouteSavedActive.includes(name);
+        if (show && !map.hasLayer(group)) { map.addLayer(group); activeGroups.add(name); }
+        if (!show && map.hasLayer(group)) { map.removeLayer(group); activeGroups.delete(name); }
+    });
+    simRouteSavedActive = null;
+    simRouteHiddenFor = null;
+    renderLayerControls();
 }
 
 function simRenderStatus(state) {
@@ -390,6 +432,9 @@ function resetSimulationForNewData() {
     closeGpGuidanceCard();
     document.getElementById('simAlerts')?.classList.add('hidden');
     document.getElementById('simRerouteToast')?.classList.add('hidden');
+    simRestoreRoutes();
+    simRouteEpochs = [];
+    simRouteLayerNames = [];
     simSyncButtons();
 }
 
@@ -421,6 +466,7 @@ function simStop() {
     document.getElementById('simAlerts')?.classList.add('hidden');
     document.getElementById('simRerouteToast')?.classList.add('hidden');
     simFiredRerouteIds = new Set();
+    simRestoreRoutes();
     simSyncButtons();
 }
 

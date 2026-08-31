@@ -12,6 +12,18 @@
 // that moment is outside a section.
 
 const SDI_BLOCK_HUD_DIR = '/static/img/hud/';
+
+// One column on the map holding the HUD, the guidance card and the simulation
+// alerts. They used to be positioned independently and ended up scattered.
+function naviStack() {
+    let el = document.getElementById('naviStack');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'naviStack';
+        (document.getElementById('map') || document.body).appendChild(el);
+    }
+    return el;
+}
 // A section sample is only meaningful for a moment near it; beyond this the
 // drive has left the section (the log stops sampling once outside).
 const SDI_BLOCK_HUD_MAX_AGE_MS = 5000;
@@ -63,7 +75,7 @@ function ensureSdiBlockHud() {
                 <span data-role="dist">–</span>
             </div>
         </div>`;
-    (document.getElementById('map') || document.body).appendChild(el);
+    naviStack().appendChild(el);
     sdiBlockHudEl = el;
     return el;
 }
