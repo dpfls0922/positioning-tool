@@ -502,6 +502,11 @@ function simRenderStatus(state) {
     chips.classList.toggle('hidden', parts.length === 0);
 }
 
+// requestAnimationFrame stops in a hidden tab, so the first frame after coming
+// back reports the whole time away. Clamping keeps that from teleporting the
+// avatar down the route; playback just resumes where it paused.
+const SIM_MAX_FRAME_MS = 250;
+
 function simFrame(now) {
     if (!simRunning) return;
     const rawDelta = simLastFrameAt ? (now - simLastFrameAt) : 0;
