@@ -21,7 +21,6 @@ from backend.positioning_tool.service.kakao_local_service import (
 from backend.positioning_tool.service.place_search_service import (
     PlaceApiKeyMissingError,
     PlaceSearchService,
-    ReviewSourceUnavailableError,
 )
 
 
@@ -342,33 +341,6 @@ def create_log_controller() -> Blueprint:
             )
             return jsonify({"ok": True, **result})
         except PlaceApiKeyMissingError as ex:
-            return jsonify({"ok": False, "error": str(ex), "reason": "no_api_key"}), 503
-        except ValueError as ex:
-            return jsonify({"ok": False, "error": str(ex)}), 400
-        except Exception as ex:
-            return _place_api_error_response(ex)
-
-    @bp.get("/api/place/reviews")
-    def place_reviews_api():
-        try:
-            result = PlaceSearchService.search_reviews(
-                request.args.get("name"),
-                address=request.args.get("address", ""),
-                display=request.args.get("display", 10),
-            )
-            return jsonify({"ok": True, **result})
-        except ReviewSourceUnavailableError as ex:
-            return jsonify({"ok": False, "error": str(ex), "reason": "no_review_source"}), 503
-        except ValueError as ex:
-            return jsonify({"ok": False, "error": str(ex)}), 400
-        except Exception as ex:
-            return _place_api_error_response(ex)
-
-    def _kakao_local_call(handler):
-        """카카오 로컬 API 라우트들의 공통 예외 처리."""
-        try:
-            return jsonify({"ok": True, **handler()})
-        except KakaoRestKeyMissingError as ex:
             return jsonify({"ok": False, "error": str(ex), "reason": "no_api_key"}), 503
         except ValueError as ex:
             return jsonify({"ok": False, "error": str(ex)}), 400

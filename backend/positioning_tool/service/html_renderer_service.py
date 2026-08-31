@@ -61,15 +61,26 @@ def render_html(markers_data=None, lines_data=None):
                         <button id="roadInspectModeButton" class="interaction-mode-btn" type="button">Road 클릭</button>
                     </div>
                 </div>
-                <div id="sidebar-result-header">
-                    <span id="sidebar-title">검색 결과</span>
+                <div id="sidebar-tabs">
+                    <button class="sidebar-tab active" type="button" data-sidebar-tab="results">
+                        결과<span class="sidebar-tab-count" id="resultsTabCount"></span>
+                    </button>
+                    <button class="sidebar-tab" type="button" data-sidebar-tab="layers">
+                        레이어<span class="sidebar-tab-count" id="layersTabCount"></span>
+                    </button>
                     <button id="clearResultsButton" type="button" title="검색 결과 지우기">지우기</button>
                 </div>
-                <div id="sidebar-filter">
-                    <div class="filter-title">레이어 관리</div>
-                    <div id="layerControlList"></div>
+                <div id="sidebar-pane-results" class="sidebar-pane">
+                    <div id="sidebar-result-header">
+                        <span id="sidebar-title">검색 결과</span>
+                    </div>
+                    <div id="infoPanel"></div>
                 </div>
-                <div id="infoPanel"></div>
+                <div id="sidebar-pane-layers" class="sidebar-pane hidden">
+                    <div id="sidebar-filter">
+                        <div id="layerControlList"></div>
+                    </div>
+                </div>
                 <button id="btnCloseSidebar" title="접기/펼치기">◀</button>
             </div>
             <div id="main-content">

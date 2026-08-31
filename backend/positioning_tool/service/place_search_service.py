@@ -7,9 +7,8 @@
   2) 네이버 검색 API '지역' : NAVER_API_HUB_KEY_ID / NAVER_API_HUB_KEY (NAVER API HUB)
      또는 NAVER_CLIENT_ID / NAVER_CLIENT_SECRET (개발자센터, 2027-06-30 까지 유예)
 
-리뷰는 네이버 검색 API '블로그' 로만 가져올 수 있다. 카카오에는 리뷰 API 가 없고,
-네이버 플레이스의 방문자 리뷰/별점도 공식 API 가 없다(내부 엔드포인트는 봇 차단).
-그래서 네이버 키가 없으면 리뷰 대신 지도 서비스의 후기 페이지 링크를 돌려준다.
+리뷰는 다루지 않는다. 카카오에는 리뷰 API 가 없고, 네이버 플레이스의 방문자
+리뷰/별점도 공식 API 가 없다(내부 엔드포인트는 봇 차단).
 """
 
 import html
@@ -23,9 +22,7 @@ from urllib import request as urllib_request
 
 KAKAO_KEYWORD_ENDPOINT = "https://dapi.kakao.com/v2/local/search/keyword.json"
 NAVER_HUB_LOCAL_ENDPOINT = "https://naverapihub.apigw.ntruss.com/search/v1/local"
-NAVER_HUB_BLOG_ENDPOINT = "https://naverapihub.apigw.ntruss.com/search/v1/blog"
 NAVER_LEGACY_LOCAL_ENDPOINT = "https://openapi.naver.com/v1/search/local.json"
-NAVER_LEGACY_BLOG_ENDPOINT = "https://openapi.naver.com/v1/search/blog.json"
 
 NAVER_PLACE_LINK_BASE = "https://map.naver.com/p/search/"
 
@@ -38,10 +35,6 @@ _cache = {}
 
 class PlaceApiKeyMissingError(Exception):
     """장소 검색에 쓸 API 키가 하나도 설정되지 않은 경우."""
-
-
-class ReviewSourceUnavailableError(Exception):
-    """리뷰를 가져올 네이버 검색 API 키가 없는 경우."""
 
 
 def _ssl_context():
@@ -149,13 +142,6 @@ def _naver_place_link(name, address):
     return NAVER_PLACE_LINK_BASE + urllib_parse.quote(f"{name} {address}".strip())
 
 
-def _locality_from_address(address):
-    """리뷰 검색 정확도를 위해 주소에서 '구/동' 수준 키워드를 뽑는다."""
-    tokens = (address or "").split()
-    picked = [t for t in tokens if t.endswith(("구", "동", "읍", "면", "시"))]
-    return picked[-1] if picked else ""
-
-
 def _normalize_kakao_place(item):
     name = _clean_text(item.get("place_name"))
     address = _clean_text(item.get("address_name"))
@@ -190,22 +176,6 @@ def _normalize_naver_place(item):
         "lon": _naver_to_degrees(item.get("mapx")),
         "place_url": _naver_place_link(name, road_address or address),
         "naver_place_url": _naver_place_link(name, road_address or address),
-    }
-
-
-def _normalize_review(item):
-    raw_date = _clean_text(item.get("postdate"))
-    if len(raw_date) == 8:
-        posted_at = f"{raw_date[0:4]}.{raw_date[4:6]}.{raw_date[6:8]}"
-    else:
-        posted_at = raw_date
-    return {
-        "title": _clean_text(item.get("title")),
-        "snippet": _clean_text(item.get("description")),
-        "author": _clean_text(item.get("bloggername")),
-        "author_link": _clean_text(item.get("bloggerlink")),
-        "posted_at": posted_at,
-        "link": _clean_text(item.get("link")),
     }
 
 
@@ -250,39 +220,5 @@ class PlaceSearchService:
             places = [_normalize_naver_place(item) for item in (payload.get("items") or [])]
 
         result = {"provider": provider, "places": places}
-        _cache_put(cache_key, result)
-        return result
-
-    @staticmethod
-    def search_reviews(place_name, address="", display=10):
-        name = (place_name or "").strip()
-        if not name:
-            raise ValueError("리뷰를 조회할 상호명이 없습니다.")
-
-        mode, headers = _naver_auth()
-        if headers is None:
-            raise ReviewSourceUnavailableError(
-                "리뷰를 가져올 수 있는 API 키가 없습니다. 카카오에는 리뷰 API 가 없어서, "
-                "블로그 리뷰는 네이버 검색 API 키(NAVER_API_HUB_KEY_ID / NAVER_API_HUB_KEY)가 "
-                "있을 때만 표시됩니다. 그때까지는 아래 지도 링크에서 후기를 확인하세요."
-            )
-
-        count = max(1, min(int(display or 10), 20))
-        locality = _locality_from_address(address)
-        keyword = " ".join(part for part in (name, locality, "리뷰") if part)
-
-        cache_key = ("review", keyword, count)
-        cached = _cache_get(cache_key)
-        if cached is not None:
-            return cached
-
-        endpoint = NAVER_HUB_BLOG_ENDPOINT if mode == "hub" else NAVER_LEGACY_BLOG_ENDPOINT
-        payload = _get_json(endpoint, {"query": keyword, "display": count, "sort": "sim"}, headers)
-        reviews = [_normalize_review(item) for item in (payload.get("items") or [])]
-        result = {
-            "query": keyword,
-            "total": payload.get("total", len(reviews)),
-            "reviews": reviews,
-        }
         _cache_put(cache_key, result)
         return result

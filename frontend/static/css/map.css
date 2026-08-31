@@ -169,13 +169,11 @@ html, body {
 }
 
 #sidebar-filter {
-    padding: 10px 12px;
-    border-bottom: 1px solid #3a3f46;
+    padding: 8px 10px;
     background: var(--surface-soft);
-    flex: 0 1 auto;
-    min-height: 180px;
-    max-height: 40vh;
-    overflow: auto;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
 }
 
 .filter-title {
@@ -287,10 +285,9 @@ html, body {
 }
 
 #infoPanel {
-    flex: 1 1 240px;
-    min-height: 200px;
-    max-height: 40vh;
-    overflow: auto;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
     padding: 8px;
     background: #23262b;
 }
@@ -1487,7 +1484,7 @@ html, body {
     color: #cbd5e1;
 }
 
-.place-review-error {
+.place-error {
     padding: 10px;
     font-size: 11px;
     color: #fca5a5;
@@ -1605,78 +1602,6 @@ html, body {
 
 .place-btn-link {
     color: #86efac;
-}
-
-.place-review-box {
-    display: none;
-}
-
-.place-review-box.open {
-    display: block;
-    margin-top: 8px;
-    border-top: 1px solid #3a3f46;
-    padding-top: 6px;
-}
-
-.place-review-head {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    gap: 6px;
-    font-size: 10px;
-    color: #a5adb8;
-    margin-bottom: 5px;
-}
-
-.place-review-head a {
-    color: #86efac;
-    text-decoration: none;
-    white-space: nowrap;
-}
-
-.place-review-list {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-    max-height: 260px;
-    overflow-y: auto;
-}
-
-.place-review-item {
-    display: block;
-    padding: 6px 7px;
-    background: #1f2329;
-    border: 1px solid #363c45;
-    border-radius: 4px;
-    text-decoration: none;
-}
-
-.place-review-item:hover {
-    border-color: #03c75a;
-}
-
-.place-review-title {
-    font-size: 11px;
-    font-weight: 600;
-    color: #dbe4f0;
-    line-height: 1.35;
-}
-
-.place-review-snippet {
-    font-size: 10px;
-    color: #a5adb8;
-    line-height: 1.4;
-    margin-top: 3px;
-    display: -webkit-box;
-    -webkit-line-clamp: 3;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-}
-
-.place-review-meta {
-    font-size: 9px;
-    color: #7e8794;
-    margin-top: 4px;
 }
 
 .place-search-pin-wrap {
@@ -2505,7 +2430,7 @@ html, body {
     margin-top: 6px;
 }
 
-.kakao-address-popup-btn {
+.popup-address-btn {
     padding: 4px 8px;
     font-size: 11px;
     font-weight: 600;
@@ -2516,11 +2441,11 @@ html, body {
     cursor: pointer;
 }
 
-.kakao-address-popup-btn:hover:not(:disabled) {
+.popup-address-btn:hover:not(:disabled) {
     background: #7dd3fc;
 }
 
-.kakao-address-popup-btn:disabled {
+.popup-address-btn:disabled {
     opacity: .6;
     cursor: progress;
 }
@@ -2939,81 +2864,6 @@ html, body {
 /* 구간단속 HUD 아래에 쌓이도록 top 을 맞춘다. */
 .sim-alerts {
     position: absolute;
-    top: 14px;
-    left: 50%;
-    transform: translateX(-50%);
-    z-index: 1090;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    pointer-events: none;
-}
-.sim-alerts.hidden { display: none; }
-
-.sim-alert {
-    display: flex;
-    align-items: center;
-    gap: 9px;
-    min-width: 230px;
-    padding: 7px 12px;
-    background: rgba(15, 23, 42, 0.92);
-    border: 1px solid rgba(148, 163, 184, 0.3);
-    border-radius: 10px;
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
-}
-/* 로그상 선택되지 않은 SDI 후보 — 지도 마커와 같은 규칙으로 흐리게. */
-.sim-alert.muted { opacity: 0.55; }
-.sim-alert-icon { display: flex; align-items: center; }
-.sim-alert-icon img { display: block; }
-.sim-alert-text { flex: 1; min-width: 0; }
-.sim-alert-name {
-    font-size: 12px;
-    font-weight: 700;
-    color: #f1f5f9;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-.sim-alert-sub {
-    font-size: 10px;
-    color: #94a3b8;
-    margin-top: 1px;
-}
-.sim-alert-dist {
-    font-size: 15px;
-    font-weight: 800;
-    color: #f8fafc;
-    white-space: nowrap;
-}
-
-.sim-reroute-toast {
-    position: absolute;
-    top: 78px;
-    right: 16px;
-    z-index: 1095;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 12px;
-    background: rgba(13, 148, 136, 0.95);
-    color: #f0fdfa;
-    border-radius: 10px;
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
-    font-size: 12px;
-    font-weight: 700;
-    pointer-events: none;
-}
-.sim-reroute-toast.hidden { display: none; }
-.sim-reroute-id {
-    font-size: 10px;
-    font-weight: 600;
-    opacity: 0.8;
-}
-
-/* ===== 모의주행 중 안내 표시 (SDI / C2X / 재탐색) ===== */
-/* 구간단속 HUD 아래에 쌓이도록 top 을 맞춘다. */
-.sim-alerts {
-    position: absolute;
     top: 14px;   /* simStackBelowHud() 가 HUD 높이에 맞춰 갱신 */
     left: 50%;
     transform: translateX(-50%);
@@ -3083,4 +2933,179 @@ html, body {
     font-size: 10px;
     font-weight: 600;
     opacity: 0.8;
+}
+
+/* ===================== 사이드바 탭 (결과 / 레이어) ===================== */
+
+#sidebar-tabs {
+    display: flex;
+    align-items: stretch;
+    gap: 2px;
+    flex: 0 0 auto;
+    padding: 6px 8px 0;
+    background: var(--surface-soft);
+    border-bottom: 1px solid #3a3f46;
+}
+
+.sidebar-tab {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 6px 12px;
+    font-size: var(--fs-body);
+    font-weight: 600;
+    color: #94a3b8;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+}
+
+.sidebar-tab:hover {
+    color: #e2e8f0;
+}
+
+.sidebar-tab.active {
+    color: #ffffff;
+    border-bottom-color: #7aa2ff;
+}
+
+.sidebar-tab-count:not(:empty) {
+    padding: 0 5px;
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 15px;
+    border-radius: 999px;
+    background: #3a4150;
+    color: #cbd5e1;
+    font-variant-numeric: tabular-nums;
+}
+
+.sidebar-tab.active .sidebar-tab-count:not(:empty) {
+    background: #1e3a8a;
+    color: #bfdbfe;
+}
+
+#sidebar-tabs #clearResultsButton {
+    margin: 0 0 4px auto;
+    align-self: center;
+}
+
+#sidebar-tabs #clearResultsButton.hidden {
+    display: none;
+}
+
+.sidebar-pane {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+.sidebar-pane.hidden {
+    display: none;
+}
+
+#sidebar-result-header {
+    flex: 0 0 auto;
+}
+
+/* ===================== 마커 팝업 주소 결과 ===================== */
+
+.popup-address-wrap {
+    margin-top: 6px;
+}
+
+.popup-address-btn {
+    padding: 3px 9px;
+    font-size: var(--fs-meta);
+    font-weight: 600;
+    color: #0c4a6e;
+    background: #e0f2fe;
+    border: 1px solid #7dd3fc;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.popup-address-btn:hover:not(:disabled) {
+    background: #bae6fd;
+    border-color: #0ea5e9;
+}
+
+.popup-address-btn:disabled {
+    opacity: .55;
+    cursor: progress;
+}
+
+.popup-address-result:not(:empty) {
+    margin-top: 5px;
+    padding: 5px 7px;
+    background: #f1f5f9;
+    border-left: 2px solid #0ea5e9;
+    border-radius: 3px;
+}
+
+.popup-address-main {
+    font-size: var(--fs-body);
+    font-weight: 600;
+    line-height: var(--lh-tight);
+    color: #0f172a;
+}
+
+.popup-address-sub {
+    margin-top: 1px;
+    font-size: var(--fs-meta);
+    color: #64748b;
+}
+
+.popup-address-loading,
+.popup-address-empty {
+    font-size: var(--fs-meta);
+    color: #64748b;
+}
+
+.popup-address-error {
+    font-size: var(--fs-meta);
+    line-height: var(--lh-body);
+    color: #b91c1c;
+}
+
+/* ===================== 검색 결과 카드 마무리 ===================== */
+
+#infoPanel:empty::after {
+    content: '검색하면 결과가 여기에 표시됩니다.';
+    display: block;
+    padding: 18px 12px;
+    font-size: var(--fs-body);
+    color: #6b7280;
+    text-align: center;
+}
+
+.info-item {
+    cursor: pointer;
+}
+
+.info-item:active {
+    background: #303640;
+}
+
+/* 결과 카드의 값이 길어도 카드 폭을 밀지 않게 한다. */
+.info-row span:last-child {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.place-card {
+    padding: 8px 9px;
+}
+
+.place-card-actions {
+    margin-top: 6px;
+}
+
+.place-error {
+    padding: 10px;
+    font-size: var(--fs-body);
+    line-height: var(--lh-body);
+    color: #fca5a5;
 }

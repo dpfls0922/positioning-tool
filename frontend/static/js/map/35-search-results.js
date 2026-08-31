@@ -1,3 +1,46 @@
+/* ===================== 사이드바 탭 (결과 / 레이어) ===================== */
+/* 결과 패널과 레이어 관리가 세로로 나뉘어 둘 다 좁았다. 탭으로 묶어
+   한 번에 하나만 전체 높이를 쓰게 하고, 새 검색 결과가 오면 결과 탭으로
+   자동 전환한다. */
+
+function setSidebarTab(name) {
+    document.querySelectorAll('.sidebar-tab').forEach((tab) => {
+        tab.classList.toggle('active', tab.dataset.sidebarTab === name);
+    });
+    document.getElementById('sidebar-pane-results')?.classList.toggle('hidden', name !== 'results');
+    document.getElementById('sidebar-pane-layers')?.classList.toggle('hidden', name !== 'layers');
+    const clearBtn = document.getElementById('clearResultsButton');
+    if (clearBtn) clearBtn.classList.toggle('hidden', name !== 'results');
+    // 레이어 탭으로 넘어오면 접혀 있던 목록의 폭이 바뀌므로 지도 크기를 다시 계산한다.
+    requestAnimationFrame(() => map.invalidateSize());
+}
+
+function activeSidebarTab() {
+    return document.querySelector('.sidebar-tab.active')?.dataset.sidebarTab || 'results';
+}
+
+/** 탭 라벨의 개수 배지를 갱신한다. */
+function updateSidebarTabCounts() {
+    const infoPanel = document.getElementById('infoPanel');
+    const resultCount = infoPanel ? infoPanel.querySelectorAll('.info-item, .place-card').length : 0;
+    const resultsBadge = document.getElementById('resultsTabCount');
+    if (resultsBadge) resultsBadge.textContent = resultCount > 0 ? String(resultCount) : '';
+
+    const layersBadge = document.getElementById('layersTabCount');
+    if (layersBadge) {
+        const activeCount = typeof activeGroups !== 'undefined' ? activeGroups.size : 0;
+        layersBadge.textContent = activeCount > 0 ? String(activeCount) : '';
+    }
+}
+
+function bindSidebarTabs() {
+    document.querySelectorAll('.sidebar-tab').forEach((tab) => {
+        tab.addEventListener('click', () => setSidebarTab(tab.dataset.sidebarTab));
+    });
+    setSidebarTab('results');
+    updateSidebarTabCounts();
+}
+
 /* ===================== 검색 결과 지우기 ===================== */
 /* 사이드바 결과 패널과 지도에 남은 검색 흔적(하이라이트/장소 핀/선택 상태)을
    한 번에 정리한다. 레이어 표시 상태는 건드리지 않는다. */
@@ -28,6 +71,7 @@ function clearSearchResults() {
     if (typeof clearRouteInfoSelection === 'function') clearRouteInfoSelection();
     map.closePopup();
     updateClearResultsButton();
+    updateSidebarTabCounts();
 }
 
 /** 지울 것이 없으면 버튼을 흐리게 둔다. */
@@ -48,8 +92,15 @@ function bindClearResultsButton() {
     // 검색 핸들러들이 infoPanel 을 직접 채우므로, 변화를 관찰해 버튼 상태를 맞춘다.
     const infoPanel = document.getElementById('infoPanel');
     if (infoPanel && typeof MutationObserver !== 'undefined') {
-        new MutationObserver(updateClearResultsButton).observe(infoPanel, { childList: true });
+        new MutationObserver(() => {
+            updateClearResultsButton();
+            updateSidebarTabCounts();
+            // 검색으로 결과가 새로 채워졌으면 결과 탭을 보여준다.
+            if (infoPanel.children.length > 0 && activeSidebarTab() !== 'results') setSidebarTab('results');
+        }).observe(infoPanel, { childList: true });
     }
 }
 
+bindSidebarTabs();
 bindClearResultsButton();
+map.on('overlayadd overlayremove', updateSidebarTabCounts);

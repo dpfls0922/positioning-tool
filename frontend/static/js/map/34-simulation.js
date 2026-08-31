@@ -307,16 +307,36 @@ function simApply(state) {
     simEnsureAvatar()
         .setLatLng([state.lat, state.lon])
         .setIcon(simAvatarIcon(state.heading));
-    if (simFollow) {
-        simSelfPanning = true;
-        map.panTo([state.lat, state.lon], { animate: false });
-        simSelfPanning = false;
-    }
+    if (simFollow) simFollowTo(state);
     refreshSdiBlockHud(state.t);
     simUpdateGuideCard(state);
     simRenderAlerts(state);
     simRenderReroute(state);
     simRenderStatus(state);
+}
+
+// Panning every frame fires Leaflet's moveend 60 times a second, and moveend is
+// wired to the marker culling (100k+ markers) and the road viewport query — that
+// storm is what made the map judder. The camera instead holds still until the
+// avatar drifts out of a dead zone near the centre, which is also how a
+// navigation map behaves.
+const SIM_FOLLOW_DEADZONE_PX = 70;
+const SIM_FOLLOW_MIN_INTERVAL_MS = 120;
+
+let simLastPanAt = 0;
+
+function simFollowTo(state) {
+    const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    if (now - simLastPanAt < SIM_FOLLOW_MIN_INTERVAL_MS) return;
+
+    const target = map.latLngToContainerPoint([state.lat, state.lon]);
+    const centre = map.latLngToContainerPoint(map.getCenter());
+    if (target.distanceTo(centre) < SIM_FOLLOW_DEADZONE_PX) return;
+
+    simLastPanAt = now;
+    simSelfPanning = true;
+    map.panTo([state.lat, state.lon], { animate: false });
+    simSelfPanning = false;
 }
 
 function simRenderStatus(state) {
