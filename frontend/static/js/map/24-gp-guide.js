@@ -263,13 +263,15 @@ function openGpGuidanceCard(markerId) {
     const turnName = gpTurnCodeName(extra.turn_code) || gpTurnCodeLabel(extra.turn_code);
 
     const figure = image
-        ? `<img src="${TBT_ICON_DIR}${image}" width="72" height="72" style="display:block" alt="">`
-        : `<div style="width:72px;height:72px;display:flex;align-items:center;justify-content:center;
-             font-size:44px;line-height:1;color:#f8fafc">${glyph}</div>`;
+        ? `<img src="${TBT_ICON_DIR}${image}" width="52" height="52" style="display:block" alt="">`
+        : `<div style="width:52px;height:52px;display:flex;align-items:center;justify-content:center;
+             font-size:32px;line-height:1;color:#f8fafc">${glyph}</div>`;
 
-    const laneBubble = (gpType & GP_TYPE_TURN)
-        ? buildLaneBubbleHtml(extra)
-        : '<div style="color:#94a3b8;font-size:11px">차선 버블 없음 (GPTYPE_TURN 아님)</div>';
+    // 차로 지시가 실제로 해석되는 voice code 일 때만 버블을 넣는다.
+    // 색상 전용 코드는 '차로 지시 없음' 칩 하나만 그려서 카드에 군더더기였다.
+    const hasLaneLayout = (gpType & GP_TYPE_TURN)
+        && !!gpLaneLayoutFromVoiceCode(extra.voice_code);
+    const laneBubble = hasLaneLayout ? buildLaneBubbleHtml(extra) : '';
 
     const el = document.createElement('div');
     el.className = 'gp-guidance-card';
@@ -290,7 +292,7 @@ function openGpGuidanceCard(markerId) {
                     </div>
                 </div>
             </div>
-            <div class="gp-guidance-lane">${laneBubble}</div>
+            ${laneBubble ? `<div class="gp-guidance-lane">${laneBubble}</div>` : ''}
             <div class="gp-guidance-meta">
                 <span>nLinkID ${extra.link_id ?? '-'}</span>
                 <span>linkIndex ${extra.link_index ?? '-'}</span>

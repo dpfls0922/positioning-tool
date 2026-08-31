@@ -23,7 +23,7 @@ function simAvatarHeight() {
     SIM_AVATAR_HEIGHT_BY_ZOOM.forEach(([z, h]) => { if (zoom >= z) height = h; });
     return height;
 }
-const SIM_SPEEDS = [1, 2, 3];
+const SIM_SPEEDS = [0.5, 1, 2, 3, 5, 10, 20];
 // A guide point counts as "coming up" within this distance ahead.
 const SIM_GUIDE_LOOKAHEAD_M = 120;
 // Navigation announces a camera well before a passing hazard, so the ranges
@@ -44,7 +44,6 @@ let simRouteHiddenFor = null;
 let simRouteSavedActive = null;
 let simParkingSpans = [];
 let simFeedbackPoints = [];
-let simHeadingUp = false;
 // 정차로 볼 속도 상한과, 그보다 오래 멈춰야 '정차'로 취급할 시간
 const SIM_STOP_SPEED_KMH = 2;
 const SIM_STOP_MIN_MS = 4000;
@@ -176,7 +175,6 @@ function simStateAt(timeMs) {
 }
 
 function simAvatarIcon(heading) {
-    const shown = simHeadingUp ? 0 : heading;
     const h = simAvatarHeight();
     const w = Math.round(h * 47 / 72);   // asset aspect ratio
     const box = Math.ceil(Math.hypot(w, h));   // room for the rotated image
@@ -185,7 +183,7 @@ function simAvatarIcon(heading) {
         iconSize: [box, box],
         iconAnchor: [box / 2, box / 2],
         html: `<div style="width:${box}px;height:${box}px;display:flex;align-items:center;justify-content:center;
-                 transform:rotate(${shown}deg);transform-origin:center">
+                 transform:rotate(${heading}deg);transform-origin:center">
                  <img src="${SIM_AVATAR_ICON}" width="${w}" height="${h}"
                       style="display:block;filter:drop-shadow(0 2px 4px rgba(0,0,0,.45))" alt=""></div>`
     });
@@ -297,6 +295,30 @@ function simSkipStop() {
     simApply(simStateAt(simTimeMs));
 }
 
+// 지도를 클릭해 그 지점에서 가장 가까운 VPM 샘플로 이동한다. 진행바로 시간을
+// 맞추는 것보다 '이 지점부터 보고 싶다'는 의도에 바로 대응한다.
+let simPickMode = false;
+
+function simSetPickMode(on) {
+    simPickMode = !!on;
+    const el = document.getElementById('map');
+    if (el) el.style.cursor = simPickMode ? 'crosshair' : '';
+    simSyncButtons();
+}
+
+function simSeekToLatLng(latlng) {
+    if (simTrack.length === 0) return;
+    let best = null;
+    let bestDist = Infinity;
+    simTrack.forEach((p) => {
+        const d = simMetresBetween({ lat: latlng.lat, lon: latlng.lng }, p);
+        if (d < bestDist) { bestDist = d; best = p; }
+    });
+    if (!best) return;
+    simSeekTo(best.t);
+    simSetPickMode(false);
+}
+
 function simSeekTo(timeMs) {
     if (simTrack.length === 0) return;
     const lo = simTrack[0].t;
@@ -318,11 +340,8 @@ function simRenderAlerts(state) {
     // 주차장 안에서는 실제 내비도 안내를 멈춘다. 지오메트리상 600m 안에 있다는
     // 이유로 지상 도로의 과속방지턱·스쿨존이 뜨는 것을 막는다.
     if (simInParkingLot(state.t)) {
-        el.innerHTML = `<div class="sim-alert muted">
-            <div class="sim-alert-icon"><i class="fa fa-product-hunt"></i></div>
-            <div class="sim-alert-text"><div class="sim-alert-name">주차장 주행 중</div>
-            <div class="sim-alert-sub">안내 없음</div></div></div>`;
-        el.classList.remove('hidden');
+        el.innerHTML = '';
+        el.classList.add('hidden');
         return;
     }
 
@@ -402,7 +421,6 @@ function simApply(state) {
     simRenderAlerts(state);
     simRenderReroute(state);
     simApplyActiveRoute(state);
-    simApplyHeadingUp(state);
     simRenderStatus(state);
 }
 
@@ -411,25 +429,30 @@ function simApply(state) {
 // storm is what made the map judder. The camera instead holds still until the
 // avatar drifts out of a dead zone near the centre, which is also how a
 // navigation map behaves.
-const SIM_FOLLOW_DEADZONE_PX = 70;
-const SIM_FOLLOW_MIN_INTERVAL_MS = 120;
+const SIM_FOLLOW_DEADZONE_PX = 40;
 
-let simLastPanAt = 0;
+let simPanInFlight = false;
 
 function simFollowTo(state) {
-    const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
-    if (now - simLastPanAt < SIM_FOLLOW_MIN_INTERVAL_MS) return;
+    // 진행 중인 팬이 끝나기 전에 또 팬을 걸면 이징이 서로 잘려 화면이 튄다.
+    if (simPanInFlight) return;
 
     const target = map.latLngToContainerPoint([state.lat, state.lon]);
     const centre = map.latLngToContainerPoint(map.getCenter());
     if (target.distanceTo(centre) < SIM_FOLLOW_DEADZONE_PX) return;
 
-    simLastPanAt = now;
+    simPanInFlight = true;
     simSelfPanning = true;
-    // 애니메이션 없이 옮기면 데드존을 벗어날 때마다 화면이 툭툭 끊긴다.
-    // 짧게 이징을 주면 moveend 는 팬 1회당 한 번만 나면서 움직임은 부드럽다.
-    map.panTo([state.lat, state.lon], { animate: true, duration: 0.45, easeLinearity: 0.4 });
-    setTimeout(() => { simSelfPanning = false; }, 500);
+    const done = () => {
+        if (!simPanInFlight) return;
+        simPanInFlight = false;
+        simSelfPanning = false;
+        map.off('moveend', done);
+    };
+    map.on('moveend', done);
+    map.panTo([state.lat, state.lon], { animate: true, duration: 0.8, easeLinearity: 0.2 });
+    // 애니메이션이 취소되어 moveend 가 오지 않는 경우를 위한 안전장치.
+    setTimeout(done, 1200);
 }
 
 // Shows only the route that was live at this moment. The layers people had
@@ -479,27 +502,78 @@ function simRenderStatus(state) {
     const bar = el.querySelector('[data-role="bar"]');
     if (bar) bar.style.width = `${total > 0 ? (done / total) * 100 : 0}%`;
 
-    // 정차 / 주차장 / 맵매칭 피드백은 지도 위가 아니라 여기 한 줄에 모은다.
-    const chips = document.getElementById('simChips');
-    if (!chips) return;
-    const parts = [];
+    simRenderStateStrip(state);
+}
+
+let simStateStripKey = null;
+
+function simEnsureStateStrip() {
+    let el = document.getElementById('simStateStrip');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'simStateStrip';
+        el.className = 'sim-state-strip hidden';
+        // 클릭 대상이 다시 만들어져도 살아남도록 컨테이너에 위임한다.
+        el.addEventListener('click', (e) => {
+            if (e.target.closest('[data-action="skip-stop"]')) simSkipStop();
+        });
+        naviStack().appendChild(el);
+    }
+    return el;
+}
+
+// 정차 / 주차장 / 맵매칭 피드백 상태를 안내 UI 와 같은 자리에 표시한다.
+//
+// 어떤 상태가 떠 있는지(구조)가 바뀔 때만 DOM 을 다시 만들고, 남은 초처럼 매
+// 프레임 변하는 값은 텍스트만 갈아 끼운다. 초가 바뀔 때마다 innerHTML 을 다시
+// 쓰면 '건너뛰기' 버튼이 mousedown 과 mouseup 사이에 파괴돼 클릭이 사라진다.
+function simRenderStateStrip(state) {
+    const el = simEnsureStateStrip();
     const stop = simCurrentStop(state.t);
-    if (stop) {
-        const left = Math.max(0, Math.round((stop.end - state.t) / 1000));
-        parts.push(`<button type="button" class="sim-chip sim-chip-stop" data-action="skip-stop">`
-            + `<i class="fa fa-pause-circle"></i> 정차 ${left}s · 건너뛰기</button>`);
-    }
-    if (simInParkingLot(state.t)) {
-        parts.push('<span class="sim-chip sim-chip-lot">주차장</span>');
-    }
+    const inLot = simInParkingLot(state.t);
     const fb = simRecentFeedback(state.t);
-    if (fb) {
-        const kind = /heading only/.test(fb.reason) ? 'heading 보정' : '위치 보정';
-        parts.push(`<span class="sim-chip sim-chip-fb" title="${escapeHtml(fb.reason)}">`
-            + `<i class="fa fa-magnet"></i> MM 피드백 · ${kind}</span>`);
+
+    const key = `${stop ? 'stop' : ''}|${inLot ? 'lot' : ''}|${fb ? 'fb' : ''}`;
+    if (key !== simStateStripKey) {
+        simStateStripKey = key;
+        const parts = [];
+        if (stop) {
+            parts.push('<div class="sim-state sim-state-stop">'
+                + '<div class="sim-state-icon"><i class="fa fa-pause"></i></div>'
+                + '<div class="sim-state-text"><div class="sim-state-name">정차 중</div>'
+                + '<div class="sim-state-sub">남은 <span data-role="stop-left">-</span>초</div></div>'
+                + '<button type="button" class="sim-state-btn" data-action="skip-stop">건너뛰기</button>'
+                + '</div>');
+        }
+        if (inLot) {
+            parts.push('<div class="sim-state sim-state-lot">'
+                + '<div class="sim-state-icon"><i class="fa fa-building"></i></div>'
+                + '<div class="sim-state-text"><div class="sim-state-name">주차장 주행 중</div>'
+                + '<div class="sim-state-sub">안내 없음</div></div></div>');
+        }
+        if (fb) {
+            parts.push('<div class="sim-state sim-state-fb">'
+                + '<div class="sim-state-icon"><i class="fa fa-magnet"></i></div>'
+                + '<div class="sim-state-text"><div class="sim-state-name">맵매칭 피드백</div>'
+                + '<div class="sim-state-sub" data-role="fb-kind"></div></div></div>');
+        }
+        el.innerHTML = parts.join('');
+        el.classList.toggle('hidden', parts.length === 0);
     }
-    chips.innerHTML = parts.join('');
-    chips.classList.toggle('hidden', parts.length === 0);
+
+    if (stop) {
+        const left = el.querySelector('[data-role="stop-left"]');
+        const secs = String(Math.max(0, Math.round((stop.end - state.t) / 1000)));
+        if (left && left.textContent !== secs) left.textContent = secs;
+    }
+    if (fb) {
+        const kindEl = el.querySelector('[data-role="fb-kind"]');
+        const kind = /heading only/.test(fb.reason) ? 'heading 보정' : '위치 보정';
+        if (kindEl && kindEl.textContent !== kind) {
+            kindEl.textContent = kind;
+            kindEl.title = fb.reason;
+        }
+    }
 }
 
 // requestAnimationFrame stops in a hidden tab, so the first frame after coming
@@ -541,6 +615,8 @@ function resetSimulationForNewData() {
     closeGpGuidanceCard();
     document.getElementById('simAlerts')?.classList.add('hidden');
     document.getElementById('simRerouteToast')?.classList.add('hidden');
+    document.getElementById('simStateStrip')?.classList.add('hidden');
+    simStateStripKey = null;
     simRestoreRoutes();
     simRouteEpochs = [];
     simRouteLayerNames = [];
@@ -584,31 +660,6 @@ function simSetSpeed(multiplier) {
     simSyncButtons();
 }
 
-// Leaflet has no rotation, so the map element itself is rotated and scaled up so
-// its corners still cover the viewport. The UI overlays live outside #map, and
-// the avatar is drawn unrotated because the map now carries the heading.
-function simApplyHeadingUp(state) {
-    const el = document.getElementById('map');
-    if (!el) return;
-    if (!simHeadingUp) {
-        el.style.transform = '';
-        el.classList.remove('map-heading-up');
-        return;
-    }
-    el.classList.add('map-heading-up');
-    el.style.transform = `scale(1.5) rotate(${-(state ? state.heading : 0)}deg)`;
-}
-
-function simToggleHeadingUp() {
-    simHeadingUp = !simHeadingUp;
-    simApplyHeadingUp(simTrack.length ? simStateAt(simTimeMs) : null);
-    if (simAvatarMarker && map.hasLayer(simAvatarMarker)) {
-        simAvatarMarker.setIcon(simAvatarIcon(simLastHeading));
-    }
-    simSyncButtons();
-    map.invalidateSize();
-}
-
 function simSyncButtons() {
     const playBtn = document.getElementById('simPlayBtn');
     if (playBtn) {
@@ -620,8 +671,8 @@ function simSyncButtons() {
     });
     const followBtn = document.getElementById('simFollowBtn');
     if (followBtn) followBtn.classList.toggle('active', simFollow);
-    const rotBtn = document.getElementById('simHeadingUpBtn');
-    if (rotBtn) rotBtn.classList.toggle('active', simHeadingUp);
+    const pickBtn = document.getElementById('simPickBtn');
+    if (pickBtn) pickBtn.classList.toggle('active', simPickMode);
 }
 
 let simLastHeading = 0;
@@ -632,6 +683,9 @@ let simLastHeading = 0;
 let simSelfPanning = false;
 
 function simBindMapGestures() {
+    map.on('click', (e) => {
+        if (simPickMode) simSeekToLatLng(e.latlng);
+    });
     map.on('dragstart', () => {
         if (simSelfPanning) return;
         if (simFollow) {
@@ -660,11 +714,8 @@ function initSimulation() {
     document.querySelectorAll('.sim-speed-btn').forEach((btn) => {
         btn.addEventListener('click', () => simSetSpeed(Number(btn.dataset.speed)));
     });
-    document.getElementById('simHeadingUpBtn')?.addEventListener('click', simToggleHeadingUp);
     document.getElementById('simBlockSeekBtn')?.addEventListener('click', simSeekToBlockSection);
-    document.getElementById('simChips')?.addEventListener('click', (e) => {
-        if (e.target.closest('[data-action="skip-stop"]')) simSkipStop();
-    });
+    document.getElementById('simPickBtn')?.addEventListener('click', () => simSetPickMode(!simPickMode));
 
     // 진행바를 눌러/끌어서 원하는 지점으로 이동
     const track = document.getElementById('simProgress');

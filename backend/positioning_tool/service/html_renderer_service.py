@@ -730,20 +730,23 @@ def add_simulation_panel():
                 <button id="simPlayBtn" class="sim-btn" type="button" title="재생"><i class="fa fa-play"></i></button>
                 <button id="simStopBtn" class="sim-btn" type="button" title="정지"><i class="fa fa-stop"></i></button>
                 <div class="sim-speed-group">
+                    <button class="sim-speed-btn" data-speed="0.5" type="button">0.5x</button>
                     <button class="sim-speed-btn active" data-speed="1" type="button">1x</button>
                     <button class="sim-speed-btn" data-speed="2" type="button">2x</button>
                     <button class="sim-speed-btn" data-speed="3" type="button">3x</button>
+                    <button class="sim-speed-btn" data-speed="5" type="button">5x</button>
+                    <button class="sim-speed-btn" data-speed="10" type="button">10x</button>
+                    <button class="sim-speed-btn" data-speed="20" type="button">20x</button>
                 </div>
                 <button id="simFollowBtn" class="sim-btn active" type="button" title="지도 따라가기"><i class="fa fa-crosshairs"></i></button>
-                <button id="simHeadingUpBtn" class="sim-btn" type="button" title="헤딩 방향으로 지도 회전"><i class="fa fa-location-arrow"></i></button>
                 <button id="simBlockSeekBtn" class="sim-btn" type="button" title="구간단속 구간으로 이동"><i class="fa fa-tachometer"></i></button>
+                <button id="simPickBtn" class="sim-btn" type="button" title="지도에서 시작 위치 선택"><i class="fa fa-map-marker"></i></button>
             </div>
             <div id="simStatus" class="sim-status">
                 <span data-role="clock">--:--:--</span>
                 <span data-role="speed">0 km/h</span>
                 <div id="simProgress" class="sim-progress" title="눌러서 이동"><div data-role="bar"></div></div>
             </div>
-            <div id="simChips" class="sim-chips hidden"></div>
         </div>
     </div>
     """
