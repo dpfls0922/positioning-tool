@@ -3113,3 +3113,141 @@ html, body {
     transform-origin: 50% 50%;
     transition: transform 260ms ease-out;
 }
+
+/* ===================== 우측 툴바 · 지도 컨트롤 테마 통일 =====================
+   사이드바와 떠 있는 패널은 다크인데 우측 아이콘과 지도 컨트롤만 흰 카드라
+   화면 안에서 두 가지 테마가 섞여 보였다. 사이드바와 같은 토큰으로 맞춘다. */
+
+.tool-stack {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, .35);
+}
+
+.tool-btn {
+    width: 34px;
+    height: 34px;
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    box-shadow: none;
+    transition: background .12s ease, color .12s ease;
+}
+
+.tool-stack .tool-btn + .tool-btn {
+    border-top: 1px solid var(--border);
+}
+
+.tool-btn:hover:not(:disabled) {
+    background: var(--accent-soft);
+    color: #ffffff;
+}
+
+.tool-btn.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #16233d;
+}
+
+.tool-btn:disabled {
+    opacity: .35;
+    cursor: not-allowed;
+}
+
+.tool-btn i {
+    font-size: 13px;
+}
+
+/* Leaflet 기본 컨트롤(레이어 토글 등)도 같은 톤으로 */
+.leaflet-touch .leaflet-bar,
+.leaflet-bar,
+.leaflet-control-layers {
+    border: 1px solid var(--border) !important;
+    border-radius: 8px !important;
+    background: var(--surface) !important;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, .35) !important;
+    color: var(--text);
+}
+
+.leaflet-bar a,
+.leaflet-bar a:hover,
+.leaflet-control-layers-toggle {
+    background-color: transparent;
+    border-bottom-color: var(--border);
+    color: var(--muted);
+}
+
+.leaflet-bar a:hover {
+    background-color: var(--accent-soft);
+    color: #ffffff;
+}
+
+.leaflet-control-layers-toggle {
+    filter: invert(88%) sepia(6%) saturate(220%) hue-rotate(185deg);
+}
+
+.leaflet-control-layers-expanded {
+    padding: 8px 10px;
+    font-size: var(--fs-body);
+    color: var(--text);
+}
+
+.leaflet-control-layers-expanded label {
+    color: var(--text);
+}
+
+.leaflet-control-attribution {
+    background: rgba(31, 34, 40, .82) !important;
+    color: var(--muted) !important;
+}
+
+.leaflet-control-attribution a {
+    color: var(--accent) !important;
+}
+
+/* 패널 강조색도 사이드바와 같은 파랑으로 통일(기존 주황 제거) */
+.floating-panel-resize-handle {
+    background:
+        linear-gradient(135deg, var(--muted) 0 2px, transparent 2px 5px, var(--muted) 5px 7px, transparent 7px 10px, var(--muted) 10px 12px, transparent 12px);
+}
+
+.floating-panel-resize-handle:hover {
+    background:
+        linear-gradient(135deg, var(--accent) 0 2px, transparent 2px 5px, var(--accent) 5px 7px, transparent 7px 10px, var(--accent) 10px 12px, transparent 12px);
+}
+
+.floating-panel-close:hover {
+    border-color: var(--accent);
+    color: #ffffff;
+}
+
+.kakao-tab.active {
+    border-bottom-color: var(--accent);
+}
+
+.skyview-toolbar select:focus {
+    outline: 1px solid var(--accent);
+}
+
+/* 팝업(밝은 배경) 안의 버튼도 같은 파랑 계열로 */
+.roadview-popup-btn {
+    color: #1e3a8a;
+    background: #dbeafe;
+    border-color: #93c5fd;
+}
+
+.roadview-popup-btn:hover {
+    background: #bfdbfe;
+    border-color: #60a5fa;
+}
+
+.gp-popup .gp-guidance-open {
+    color: #1e3a8a;
+    background: #dbeafe;
+    border-color: #93c5fd;
+}
+
+.gp-popup .gp-guidance-open:hover {
+    background: #bfdbfe;
+}
