@@ -3415,3 +3415,164 @@ html[data-theme="light"] .place-review-head {
     font-weight: 700;
 }
 .sim-btn-wide i { margin-right: 3px; }
+
+/* ===== 모의주행: 주행 중 마커 노출 (실차 내비 방식) =====
+   다가오면 나타나고, 지나가면 흐려진다. transform 은 아이콘 앵커를 건드리지
+   않도록 아이콘 안쪽 요소가 아니라 아이콘 자체에 걸고 origin 을 바닥에 둔다. */
+.leaflet-marker-icon.sim-marker-idle,
+.leaflet-marker-icon.sim-marker-live,
+.leaflet-marker-icon.sim-marker-focus,
+.leaflet-marker-icon.sim-marker-passed {
+    transition: opacity .35s ease, filter .35s ease;
+}
+
+.leaflet-marker-icon.sim-marker-idle {
+    opacity: 0.1;
+    filter: grayscale(1);
+}
+
+.leaflet-marker-icon.sim-marker-live {
+    opacity: 1;
+    filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.45));
+}
+
+/* 지금 다가가는 지점 — MBUX 의 접근 강조처럼 링이 한 번씩 퍼진다. */
+.leaflet-marker-icon.sim-marker-focus {
+    opacity: 1;
+    filter: drop-shadow(0 0 10px rgba(96, 165, 250, 0.9)) drop-shadow(0 2px 8px rgba(0, 0, 0, 0.5));
+}
+
+.leaflet-marker-icon.sim-marker-focus::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 46px;
+    height: 46px;
+    margin: -23px 0 0 -23px;
+    border-radius: 50%;
+    border: 2px solid rgba(96, 165, 250, 0.85);
+    animation: simMarkerPulse 1.4s ease-out infinite;
+    pointer-events: none;
+}
+
+@keyframes simMarkerPulse {
+    0%   { transform: scale(0.45); opacity: 0.9; }
+    100% { transform: scale(1.15); opacity: 0; }
+}
+
+.leaflet-marker-icon.sim-marker-passed {
+    opacity: 0.3;
+    filter: grayscale(0.7);
+}
+
+/* ===== 모의주행: 차로 안내 (Benz MBUX / BMW lane assistant 참고) =====
+   화면 하단 가운데 고정. 지도 회전(heading-up)과 무관하게 화면 기준으로 둔다. */
+.sim-lane-assist {
+    position: absolute;
+    bottom: 26px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1092;
+    min-width: 168px;
+    padding: 8px 12px 9px;
+    background: rgba(12, 18, 32, 0.9);
+    border: 1px solid rgba(148, 163, 184, 0.28);
+    border-radius: 12px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(6px);
+    pointer-events: none;
+    color: #f1f5f9;
+}
+
+.sim-lane-assist.hidden { display: none; }
+
+.sim-lane-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 6px;
+}
+
+.sim-lane-title {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: #94a3b8;
+}
+
+.sim-lane-dist {
+    font-size: 16px;
+    font-weight: 800;
+    color: #f8fafc;
+    font-variant-numeric: tabular-nums;
+}
+
+.sim-lane-strip {
+    display: flex;
+    gap: 3px;
+    justify-content: center;
+}
+
+/* 비활성 차로는 어둡게, 진행할 차로는 밝게 — 실차 lane assistant 의 대비. */
+.sim-lane-cell {
+    min-width: 26px;
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    background: rgba(148, 163, 184, 0.16);
+    color: rgba(226, 232, 240, 0.4);
+    font-size: 15px;
+    font-weight: 600;
+}
+
+.sim-lane-cell.lit {
+    --lane-accent: #60a5fa;
+    background: var(--lane-accent);
+    color: #ffffff;
+    font-weight: 800;
+    box-shadow: 0 0 12px -2px var(--lane-accent);
+}
+
+/* 로그로 알 수 없는 나머지 차로 */
+.sim-lane-cell.unknown {
+    min-width: 14px;
+    background: transparent;
+    color: rgba(148, 163, 184, 0.5);
+}
+
+.sim-lane-progress {
+    margin-top: 7px;
+    height: 3px;
+    border-radius: 2px;
+    background: rgba(148, 163, 184, 0.22);
+    overflow: hidden;
+}
+
+.sim-lane-progress > span {
+    display: block;
+    height: 100%;
+    border-radius: 2px;
+    background: #60a5fa;
+    transition: width .18s linear;
+}
+
+.sim-lane-sub {
+    margin-top: 5px;
+    font-size: 10px;
+    color: #94a3b8;
+    text-align: center;
+    white-space: nowrap;
+}
+
+.sim-lane-badge {
+    padding: 0 4px;
+    border-radius: 3px;
+    background: #7c3aed;
+    color: #fff;
+    font-size: 9px;
+}

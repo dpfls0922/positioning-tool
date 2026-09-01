@@ -46,6 +46,7 @@ let simParkingSpans = [];
 let simShadeTimeline = [];
 let simAutoSkipStops = false;
 let simFeedbackPoints = [];
+let simTrackCumM = [];
 // 정차로 볼 속도 상한과, 그보다 오래 멈춰야 '정차'로 취급할 시간
 const SIM_STOP_SPEED_KMH = 2;
 const SIM_STOP_MIN_MS = 4000;
@@ -82,7 +83,12 @@ function buildSimTrack() {
 
     simGuidePoints = (markersData || [])
         .filter((m) => m.extra?.gp_guide)
-        .map((m) => ({ id: m.id, lat: m.latitude, lon: m.longitude }));
+        .map((m) => ({
+            id: m.id, lat: m.latitude, lon: m.longitude,
+            turnCode: m.extra.turn_code,
+            gpType: Number(m.extra.gp_type) || 0,
+            voiceCode: m.extra.voice_code,
+        }));
 
     simSdiPoints = (markersData || [])
         .filter((m) => m.extra?.sdi_event)
@@ -128,6 +134,14 @@ function buildSimTrack() {
         .map((m) => ({ t: m.timestamp_ms, reason: m.extra.mm_feedback_reason || '' }));
 
     simFiredRerouteIds = new Set();
+    // 남은거리 표시용 누적 거리 (m). rows[i] 까지 달린 거리.
+    simTrackCumM = new Array(rows.length).fill(0);
+    for (let i = 1; i < rows.length; i++) {
+        simTrackCumM[i] = simTrackCumM[i - 1] + simMetresBetween(rows[i - 1], rows[i]);
+    }
+    buildSimLanePoints();
+    // 마커는 레이어가 다시 그려질 수 있으니 재생 시점에 다시 수집한다.
+    simMarkerTargets = [];
 
     // Which route layer is live at a given moment. Each Request starts a session,
     // so the active one is the newest request at or before that time; replaying a
@@ -441,6 +455,189 @@ function simRenderReroute(state) {
     }
 }
 
+// ===== 주행 중 마커 노출 (실차 내비 방식) ==================================
+// 실제 내비는 경로 위의 모든 안내지점을 처음부터 다 띄우지 않는다. 다가오면
+// 나타나서 커지고, 지나가면 흐려져 사라진다. 모의주행 중에는 같은 규칙으로
+// 지도 마커를 제어하고, 정지하면 원래대로 되돌린다.
+//   idle   : 아직 멀다 — 거의 안 보임
+//   live   : 안내 구간에 들어옴 — 제 색으로 보임
+//   focus  : 지금 다가가는 가장 가까운 것 — 링 강조
+//   passed : 막 지나갔다 — 흐려지며 빠짐
+const SIM_MARKER_REVEAL_M = 400;    // 이 거리 안으로 들어오면 나타난다
+const SIM_MARKER_FOCUS_M = 150;     // 이 거리 안이면 강조
+const SIM_MARKER_PASSED_M = 120;    // 지나친 뒤 이 거리까지는 '지나감'으로 남긴다
+const SIM_MARKER_TICK_MS = 180;     // 프레임마다 DOM 을 만지지 않도록 간격을 둔다
+
+// 제어 대상 레이어 — 경로별 하위 레이어( 'base ▸ Route Info N' )도 함께 잡는다.
+const SIM_MARKER_LAYER_BASES = [
+    GP_CROSS_IMAGE_LAYER,
+    GP_TURN_ONLY_LAYER,
+    GP_LANE_COLOR_LAYER,
+    GP_LANE_BUBBLE_LAYER,
+    'SDI Events',
+    'C2X Events',
+    'Tmap Incidents (MFS)',
+];
+
+let simMarkerTargets = [];
+let simMarkerTick = 0;
+let simMarkerStyled = false;
+
+function simIsControlledLayerName(name) {
+    if (typeof name !== 'string') return false;
+    const owner = routeChildLayerOwner(name);
+    const base = owner ? name.slice(0, name.length - owner.length - ROUTE_CHILD_SEPARATOR.length) : name;
+    return SIM_MARKER_LAYER_BASES.includes(base);
+}
+
+function simCollectMarkerTargets() {
+    simMarkerTargets = [];
+    Object.entries(featureGroups || {}).forEach(([name, group]) => {
+        if (!simIsControlledLayerName(name) || typeof group.eachLayer !== 'function') return;
+        group.eachLayer((layer) => {
+            if (typeof layer.getLatLng !== 'function') return;
+            const ll = layer.getLatLng();
+            if (!ll) return;
+            simMarkerTargets.push({ layer, lat: ll.lat, lon: ll.lng, state: null });
+        });
+    });
+    return simMarkerTargets.length;
+}
+
+const SIM_MARKER_CLASSES = ['sim-marker-idle', 'sim-marker-live', 'sim-marker-focus', 'sim-marker-passed'];
+
+function simSetMarkerState(target, next) {
+    if (target.state === next) return;
+    const el = typeof target.layer.getElement === 'function' ? target.layer.getElement() : null;
+    if (!el) { target.state = null; return; }   // 화면에 없으면 다음 틱에 다시 시도
+    el.classList.remove(...SIM_MARKER_CLASSES);
+    if (next) el.classList.add(`sim-marker-${next}`);
+    target.state = next;
+}
+
+function simUpdateMarkerReveal(state, force = false) {
+    const now = performance.now();
+    if (!force && now - simMarkerTick < SIM_MARKER_TICK_MS) return;
+    simMarkerTick = now;
+
+    if (simMarkerTargets.length === 0) simCollectMarkerTargets();
+    simMarkerStyled = true;
+
+    // 가장 가까운 '전방' 마커 하나만 focus 로 올린다.
+    let focusTarget = null;
+    let focusDist = Infinity;
+    const here = { lat: state.lat, lon: state.lon };
+
+    simMarkerTargets.forEach((target) => {
+        target._dist = simMetresBetween(here, target);
+        target._ahead = simIsAhead(state, target);
+        if (target._ahead && target._dist <= SIM_MARKER_FOCUS_M && target._dist < focusDist) {
+            focusDist = target._dist;
+            focusTarget = target;
+        }
+    });
+
+    simMarkerTargets.forEach((target) => {
+        let next;
+        if (target === focusTarget) next = 'focus';
+        else if (target._ahead && target._dist <= SIM_MARKER_REVEAL_M) next = 'live';
+        else if (!target._ahead && target._dist <= SIM_MARKER_PASSED_M) next = 'passed';
+        else next = 'idle';
+        simSetMarkerState(target, next);
+    });
+}
+
+function simClearMarkerReveal() {
+    if (!simMarkerStyled) return;
+    simMarkerTargets.forEach((target) => simSetMarkerState(target, null));
+    simMarkerTargets = [];
+    simMarkerStyled = false;
+}
+
+
+// ===== 차로 안내 (Benz MBUX / BMW 방식의 하단 lane assistant) ================
+// 로그에서 복원 가능한 것만 쓴다: nVoiceCode 가 지시하는 차로 배치와 색, nTurnCode.
+// 실차 UI 처럼 화면 하단 가운데에 차로 띠를 놓고, 다가오는 동안 거리 바를 채운다.
+const SIM_LANE_LOOKAHEAD_M = 350;
+let simLanePoints = [];
+
+function buildSimLanePoints() {
+    simLanePoints = (markersData || [])
+        .filter((m) => m.extra?.lane_bubble && gpLaneLayoutFromVoiceCode(m.extra?.voice_code))
+        .map((m) => ({
+            id: m.id,
+            lat: m.latitude,
+            lon: m.longitude,
+            extra: m.extra,
+        }));
+    return simLanePoints.length;
+}
+
+function simEnsureLaneAssist() {
+    let el = document.getElementById('simLaneAssist');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'simLaneAssist';
+        el.className = 'sim-lane-assist hidden';
+        // 지도 위에 얹되 heading-up 회전과 무관하게 화면 하단에 고정한다.
+        (document.getElementById('main-content') || document.body).appendChild(el);
+    }
+    return el;
+}
+
+function simRenderLaneAssist(state) {
+    const el = simEnsureLaneAssist();
+
+    // 주차장 안에서는 실차도 차로 안내를 하지 않는다.
+    if (simInParkingLot(state.t)) {
+        el.classList.add('hidden');
+        return;
+    }
+
+    const found = simNearestAhead(state, simLanePoints, SIM_LANE_LOOKAHEAD_M);
+    if (!found) {
+        el.classList.add('hidden');
+        return;
+    }
+
+    const extra = found.point.extra || {};
+    const layout = gpLaneLayoutFromVoiceCode(extra.voice_code);
+    if (!layout) {
+        el.classList.add('hidden');
+        return;
+    }
+
+    const colorInfo = GP_LANE_COLORS[Number(extra.lane_color)] || GP_LANE_COLORS[0];
+    const glyph = GP_TURN_GLYPHS[Number(extra.turn_code)] || '↑';
+
+    const cells = [];
+    if (layout.anchor === 'left') cells.push('<div class="sim-lane-cell unknown">·</div>');
+    for (let i = 0; i < layout.total; i++) {
+        const lit = layout.lit.includes(i);
+        cells.push(
+            `<div class="sim-lane-cell${lit ? ' lit' : ''}"`
+            + (lit ? ` style="--lane-accent:${colorInfo.hex}"` : '')
+            + `>${lit ? glyph : '↑'}</div>`
+        );
+    }
+    if (layout.anchor === 'right') cells.push('<div class="sim-lane-cell unknown">·</div>');
+
+    // 남은 거리를 바로 채운다 (가까워질수록 100%) — BMW 의 접근 표시와 같은 감각.
+    const progress = Math.max(0, Math.min(1, 1 - (found.dist / SIM_LANE_LOOKAHEAD_M)));
+
+    el.innerHTML =
+        `<div class="sim-lane-head">`
+        + `<span class="sim-lane-title">차로 안내</span>`
+        + `<span class="sim-lane-dist">${simFormatDistance(found.dist)}</span>`
+        + `</div>`
+        + `<div class="sim-lane-strip">${cells.join('')}</div>`
+        + `<div class="sim-lane-progress"><span style="width:${(progress * 100).toFixed(1)}%"></span></div>`
+        + `<div class="sim-lane-sub">${escapeHtml(gpTurnCodeName(extra.voice_code) || '')}`
+        + (extra.has_cross_image ? ` <span class="sim-lane-badge">교차로</span>` : '')
+        + `</div>`;
+    el.classList.remove('hidden');
+}
+
 function simApply(state) {
     if (!state) return;
     simLastHeading = state.heading;
@@ -451,6 +648,8 @@ function simApply(state) {
     refreshSdiBlockHud(state.t);
     simUpdateGuideCard(state);
     simRenderAlerts(state);
+    simRenderLaneAssist(state);
+    simUpdateMarkerReveal(state);
     simRenderReroute(state);
     simApplyActiveRoute(state);
     simRenderStatus(state);
@@ -461,30 +660,41 @@ function simApply(state) {
 // storm is what made the map judder. The camera instead holds still until the
 // avatar drifts out of a dead zone near the centre, which is also how a
 // navigation map behaves.
-const SIM_FOLLOW_DEADZONE_PX = 40;
+// 카메라 추적. 예전에는 40px 데드존을 벗어날 때마다 0.8초 ease-out 팬을 한 번씩
+// 걸었는데, 그러면 '멈춤 → 훅 따라붙음 → 멈춤' 이 반복돼 눈에 확 띄게 끊긴다.
+// 대신 팬 지속시간보다 짧은 간격으로 '선형' 팬을 계속 이어 붙인다. 이징이 없으니
+// 앞 팬이 끝나는 순간 다음 팬이 같은 속도로 받아 등속으로 흐르고, moveend 는
+// 초당 4회 정도만 발생해 마커 컬링/도로 조회를 몰아치지 않는다.
+const SIM_FOLLOW_TICK_MS = 240;        // 다음 팬을 거는 간격
+const SIM_FOLLOW_DURATION_S = 0.30;    // 팬 지속 — 간격보다 길게 잡아 사이가 비지 않게
+const SIM_FOLLOW_SNAP_PX = 260;        // 스크럽/점프로 이만큼 벌어지면 애니메이션 없이 붙인다
 
-let simPanInFlight = false;
+let simFollowLastPanAt = 0;
 
 function simFollowTo(state) {
-    // 진행 중인 팬이 끝나기 전에 또 팬을 걸면 이징이 서로 잘려 화면이 튄다.
-    if (simPanInFlight) return;
-
     const target = map.latLngToContainerPoint([state.lat, state.lon]);
     const centre = map.latLngToContainerPoint(map.getCenter());
-    if (target.distanceTo(centre) < SIM_FOLLOW_DEADZONE_PX) return;
+    const gap = target.distanceTo(centre);
 
-    simPanInFlight = true;
-    simSelfPanning = true;
-    const done = () => {
-        if (!simPanInFlight) return;
-        simPanInFlight = false;
-        simSelfPanning = false;
-        map.off('moveend', done);
-    };
-    map.on('moveend', done);
-    map.panTo([state.lat, state.lon], { animate: true, duration: 0.8, easeLinearity: 0.2 });
-    // 애니메이션이 취소되어 moveend 가 오지 않는 경우를 위한 안전장치.
-    setTimeout(done, 1200);
+    // 타임라인을 끌어 옮긴 직후처럼 크게 벌어진 경우는 애니메이션이 의미가 없다.
+    if (gap > SIM_FOLLOW_SNAP_PX) {
+        map.setView([state.lat, state.lon], map.getZoom(), { animate: false });
+        simFollowLastPanAt = performance.now();
+        return;
+    }
+
+    // 이미 중심에 거의 붙어 있으면(정차 등) 굳이 팬을 걸지 않는다 — 1px 떨림 방지.
+    if (gap < 2) return;
+
+    const now = performance.now();
+    if (now - simFollowLastPanAt < SIM_FOLLOW_TICK_MS) return;
+    simFollowLastPanAt = now;
+
+    map.panTo([state.lat, state.lon], {
+        animate: true,
+        duration: SIM_FOLLOW_DURATION_S,
+        easeLinearity: 1        // 선형 — 팬을 이어 붙였을 때 등속으로 보이게 한다
+    });
 }
 
 // Shows only the route that was live at this moment. The layers people had
@@ -674,6 +884,9 @@ function resetSimulationForNewData() {
     document.getElementById('simAlerts')?.classList.add('hidden');
     document.getElementById('simRerouteToast')?.classList.add('hidden');
     document.getElementById('simStateStrip')?.classList.add('hidden');
+    document.getElementById('simLaneAssist')?.classList.add('hidden');
+    simClearMarkerReveal();
+    simLanePoints = [];
     simStateStripKey = null;
     simRestoreRoutes();
     simRouteEpochs = [];
@@ -708,6 +921,8 @@ function simStop() {
     refreshSdiBlockHud(NaN);
     document.getElementById('simAlerts')?.classList.add('hidden');
     document.getElementById('simRerouteToast')?.classList.add('hidden');
+    document.getElementById('simLaneAssist')?.classList.add('hidden');
+    simClearMarkerReveal();
     simFiredRerouteIds = new Set();
     simRestoreRoutes();
     simSyncButtons();
@@ -738,16 +953,30 @@ function simSyncButtons() {
 let simLastHeading = 0;
 
 // Panning during playback should win, the way dragging a navigation map drops it
-// out of follow mode. Only user gestures count — the follow panTo must not
-// switch itself off, so it is flagged while it runs.
-let simSelfPanning = false;
+// out of follow mode — but only for real gestures.
+//
+// 예전에는 '우리가 팬 중인가' 를 시간 플래그로 들고 있었는데, 카메라 추적이
+// 등속으로 계속 팬을 이어 붙이게 바뀌면서 그 플래그가 사실상 항상 켜져 있어
+// 재생 중 사용자가 끌어도 follow 가 풀리지 않게 된다. Leaflet 의 dragstart 는
+// 프로그램 팬(panTo/setView)에서는 발생하지 않으므로, 실제 포인터가 눌려 있는지만
+// 보면 사용자 제스처를 정확히 구분할 수 있다.
+let simUserPointerActive = false;
 
 function simBindMapGestures() {
+    const container = map.getContainer();
+    const pointerDown = () => { simUserPointerActive = true; };
+    const pointerUp = () => { simUserPointerActive = false; };
+    container.addEventListener('pointerdown', pointerDown, true);
+    container.addEventListener('touchstart', pointerDown, { capture: true, passive: true });
+    window.addEventListener('pointerup', pointerUp, true);
+    window.addEventListener('pointercancel', pointerUp, true);
+    window.addEventListener('touchend', pointerUp, true);
+
     map.on('click', (e) => {
         if (simPickMode) simSeekToLatLng(e.latlng);
     });
     map.on('dragstart', () => {
-        if (simSelfPanning) return;
+        if (!simUserPointerActive) return;
         if (simFollow) {
             simFollow = false;
             simSyncButtons();

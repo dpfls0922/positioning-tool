@@ -73,35 +73,58 @@ function removeRoutePointMarkersFromGroup(group) {
     stale.forEach((layer) => group.removeLayer(layer));
 }
 
-// Compact circular waypoint icon for route point sets (smaller than the
-// Tmap route planner icons so parsed routes stay readable at a glance)
-// Real navigation assets from benz-ivi2's app/_res/image: the origin/destination
-// pins are tbt_1st_23/24 (which literally read 출발/도착) and the waypoints are
-// destination_flag_waypoint_1..4. Anchored at the bottom because these are pins
-// and flags — their tip marks the point, unlike a centred circle.
+// Route point icons. 출발/도착 은 실제 내비 에셋(origin/destination.png — 핀 안에
+// 출발/도착 글자가 들어있다)을 쓰고, 경유지는 같은 핀 모양에 번호만 넣어 직접 그린다.
+// (경유지용 flag_waypoint_*.png 는 깃발 모양이라 핀 3개와 언어가 달라서 쓰지 않는다.)
+// 모두 아래쪽 끝(핀 꼭지)이 실제 지점을 가리키도록 앵커를 바닥에 둔다.
 const ROUTE_POINT_ICON_DIR = '/static/img/route/';
 const ROUTE_POINT_ICON_HEIGHT = 30;
+// origin.png / destination.png 에서 뽑은 핀 색 — 경유지 핀도 같은 채도로 맞춘다.
+const ROUTE_VIA_PIN_COLOR = '#f59e0b';
 
 // Role text comes from the request's route_points ('출발지' / '경유지' / '목적지').
-function routePointAsset(label, subLabel) {
+function routePointRole(label, subLabel) {
     const text = `${label || ''} ${subLabel || ''}`;
-    if (/출발|^S$/.test(text)) return { file: 'origin.png', w: 22 };
-    if (/도착|목적|^E$/.test(text)) return { file: 'destination.png', w: 22 };
+    if (/출발|^S$/.test(text)) return { kind: 'origin', file: 'origin.png', w: 22 };
+    if (/도착|목적|^E$/.test(text)) return { kind: 'destination', file: 'destination.png', w: 22 };
     const via = text.match(/(\d+)/);
-    const index = via ? Math.min(Math.max(parseInt(via[1], 10), 1), 4) : 1;
-    return { file: `flag_waypoint_${index}.png`, w: 34 };
+    return { kind: 'via', index: via ? parseInt(via[1], 10) : 1 };
+}
+
+// 출발/도착 핀과 같은 물방울 모양 핀. 번호는 원 안에 흰 글자로.
+function buildViaPinSvg(index, height) {
+    const w = Math.round(height * 41 / 56);
+    return `<svg width="${w}" height="${height}" viewBox="0 0 41 56" xmlns="http://www.w3.org/2000/svg"`
+        + ` style="display:block;filter:drop-shadow(0 1px 3px rgba(0,0,0,.35))">`
+        + `<path d="M20.5 55C20.5 55 38 33.8 38 20.6 38 9.4 30.1 1.5 20.5 1.5S3 9.4 3 20.6C3 33.8 20.5 55 20.5 55Z"`
+        + ` fill="${ROUTE_VIA_PIN_COLOR}" stroke="#ffffff" stroke-width="2.5"/>`
+        + `<text x="20.5" y="27" text-anchor="middle" font-size="19" font-weight="700"`
+        + ` font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" fill="#ffffff">${index}</text>`
+        + `</svg>`;
 }
 
 function buildRoutePointIcon(label, bgColor, subLabel) {
-    const asset = routePointAsset(label, subLabel);
+    const role = routePointRole(label, subLabel);
     const h = ROUTE_POINT_ICON_HEIGHT;
-    const w = Math.round(asset.w * h / 30);
+
+    if (role.kind === 'via') {
+        const w = Math.round(h * 41 / 56);
+        return L.divIcon({
+            className: '',
+            iconSize: [w, h],
+            iconAnchor: [w / 2, h],
+            popupAnchor: [0, -h],
+            html: buildViaPinSvg(role.index, h)
+        });
+    }
+
+    const w = Math.round(role.w * h / 30);
     return L.divIcon({
         className: '',
         iconSize: [w, h],
         iconAnchor: [w / 2, h],
         popupAnchor: [0, -h],
-        html: `<img src="${ROUTE_POINT_ICON_DIR}${asset.file}" width="${w}" height="${h}"`
+        html: `<img src="${ROUTE_POINT_ICON_DIR}${role.file}" width="${w}" height="${h}"`
             + ` style="display:block;filter:drop-shadow(0 1px 3px rgba(0,0,0,.35))" alt="">`
     });
 }
