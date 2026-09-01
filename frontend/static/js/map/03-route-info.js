@@ -250,16 +250,33 @@ function getRouteInfoMarkerLayerName(routeLayerName) {
     return `${ROUTE_INFO_MARKER_LAYER_PREFIX}${suffix}`.trim();
 }
 
+// 탐색된 경로는 실제 내비의 경로선처럼 그린다: 굵은 파란 실선 + 둥근 끝/이음.
+//
+// 이 지도는 preferCanvas 라 벡터가 전부 하나의 <canvas> 에 그려진다. 그래서
+// 선마다 CSS 를 걸 수 없고(테두리를 그림자로 흉내낼 수 없다), 실제 내비처럼
+// casing(어두운 밑선)을 넣으려면 폴리라인을 한 벌 더 깔아야 한다. 링크마다
+// 폴리라인이 하나씩이라 개수가 두 배가 되고 타임라인 필터와도 어긋나므로,
+// 캔버스에서 실제로 먹는 속성(두께·둥근 끝·불투명 실선)으로만 대비를 올린다.
+const ROUTE_LINE_NAV_COLOR = '#1a73e8';
+
 function getRouteInfoLineStyle(line) {
     const isSelected = Number.isFinite(selectedRouteInfoLineId) && line?.id === selectedRouteInfoLineId;
     const isNext = Number.isFinite(selectedRouteInfoNextLineId) && line?.id === selectedRouteInfoNextLineId;
+    // 링크를 클릭해 짚어보는 기존 디버깅 표시는 그대로 둔다.
     if (isSelected) {
-        return { color: '#ef4444', weight: 6, dashArray: null, opacity: 1 };
+        return { color: '#ef4444', weight: 8, dashArray: null, opacity: 1, lineCap: 'round', lineJoin: 'round' };
     }
     if (isNext) {
-        return { color: '#2563eb', weight: 5, dashArray: '10 4', opacity: 0.98 };
+        return { color: '#f59e0b', weight: 7, dashArray: null, opacity: 1, lineCap: 'round', lineJoin: 'round' };
     }
-    return { color: '#f97316', weight: 4, dashArray: '8 5', opacity: 0.92 };
+    return {
+        color: ROUTE_LINE_NAV_COLOR,
+        weight: 7,
+        dashArray: null,
+        opacity: 1,
+        lineCap: 'round',
+        lineJoin: 'round'
+    };
 }
 
 function applyRouteInfoPolylineStyle(polyline) {

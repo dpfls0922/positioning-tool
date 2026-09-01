@@ -3466,14 +3466,28 @@ html[data-theme="light"] .place-review-head {
     filter: grayscale(0.7);
 }
 
-/* ===== 모의주행: 차로 안내 (Benz MBUX / BMW lane assistant 참고) =====
-   화면 하단 가운데 고정. 지도 회전(heading-up)과 무관하게 화면 기준으로 둔다. */
-.sim-lane-assist {
+/* 하단 오버레이 스택 — 차로 안내와 트립 바를 세로로 쌓아 좁은 폭에서도
+   서로 겹치지 않게 한다. 지도 회전(heading-up)과 무관하게 화면 기준. */
+#simBottomStack {
     position: absolute;
-    bottom: 26px;
+    bottom: 22px;
     left: 50%;
     transform: translateX(-50%);
     z-index: 1092;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    max-width: calc(100% - 24px);
+    pointer-events: none;
+}
+
+#simBottomStack:empty { display: none; }
+
+/* ===== 모의주행: 차로 안내 (Benz MBUX / BMW lane assistant 참고) ===== */
+.sim-lane-assist {
+    position: relative;
+    order: 1;
     min-width: 168px;
     padding: 8px 12px 9px;
     background: rgba(12, 18, 32, 0.9);
@@ -3576,3 +3590,225 @@ html[data-theme="light"] .place-review-head {
     color: #fff;
     font-size: 9px;
 }
+
+/* ===== 모의주행: T map 식 안내 배너 (초록 TBT 카드) =====
+   참고 UI(T map 모바일 / 차량 IVI)의 배치를 그대로 따른다 —
+   회전 그림 + 큰 남은거리 + 회전 설명, 아래에 다음 안내 칩. */
+.sim-tbt {
+    min-width: 236px;
+    box-sizing: border-box;
+    border-radius: 10px;
+    overflow: hidden;
+    background: #1f7a4d;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+    color: #ffffff;
+}
+
+.sim-tbt.hidden { display: none; }
+
+.sim-tbt-main {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 12px 10px;
+}
+
+.sim-tbt-figure {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 46px;
+}
+
+/* TBT 에셋은 밝은 화살표(투명 배경)라 초록 위에 그대로 올린다. */
+.sim-tbt-img { display: block; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.35)); }
+.sim-tbt-glyph { line-height: 1; font-weight: 800; }
+
+.sim-tbt-text { flex: 1 1 auto; min-width: 0; }
+
+.sim-tbt-dist {
+    font-size: 30px;
+    font-weight: 800;
+    line-height: 1.05;
+    letter-spacing: -0.01em;
+    font-variant-numeric: tabular-nums;
+}
+
+.sim-tbt-unit {
+    margin-left: 2px;
+    font-size: 15px;
+    font-weight: 700;
+}
+
+.sim-tbt-name {
+    margin-top: 1px;
+    font-size: 12px;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.88);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* 재생 중에는 안내 화면 재현 카드를 자동으로 띄우지 않는다 — 이 버튼으로만 연다. */
+.sim-tbt-detail {
+    position: absolute;
+    top: 6px;
+    right: 7px;
+    padding: 1px 6px;
+    border: 1px solid rgba(255, 255, 255, 0.45);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.14);
+    color: #ffffff;
+    font-size: 10px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.sim-tbt-detail:hover { background: rgba(255, 255, 255, 0.28); }
+
+/* 다음 안내 — 참고 UI 의 아래쪽 어두운 초록 칩 */
+.sim-tbt-next {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 5px 12px 6px;
+    background: rgba(0, 0, 0, 0.22);
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.sim-tbt-next-figure { display: flex; align-items: center; opacity: 0.9; }
+.sim-tbt-next-dist { font-variant-numeric: tabular-nums; }
+.sim-tbt-next .sim-tbt-unit { font-size: 11px; }
+
+/* ===== 모의주행: SDI / C2X 를 원형 표지 + 거리 칩으로 ===== */
+.sim-sign {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    /* 거리 칩이 표지 아래로 7px 튀어나오므로 그만큼 자리를 비워둔다. */
+    padding-bottom: 8px;
+}
+
+.sim-sign.muted { opacity: 0.5; }
+
+.sim-sign-figure {
+    position: relative;
+    flex: 0 0 auto;
+    filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.45));
+}
+
+.sim-sign-figure img { display: block; }
+
+/* 표지 아래에 살짝 겹치는 거리 칩 — 참고 UI 와 같은 형태 */
+.sim-sign-dist {
+    position: absolute;
+    left: 50%;
+    bottom: -7px;
+    transform: translateX(-50%);
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: #e8590c;
+    color: #ffffff;
+    font-size: 11px;
+    font-weight: 800;
+    line-height: 1.35;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+}
+
+.sim-sign-name {
+    font-size: 11px;
+    font-weight: 700;
+    color: #f1f5f9;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* ===== 모의주행: 현재 속도 ===== */
+.sim-speed-badge {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 54px;
+    height: 54px;
+    border-radius: 50%;
+    background: #ffffff;
+    border: 3px solid #e2e8f0;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+    color: #0f172a;
+}
+
+.sim-speed-badge.hidden { display: none; }
+
+.sim-speed-value {
+    font-size: 21px;
+    font-weight: 800;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+}
+
+.sim-speed-unit {
+    margin-top: 1px;
+    font-size: 8px;
+    font-weight: 600;
+    color: #64748b;
+}
+
+/* ===== 모의주행: 하단 트립 바 (남은거리 / 로그 종료 시각) ===== */
+.sim-trip {
+    position: relative;
+    order: 2;              /* 참고 UI 처럼 화면 맨 아래 */
+    display: flex;
+    white-space: nowrap;
+    align-items: center;
+    gap: 11px;
+    padding: 7px 13px;
+    background: rgba(12, 18, 32, 0.9);
+    border: 1px solid rgba(148, 163, 184, 0.28);
+    border-radius: 999px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+    backdrop-filter: blur(6px);
+    color: #f1f5f9;
+    pointer-events: none;
+}
+
+.sim-trip.hidden { display: none; }
+
+.sim-trip-item {
+    display: flex;
+    align-items: baseline;
+    gap: 5px;
+    font-size: 14px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.sim-trip-item .fa { font-size: 11px; color: #94a3b8; }
+.sim-trip-item b { font-weight: 800; }
+
+.sim-trip-label {
+    font-size: 10px;
+    color: #94a3b8;
+    font-weight: 600;
+}
+
+.sim-trip-sep {
+    width: 1px;
+    height: 16px;
+    background: rgba(148, 163, 184, 0.35);
+}
+
+/* 안내 스택 순서를 DOM 생성 순서와 무관하게 고정한다.
+   실차 내비 배치: 회전 안내 → 구간단속 카드(기존 형태) → 원형 SDI → 현재 속도. */
+#naviStack > #simTbt { order: 1; }
+#naviStack > #sdiBlockHud { order: 2; }
+#naviStack > #simAlerts { order: 3; }
+#naviStack > #simSpeed { order: 4; }

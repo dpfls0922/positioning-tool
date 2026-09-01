@@ -13,6 +13,12 @@ function addLayerToGroup(type, layer, options = {}) {
         layer.options.pane = 'overlayPane';
     } else if (typeLower.includes('request')) {
         layer.options.pane = 'tooltipPane';
+    } else if (isRouteLineLayerName(type)) {
+        // 탐색된 경로선은 전용 pane 에 둔다. 이름이 line 판정 문자열에 걸리지 않아
+        // 그동안 마커와 같은 markerPane 에 들어갔고, 레이어 순서상 나중에
+        // bringToFront 되어 VPM 같은 측위 결과를 덮었다. 실제 내비처럼
+        // 도로형상 위 · 마커 아래에 깔린다.
+        layer.options.pane = ensureRouteLinePane();
     } else {
         layer.options.pane = 'markerPane';
     }
@@ -54,6 +60,25 @@ function addControlLayers() {
         map.removeControl(layerControl);
     }
     layerControl = L.control.layers(baseLayers, null, { collapsed: true }).addTo(map);
+}
+
+// 경로선 전용 pane. z-index 는 도로형상 pane(550~) 위, markerPane(600) 아래.
+const ROUTE_LINE_PANE = 'routeLinePane';
+
+function ensureRouteLinePane() {
+    if (!map.getPane(ROUTE_LINE_PANE)) {
+        map.createPane(ROUTE_LINE_PANE).style.zIndex = '580';
+    }
+    return ROUTE_LINE_PANE;
+}
+
+// 'Route Info' / 'Route Info <id>' 는 경로 폴리라인 레이어다.
+// 'Route Info Markers …' 와 'GP … · Route Info N' 같은 하위 마커 레이어는 제외한다.
+function isRouteLineLayerName(name) {
+    if (typeof name !== 'string') return false;
+    if (routeChildLayerOwner(name)) return false;
+    if (name.startsWith(ROUTE_INFO_MARKER_LAYER_PREFIX) || name === ROUTE_INFO_MARKER_LAYER) return false;
+    return name === 'Route Info' || name.startsWith(ROUTE_INFO_LAYER_PREFIX);
 }
 
 function getLayerOrderKey(name) {

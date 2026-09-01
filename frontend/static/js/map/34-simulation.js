@@ -25,7 +25,6 @@ function simAvatarHeight() {
 }
 const SIM_SPEEDS = [0.5, 1, 2, 3, 5, 10, 20];
 // A guide point counts as "coming up" within this distance ahead.
-const SIM_GUIDE_LOOKAHEAD_M = 120;
 // Navigation announces a camera well before a passing hazard, so the ranges
 // differ by kind rather than sharing one number.
 const SIM_SDI_LOOKAHEAD_M = 600;
@@ -60,7 +59,6 @@ let simRafId = null;
 let simLastFrameAt = 0;
 let simAvatarMarker = null;
 let simFollow = true;
-let simShownGuideId = null;
 
 function simMetresBetween(a, b) {
     const dLat = (b.lat - a.lat) * 111320;
@@ -213,24 +211,155 @@ function simEnsureAvatar() {
     return simAvatarMarker;
 }
 
-// Opens the guidance card for the nearest guide point ahead, and only when it
-// changes — reopening every frame would make the card flicker.
-function simUpdateGuideCard(state) {
-    let best = null;
-    let bestDist = Infinity;
-    simGuidePoints.forEach((gp) => {
-        const d = simMetresBetween({ lat: state.lat, lon: state.lon }, gp);
-        if (d < bestDist) { bestDist = d; best = gp; }
-    });
-    if (best && bestDist <= SIM_GUIDE_LOOKAHEAD_M) {
-        if (simShownGuideId !== best.id) {
-            simShownGuideId = best.id;
-            openGpGuidanceCard(best.id);
-        }
-    } else if (simShownGuideId !== null) {
-        simShownGuideId = null;
-        closeGpGuidanceCard();
+// ===== T map 식 안내 배너 (초록 TBT 카드) ==================================
+// 실차/앱 내비의 안내 카드를 같은 배치로 재현한다: 회전 그림 + 큰 남은거리 +
+// 회전 설명, 그 아래 다음 안내 칩. 그림은 실제 TBT 에셋(tbt_*.png)을 쓰고
+// 대응 그림이 없는 turnCode 는 화살표 글리프로 대체한다(기존 규칙과 동일).
+//
+// 로그에는 '진입할 도로명' 이 없다. 그래서 카드 두 번째 줄은 도로명이 아니라
+// turnCode 해석('2시 방향 우회전' 등)을 쓴다 — 있는 데이터만 표시한다.
+const SIM_TBT_LOOKAHEAD_M = 2000;
+
+function simEnsureTbtBanner() {
+    let el = document.getElementById('simTbt');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'simTbt';
+        el.className = 'sim-tbt hidden';
+        // 배너는 매 프레임 다시 그려지므로 클릭은 컨테이너에 위임한다.
+        // 재생 중 카드를 자동으로 띄우면 지도를 덮으므로 상세는 이 버튼으로만 연다.
+        el.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-gp-id]');
+            if (btn) openGpGuidanceCard(btn.dataset.gpId);
+        });
+        // 안내 스택 맨 위 — 구간단속 플레이트/SDI 표지보다 위에 온다.
+        naviStack().prepend(el);
     }
+    return el;
+}
+
+function simTbtFigure(turnCode, size) {
+    const image = tbtImageForTurnCode(turnCode);
+    if (image) {
+        return `<img src="${TBT_ICON_DIR}${image}" height="${size}" alt="" class="sim-tbt-img">`;
+    }
+    const glyph = GP_TURN_GLYPHS[Number(turnCode)] || '◆';
+    return `<span class="sim-tbt-glyph" style="font-size:${Math.round(size * 0.8)}px">${glyph}</span>`;
+}
+
+// 전방 안내지점을 가까운 순으로. 배너는 첫 번째와 두 번째를 쓴다.
+function simGuidePointsAhead(state) {
+    const here = { lat: state.lat, lon: state.lon };
+    return simGuidePoints
+        .map((gp) => ({ gp, dist: simMetresBetween(here, gp) }))
+        .filter((row) => row.dist <= SIM_TBT_LOOKAHEAD_M && simIsAhead(state, row.gp))
+        .sort((a, b) => a.dist - b.dist);
+}
+
+function simRenderTbtBanner(state) {
+    const el = simEnsureTbtBanner();
+
+    // 주차장 안에서는 실차도 회전 안내를 멈춘다.
+    if (simInParkingLot(state.t)) {
+        el.classList.add('hidden');
+        return;
+    }
+
+    const ahead = simGuidePointsAhead(state);
+    if (ahead.length === 0) {
+        el.classList.add('hidden');
+        return;
+    }
+
+    const first = ahead[0];
+    const next = ahead[1] || null;
+    const name = gpTurnCodeName(first.gp.turnCode) || '안내지점';
+
+    el.innerHTML =
+        `<div class="sim-tbt-main">`
+        + `<div class="sim-tbt-figure">${simTbtFigure(first.gp.turnCode, 44)}</div>`
+        + `<div class="sim-tbt-text">`
+        + `<div class="sim-tbt-dist">${simTbtDistanceHtml(first.dist)}</div>`
+        + `<div class="sim-tbt-name">${escapeHtml(name)}</div>`
+        + `</div>`
+        + `<button type="button" class="sim-tbt-detail" data-gp-id="${first.gp.id}" title="안내 화면 재현 열기">상세</button>`
+        + `</div>`
+        + (next
+            ? `<div class="sim-tbt-next">`
+              + `<span class="sim-tbt-next-figure">${simTbtFigure(next.gp.turnCode, 18)}</span>`
+              + `<span class="sim-tbt-next-dist">${simTbtDistanceHtml(next.dist)}</span>`
+              + `</div>`
+            : '');
+    el.classList.remove('hidden');
+}
+
+// 거리 숫자와 단위를 나눠 감싼다 — 숫자만 크게 보이도록.
+function simTbtDistanceHtml(metres) {
+    const km = metres >= 1000;
+    const value = km ? (metres / 1000).toFixed(1) : String(Math.round(metres / 10) * 10);
+    return `${value}<span class="sim-tbt-unit">${km ? 'km' : 'm'}</span>`;
+}
+
+
+// ===== 현재 속도 표시 / 하단 트립 바 =======================================
+function simEnsureSpeedBadge() {
+    let el = document.getElementById('simSpeed');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'simSpeed';
+        el.className = 'sim-speed-badge hidden';
+        naviStack().appendChild(el);   // 표지 아래 — 참고 UI 와 같은 위치
+    }
+    return el;
+}
+
+function simRenderSpeedBadge(state) {
+    const el = simEnsureSpeedBadge();
+    el.innerHTML = `<span class="sim-speed-value">${Math.round(state.speed)}</span>`
+        + `<span class="sim-speed-unit">km/h</span>`;
+    el.classList.remove('hidden');
+}
+
+function simEnsureTripBar() {
+    let el = document.getElementById('simTrip');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'simTrip';
+        el.className = 'sim-trip hidden';
+        simBottomStack().appendChild(el);
+    }
+    return el;
+}
+
+// 남은거리는 트랙 누적거리에서, 도착 시각은 로그의 마지막 샘플 시각에서 온다.
+// (예측이 아니라 '이 로그가 끝나는 시각' 이다 — 실주행 기록을 되돌려 보는 것이므로.)
+function simRenderTripBar(state) {
+    const el = simEnsureTripBar();
+    if (simTrack.length < 2 || simTrackCumM.length !== simTrack.length) {
+        el.classList.add('hidden');
+        return;
+    }
+
+    const totalM = simTrackCumM[simTrackCumM.length - 1];
+    let index = 0;
+    for (let i = 0; i < simTrack.length; i++) {
+        if (simTrack[i].t <= state.t) index = i; else break;
+    }
+    const doneM = simTrackCumM[index];
+    const remainM = Math.max(0, totalM - doneM);
+    const endAt = new Date(simTrack[simTrack.length - 1].t);
+    const hh = endAt.getHours();
+    const ampm = hh < 12 ? '오전' : '오후';
+    const h12 = hh % 12 === 0 ? 12 : hh % 12;
+
+    el.innerHTML =
+        `<span class="sim-trip-item"><i class="fa fa-flag-checkered"></i>`
+        + `<b>${remainM >= 1000 ? `${(remainM / 1000).toFixed(1)} km` : `${Math.round(remainM)} m`}</b>`
+        + `<span class="sim-trip-label">남음</span></span>`
+        + `<span class="sim-trip-sep"></span>`
+        + `<span class="sim-trip-item"><b>${ampm} ${h12}:${String(endAt.getMinutes()).padStart(2, '0')}</b>`
+        + `<span class="sim-trip-label">로그 종료</span></span>`;
+    el.classList.remove('hidden');
 }
 
 // Only things ahead are announced. Bearing to the point is compared against the
@@ -394,38 +523,35 @@ function simRenderAlerts(state) {
     const sdi = simNearestAhead(state, simSdiPoints, SIM_SDI_LOOKAHEAD_M);
     if (sdi) {
         const asset = SDI_ICON_ASSET[Number(sdi.point.type)];
-        const icon = asset
-            ? `<img src="${SDI_ICON_DIR}${asset}.png" width="26" height="26" alt="">`
-            : buildSdiSignHtml(sdi.point.type, sdi.point.speed, 26);
-        rows.push(`<div class="sim-alert${sdi.point.selected ? '' : ' muted'}">
-            <div class="sim-alert-icon">${icon}</div>
-            <div class="sim-alert-text">
-                <div class="sim-alert-name">${escapeHtml(sdi.point.name || 'SDI')}</div>
-                ${sdi.point.speed ? `<div class="sim-alert-sub">제한 ${sdi.point.speed} km/h</div>` : ''}
-            </div>
-            <div class="sim-alert-dist">${simFormatDistance(sdi.dist)}</div>
-        </div>`);
+        const sign = asset
+            ? `<img src="${SDI_ICON_DIR}${asset}.png" width="46" height="46" alt="">`
+            : buildSdiSignHtml(sdi.point.type, sdi.point.speed, 46);
+        rows.push(simSignHtml(sign, sdi.dist, sdi.point.name || 'SDI', !sdi.point.selected));
     }
 
     const event = simNearestAhead(state, simEventPoints, SIM_EVENT_LOOKAHEAD_M);
     if (event) {
         const asset = C2X_EVENT_ASSET[Number(event.point.typeCode)];
-        const icon = asset
-            ? `<img src="${C2X_ICON_DIR}${encodeURIComponent(asset.file)}" width="24" height="24" alt="">`
-            : `<img src="${MFS_ICON_DIR}${mfsIconFile(event.point.name)}" width="24" height="24" alt="">`;
+        const sign = asset
+            ? `<img src="${C2X_ICON_DIR}${encodeURIComponent(asset.file)}" width="42" height="42" alt="">`
+            : `<img src="${MFS_ICON_DIR}${mfsIconFile(event.point.name)}" width="42" height="42" alt="">`;
         const label = asset ? asset.label : (event.point.name || event.point.kind);
-        rows.push(`<div class="sim-alert">
-            <div class="sim-alert-icon">${icon}</div>
-            <div class="sim-alert-text">
-                <div class="sim-alert-name">${escapeHtml(label)}</div>
-                <div class="sim-alert-sub">${escapeHtml(event.point.kind)}</div>
-            </div>
-            <div class="sim-alert-dist">${simFormatDistance(event.dist)}</div>
-        </div>`);
+        rows.push(simSignHtml(sign, event.dist, label, false));
     }
 
     el.innerHTML = rows.join('');
     el.classList.toggle('hidden', rows.length === 0);
+}
+
+// 참고 UI 와 같은 형태: 표지 그림 아래에 남은거리 칩을 붙이고, 이름은 표지 옆에
+// 작게 둔다. 로그상 선택되지 않은 SDI 후보는 지도 마커와 같은 규칙으로 흐리게.
+function simSignHtml(signHtml, dist, name, muted) {
+    return `<div class="sim-sign${muted ? ' muted' : ''}">`
+        + `<div class="sim-sign-figure">${signHtml}`
+        + `<span class="sim-sign-dist">${simFormatDistance(dist)}</span>`
+        + `</div>`
+        + `<div class="sim-sign-name">${escapeHtml(name)}</div>`
+        + `</div>`;
 }
 
 
@@ -573,6 +699,18 @@ function buildSimLanePoints() {
     return simLanePoints.length;
 }
 
+// 하단 오버레이(차로 안내 / 트립 바)는 한 스택에 담는다. 각자 절대배치하면
+// 지도 폭이 좁을 때 서로 겹친다.
+function simBottomStack() {
+    let el = document.getElementById('simBottomStack');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'simBottomStack';
+        (document.getElementById('main-content') || document.body).appendChild(el);
+    }
+    return el;
+}
+
 function simEnsureLaneAssist() {
     let el = document.getElementById('simLaneAssist');
     if (!el) {
@@ -580,7 +718,7 @@ function simEnsureLaneAssist() {
         el.id = 'simLaneAssist';
         el.className = 'sim-lane-assist hidden';
         // 지도 위에 얹되 heading-up 회전과 무관하게 화면 하단에 고정한다.
-        (document.getElementById('main-content') || document.body).appendChild(el);
+        simBottomStack().appendChild(el);
     }
     return el;
 }
@@ -646,8 +784,10 @@ function simApply(state) {
         .setIcon(simAvatarIcon(state.heading));
     if (simFollow) simFollowTo(state);
     refreshSdiBlockHud(state.t);
-    simUpdateGuideCard(state);
+    simRenderTbtBanner(state);
     simRenderAlerts(state);
+    simRenderSpeedBadge(state);
+    simRenderTripBar(state);
     simRenderLaneAssist(state);
     simUpdateMarkerReveal(state);
     simRenderReroute(state);
@@ -877,7 +1017,6 @@ function resetSimulationForNewData() {
     simEventPoints = [];
     simReroutes = [];
     simFiredRerouteIds = new Set();
-    simShownGuideId = null;
     simTimeMs = 0;
     if (simAvatarMarker && map.hasLayer(simAvatarMarker)) map.removeLayer(simAvatarMarker);
     closeGpGuidanceCard();
@@ -885,6 +1024,9 @@ function resetSimulationForNewData() {
     document.getElementById('simRerouteToast')?.classList.add('hidden');
     document.getElementById('simStateStrip')?.classList.add('hidden');
     document.getElementById('simLaneAssist')?.classList.add('hidden');
+    document.getElementById('simTbt')?.classList.add('hidden');
+    document.getElementById('simSpeed')?.classList.add('hidden');
+    document.getElementById('simTrip')?.classList.add('hidden');
     simClearMarkerReveal();
     simLanePoints = [];
     simStateStripKey = null;
@@ -917,11 +1059,13 @@ function simStop() {
     simTimeMs = simTrack.length ? simTrack[0].t : 0;
     if (simAvatarMarker && map.hasLayer(simAvatarMarker)) map.removeLayer(simAvatarMarker);
     closeGpGuidanceCard();
-    simShownGuideId = null;
     refreshSdiBlockHud(NaN);
     document.getElementById('simAlerts')?.classList.add('hidden');
     document.getElementById('simRerouteToast')?.classList.add('hidden');
     document.getElementById('simLaneAssist')?.classList.add('hidden');
+    document.getElementById('simTbt')?.classList.add('hidden');
+    document.getElementById('simSpeed')?.classList.add('hidden');
+    document.getElementById('simTrip')?.classList.add('hidden');
     simClearMarkerReveal();
     simFiredRerouteIds = new Set();
     simRestoreRoutes();
