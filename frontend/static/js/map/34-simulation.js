@@ -46,8 +46,10 @@ let simShadeTimeline = [];
 let simAutoSkipStops = false;
 let simFeedbackPoints = [];
 let simTrackCumM = [];
-// 정차로 볼 속도 상한과, 그보다 오래 멈춰야 '정차'로 취급할 시간
-const SIM_STOP_SPEED_KMH = 2;
+// 정차로 볼 속도 상한과, 그보다 오래 멈춰야 '정차'로 취급할 시간.
+// 로그의 speed 는 m/s 로 읽는다. 예전 상수(2)는 km/h 기준이었는데 값이 m/s 면
+// 2 m/s = 7.2 km/h 라 서행까지 정차로 잡혔다. 2 km/h 에 해당하는 0.6 m/s 로 둔다.
+const SIM_STOP_SPEED_MPS = 0.6;
 const SIM_STOP_MIN_MS = 4000;
 let simFiredRerouteIds = new Set();
 let simRerouteToast = null;
@@ -444,11 +446,11 @@ function simRecentFeedback(timeMs) {
 function simCurrentStop(timeMs) {
     const idx = simTrack.findIndex((p) => p.t >= timeMs);
     if (idx < 0) return null;
-    if (simTrack[idx].speed > SIM_STOP_SPEED_KMH) return null;
+    if (simTrack[idx].speed > SIM_STOP_SPEED_MPS) return null;
     let start = idx;
-    while (start > 0 && simTrack[start - 1].speed <= SIM_STOP_SPEED_KMH) start -= 1;
+    while (start > 0 && simTrack[start - 1].speed <= SIM_STOP_SPEED_MPS) start -= 1;
     let end = idx;
-    while (end < simTrack.length - 1 && simTrack[end + 1].speed <= SIM_STOP_SPEED_KMH) end += 1;
+    while (end < simTrack.length - 1 && simTrack[end + 1].speed <= SIM_STOP_SPEED_MPS) end += 1;
     const span = simTrack[end].t - simTrack[start].t;
     if (span < SIM_STOP_MIN_MS) return null;
     return { start: simTrack[start].t, end: simTrack[end].t, resumeAt: simTrack[Math.min(end + 1, simTrack.length - 1)].t };

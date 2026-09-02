@@ -2998,7 +2998,6 @@ html, body {
 .leaflet-control-layers-base label,
 .leaflet-control-layers-overlays label {
     color: #1f2937;
-    font-weight: 500;
 }
 
 .leaflet-control-layers-separator {

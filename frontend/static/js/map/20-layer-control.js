@@ -50,6 +50,47 @@ function fitToBounds(featureGroups) {
     }
 }
 
+// 카카오맵을 배경지도 목록과 같은 자리에서 켜고 끌 수 있게 한다.
+//
+// 카카오 타일은 Leaflet 배경지도가 될 수 없다. 자체 SDK 렌더러만 제공하고 타일이
+// EPSG:5181 자체 스킴인데 Leaflet 지도는 CRS 가 하나뿐이라, Web Mercator 인
+// Google/Tmap 과 한 지도에 섞으면 중심에서 멀어질수록 도로와 마커가 어긋난다.
+// 위치 분석 도구에서 그 어긋남은 그대로 오독으로 이어지므로 배경으로 깔지 않는다.
+//
+// 대신 지도와 중심·줌이 동기화되는 카카오 창을 이 항목으로 여닫는다. 배경지도
+// 라디오와 섞이지 않게 오버레이(체크박스)로 넣어 '배경을 바꾸는 것'이 아니라는
+// 점이 UI 에서 드러나게 했다.
+const kakaoMapToggleLayer = L.Layer.extend({
+    onAdd() {
+        if (typeof openSkyview === 'function') openSkyview();
+        return this;
+    },
+    onRemove() {
+        if (typeof skyviewApi !== 'undefined' && skyviewApi && skyviewApi.isOpen()) {
+            skyviewApi.close();
+        }
+        return this;
+    }
+});
+
+let kakaoMapOverlay = null;
+
+// 패널을 X 로 닫거나 툴바 버튼으로 열면 레이어 목록의 체크 상태도 따라가야 한다.
+// 이미 같은 상태면 아무것도 하지 않아 onAdd/onRemove ↔ onClose 가 서로를 다시
+// 부르는 일이 없다.
+function syncKakaoOverlayCheckbox(on) {
+    if (!kakaoMapOverlay) return;
+    const has = map.hasLayer(kakaoMapOverlay);
+    if (on && !has) map.addLayer(kakaoMapOverlay);
+    if (!on && has) map.removeLayer(kakaoMapOverlay);
+}
+
+function buildControlOverlays() {
+    if (typeof kakaoJsKeySet !== 'undefined' && !kakaoJsKeySet) return null;
+    if (!kakaoMapOverlay) kakaoMapOverlay = new kakaoMapToggleLayer();
+    return { '카카오맵 (별도 창)': kakaoMapOverlay };
+}
+
 function addControlLayers() {
     if (!baseLayerInitialized) {
         baseLayers["Tmap"].addTo(map);
@@ -59,7 +100,7 @@ function addControlLayers() {
     if (layerControl) {
         map.removeControl(layerControl);
     }
-    layerControl = L.control.layers(baseLayers, null, { collapsed: true }).addTo(map);
+    layerControl = L.control.layers(baseLayers, buildControlOverlays(), { collapsed: true }).addTo(map);
 }
 
 // 경로선 전용 pane. z-index 는 도로형상 pane(550~) 위, markerPane(600) 아래.
