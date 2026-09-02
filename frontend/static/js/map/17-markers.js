@@ -403,7 +403,11 @@ function makePopupText(coordinate, coordtype) {
         popupRow('시간', escapeHtml(String(ts))),
         popupRow('좌표', `${lat}, ${lon}`),
         Number.isFinite(coordinate?.heading) ? popupRow('방위', `${coordinate.heading.toFixed(1)}°`) : '',
-        coordinate?.extra?.Speed !== undefined ? popupRow('속도', parseFloat(coordinate.extra.Speed).toFixed(1)) : ''
+        // 로그 값에 단위가 없어 그대로와 ×3.6 을 같이 보여준다 (m/s ↔ km/h 혼동 방지)
+        coordinate?.extra?.Speed !== undefined
+            ? popupRow('속도', `${parseFloat(coordinate.extra.Speed).toFixed(1)} m/s · `
+                + `${(parseFloat(coordinate.extra.Speed) * 3.6).toFixed(1)} km/h`)
+            : ''
     ].join('');
 
     // 상세: 좌표 타입별 값들. 접혀 있으므로 팝업이 길어지지 않는다.
