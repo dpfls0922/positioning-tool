@@ -13,6 +13,7 @@ def render_html(markers_data=None, lines_data=None):
     head = build_html_head(int(time.time()))
     body = build_html_body()
     script_content = load_map_script_content()
+    app_switch_js = load_file_content(PATHS.app_switch_js)
     data_vars = init_data_vars(markers_data, lines_data)
 
     html = dedent(
@@ -20,15 +21,15 @@ def render_html(markers_data=None, lines_data=None):
         <!DOCTYPE html>
         <html lang="ko">
         <head>{head}</head>
-        <body>
+        <body data-app="positioning">
         <div id="container">
             <div id="sidebar" class="open">
                 <div id="sidebar-header">
                     <span id="sidebar-brand">positioning map</span>
                 </div>
                 <nav class="app-tabs">
-                    <a class="app-tab active" href="/">포지셔닝</a>
-                    <a class="app-tab" href="/sdi">SDI 검색</a>
+                    <a class="app-tab active" href="/" data-app-switch="positioning">포지셔닝</a>
+                    <a class="app-tab" href="/sdi" data-app-switch="sdi">SDI 검색</a>
                 </nav>
                 <div id="sidebar-search">
                     <div id="omnibox-wrap">
@@ -96,6 +97,9 @@ def render_html(markers_data=None, lines_data=None):
         {script_content}
         init();
         </script>
+        <script>
+        {app_switch_js}
+        </script>
         </body>
         </html>
         """
@@ -112,6 +116,9 @@ def write_html_file(markers_data=None, lines_data=None, out_path=None):
 
 
 def build_html_head(static_version):
+    # 두 화면이 함께 쓰는 전환 스타일. 단독 파일로 내보낸 HTML 에서도 동작하게
+    # 링크가 아니라 인라인으로 심는다.
+    app_switch_css = load_file_content(PATHS.app_switch_css)
     kakao_js_key = (os.environ.get("KAKAO_JS_KEY") or "").strip()
     # 로드뷰는 카카오맵 JS SDK 로만 가능하다. 키가 없으면 스크립트를 넣지 않고,
     # 프론트에서 kakaoJsKeySet 플래그로 기능을 비활성화한다.
@@ -137,6 +144,9 @@ def build_html_head(static_version):
         <script src="./static/js/tmap_coord.js?v={static_version}"></script>
         <script src="./static/js/tmap_tvas_parser.js?v={static_version}"></script>
         <link rel="stylesheet" href="./static/css/map.css?v={static_version}" type="text/css">
+        <style>
+{app_switch_css}
+        </style>
         <style>
         /* ===== 새 업로드 패널 UI ===== */
         .upload-section {{ margin-bottom: 10px; }}

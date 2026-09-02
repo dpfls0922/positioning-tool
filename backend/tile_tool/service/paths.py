@@ -11,6 +11,10 @@ TILE_ASSET_DIR = os.path.join(STATIC_DIR, "tile")
 VSM_CACHE_DIR = os.path.join(PROJECT_ROOT, "data", "vsm_cache")
 
 TILE_CSS = os.path.join(TILE_ASSET_DIR, "tile.css")
+
+# 포지셔닝 화면과 함께 쓰는 화면 전환 자산 (positioning-tool 에 마운트됐을 때만 사용)
+APP_SWITCH_CSS = os.path.join(STATIC_DIR, "css", "app-switch.css")
+APP_SWITCH_JS = os.path.join(STATIC_DIR, "js", "app-switch.js")
 TILE_JS_FILES = (
     "01-state.js",
     "02-map.js",

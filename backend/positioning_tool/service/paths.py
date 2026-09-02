@@ -18,6 +18,9 @@ class AppPaths:
     output_json: str = os.path.join(PROJECT_ROOT, "result.json")
     static_dir: str = os.path.join(FRONTEND_DIR, "static")
     css_file: str = os.path.join(FRONTEND_DIR, "static", "css", "map.css")
+    # 포지셔닝 / SDI 검색 두 화면이 함께 쓰는 화면 전환 스크립트·스타일
+    app_switch_css: str = os.path.join(FRONTEND_DIR, "static", "css", "app-switch.css")
+    app_switch_js: str = os.path.join(FRONTEND_DIR, "static", "js", "app-switch.js")
     js_dir: str = os.path.join(FRONTEND_DIR, "static", "js")
     js_map_parts_dir: str = os.path.join(FRONTEND_DIR, "static", "js", "map")
 

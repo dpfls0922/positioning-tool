@@ -6,7 +6,13 @@
 
 import os
 
-from backend.tile_tool.service.paths import TILE_ASSET_DIR, TILE_CSS, TILE_JS_FILES
+from backend.tile_tool.service.paths import (
+    APP_SWITCH_CSS,
+    APP_SWITCH_JS,
+    TILE_ASSET_DIR,
+    TILE_CSS,
+    TILE_JS_FILES,
+)
 
 
 def _read(path):
@@ -28,8 +34,8 @@ def load_script():
 # positioning-tool 안에 마운트됐을 때만 두 화면을 오가는 탭을 보여준다.
 # 단독 패키지로 떼어 가면 포지셔닝 화면이 없으므로 탭도 없다.
 _APP_TABS = """<nav class="app-tabs">
-      <a class="app-tab" href="/">포지셔닝</a>
-      <a class="app-tab active" href="{base}">SDI 검색</a>
+      <a class="app-tab" href="/" data-app-switch="positioning">포지셔닝</a>
+      <a class="app-tab active" href="{base}" data-app-switch="sdi">SDI 검색</a>
     </nav>"""
 
 
@@ -40,6 +46,11 @@ def render_page(base=""):
     프런트가 API 를 부를 때 이 값을 앞에 붙인다.
     """
     app_tabs = _APP_TABS.format(base=base) if base else ""
+    # 화면 전환 자산은 탭이 있을 때만 심는다 — 단독 패키지로 떼어 가면 오갈
+    # 상대 화면이 없다.
+    app_switch_css = "<style>\n" + _read(APP_SWITCH_CSS) + "\n</style>" if base else ""
+    app_switch_js = "<script>\n" + _read(APP_SWITCH_JS) + "\n</script>" if base else ""
+    app_body_attr = ' data-app="sdi"' if base else ""
     return f"""<!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -52,8 +63,9 @@ def render_page(base=""):
 <style>
 {_read(TILE_CSS)}
 </style>
+{app_switch_css}
 </head>
-<body>
+<body{app_body_attr}>
 <div id="app">
   <aside id="sidebar">
     <header class="side-head">
@@ -166,6 +178,7 @@ def render_page(base=""):
 const TILE_API_BASE = {base!r};
 {load_script()}
 </script>
+{app_switch_js}
 </body>
 </html>
 """
