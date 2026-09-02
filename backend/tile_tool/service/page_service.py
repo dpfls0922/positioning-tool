@@ -40,8 +40,11 @@ def render_page(base=""):
     프런트가 API 를 부를 때 이 값을 앞에 붙인다.
     """
     app_tabs = _APP_TABS.format(base=base) if base else ""
+    # 마운트되면 positioning-tool 의 테마(기본 다크)를 따라가고, 단독으로 떼어
+    # 가면 밝은 화면으로 연다. tile.css 가 두 팔레트를 다 들고 있다.
+    theme = "" if base else ' data-theme="light"'
     return f"""<!DOCTYPE html>
-<html lang="ko">
+<html lang="ko"{theme}>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -146,7 +149,7 @@ def render_page(base=""):
     <div id="map"></div>
     <div id="layerBox">
       <div class="layer-group">SDI</div>
-      <label><input type="checkbox" id="toggleVsmPoints" checked> 선택 타일의 SDI</label>
+      <label><input type="checkbox" id="toggleVsmPoints" checked> SDI (메시 단위)</label>
       <label class="sub-opt"><input type="checkbox" id="toggleExactOnly"> 설치점만</label>
       <label><input type="checkbox" id="toggleSdiCells" checked> 셀 밀도</label>
       <label><input type="checkbox" id="toggleSdi" checked> 로그 SDI</label>

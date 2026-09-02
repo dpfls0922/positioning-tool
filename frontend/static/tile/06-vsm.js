@@ -6,10 +6,11 @@ let vsmStatus = null;
 let vsmCellsLoading = false;
 let vsmPointsLoading = false;
 
-// 하한은 무엇을 골랐는지에 따라 다르다. 메시(7.5분 x 5분)로 찾으면 화면 폭에
-// 따라 z10 언저리에 맞춰지므로 거기까지는 그려야 "메시 하나를 통째로" 볼 수
-// 있다. 타일(약 1.2 km)은 그 줌에서 점 몇 개짜리 얼룩이라 의미가 없다.
-const VSM_POINT_MIN_ZOOM = { mesh: 10, tile: 13 };
+// SDI 는 늘 메시(= SDI 셀, 7.5분 x 5분, 약 11 x 9 km) 단위로 그린다. 타일은
+// 약 1.2 km 라 그 안의 SDI 만 보면 주변 맥락이 안 보인다. 타일은 패널의 정보와
+// 지도의 주황 사각형으로만 남는다.
+// 메시 하나가 화면에 들어오는 줌이 화면 폭에 따라 z10 언저리다.
+const VSM_POINT_MIN_ZOOM = 10;
 
 // 개수에 따른 색. 도심 셀이 1000건을 넘으므로 구간을 넓게 잡는다.
 const CELL_FILL_MAX_ZOOM = 12;
@@ -181,24 +182,21 @@ async function refreshVsmPoints() {
         setVsmPointHint('');
         return;
     }
-    const byMesh = currentTarget.matched === 'mesh' && currentCell;
-    const minZoom = byMesh ? VSM_POINT_MIN_ZOOM.mesh : VSM_POINT_MIN_ZOOM.tile;
-    if (map.getZoom() < minZoom) {
+    if (!currentCell) {
         vsmPointLayer.clearLayers();
-        setVsmPointHint(`줌 ${minZoom} 이상에서 표시됩니다 (현재 ${map.getZoom()}).`);
+        setVsmPointHint('');
+        return;
+    }
+    if (map.getZoom() < VSM_POINT_MIN_ZOOM) {
+        vsmPointLayer.clearLayers();
+        setVsmPointHint(`줌 ${VSM_POINT_MIN_ZOOM} 이상에서 표시됩니다 (현재 ${map.getZoom()}).`);
         return;
     }
     if (vsmPointsLoading) return;
 
     vsmPointsLoading = true;
     try {
-        // 메시로 찾았으면 그 메시(셀) 전체를, 좌표/타일로 찾았으면 그 타일만
-        // 그린다. 찾은 단위와 보이는 단위를 맞춰 준다.
-        const tile = currentTarget.tile;
-        const query = byMesh
-            ? `/api/vsm/points?cell=${currentCell.key}`
-            : `/api/vsm/points?x=${tile.x}&y=${tile.y}&zoom=${currentTarget.zoom}`;
-        const data = await getJson(API_BASE + query);
+        const data = await getJson(API_BASE + `/api/vsm/points?cell=${currentCell.key}`);
         const exactOnly = $('toggleExactOnly').checked;
         const shown = exactOnly ? data.points.filter((p) => p.exact) : data.points;
 
@@ -210,11 +208,11 @@ async function refreshVsmPoints() {
         });
 
         const exact = data.points.filter((p) => p.exact).length;
-        const scope = byMesh ? '메시 전체' : '이 타일';
         setVsmPointHint(data.points.length
-            ? `${scope} SDI <b>${fmtNum(data.points.length)}건</b> · 설치점 <b>${exact}건</b>`
-              + (exactOnly ? ' <span class="sub">(설치점만 표시 중)</span>' : '')
-            : `${scope}에는 SDI 가 없습니다.`);
+            ? `메시 ${currentCell.mesh} SDI <b>${fmtNum(data.points.length)}건</b>`
+              + ` · 설치점 <b>${exact}건</b>`
+              + (exactOnly ? ' <span class="sub">(설치점만)</span>' : '')
+            : `메시 ${currentCell.mesh} 에는 SDI 가 없습니다.`);
     } catch (ex) {
         setVsmPointHint(ex.message);
     } finally {
