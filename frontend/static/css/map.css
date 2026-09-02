@@ -2654,27 +2654,8 @@ html, body {
     white-space: nowrap;
 }
 
-.sim-reroute-toast {
-    position: relative;
-    z-index: 1095;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 12px;
-    background: rgba(13, 148, 136, 0.95);
-    color: var(--accent-fg);
-    border-radius: 10px;
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
-    font-size: 12px;
-    font-weight: 700;
-    pointer-events: none;
-}
-.sim-reroute-toast.hidden { display: none; }
-.sim-reroute-id {
-    font-size: 10px;
-    font-weight: 600;
-    opacity: 0.8;
-}
+/* 재탐색도 다른 주행 이벤트와 같은 .sim-state 카드를 쓴다 — 좌측 띠 색만 다르다. */
+.sim-state-reroute { border-left-color: #0d9488; }
 
 /* ===================== 사이드바 탭 (결과 / 레이어) ===================== */
 
@@ -3386,7 +3367,9 @@ html[data-theme="light"] .place-review-head {
 /* ===== 모의주행 상태 카드 — 고정 슬롯(좌하단) ===== */
 /* 정차·주차장·터널·맵매칭 피드백이 모두 같은 카드 형태를 쓰고, 위쪽 안내 UI 가
    늘거나 줄어도 위치가 흔들리지 않도록 안내 스택과 분리해 고정한다. */
-#simStateStrip {
+/* 주행 이벤트 스택 — 정차/주차장/음영/피드백 카드와 재탐색 카드를 좌측 하단
+   한 줄에 쌓는다. 재탐색만 따로 떠 있던 것을 여기로 합쳤다. */
+#simEventStack {
     position: absolute;
     left: 14px;
     bottom: 18px;
@@ -3395,6 +3378,15 @@ html[data-theme="light"] .place-review-head {
     flex-direction: column-reverse;
     gap: 6px;
     pointer-events: none;
+}
+
+#simEventStack:empty { display: none; }
+#simEventStack > * { pointer-events: auto; }
+
+#simStateStrip {
+    display: flex;
+    flex-direction: column-reverse;
+    gap: 6px;
 }
 #simStateStrip.hidden { display: none; }
 #simStateStrip > * { pointer-events: auto; }
@@ -3607,7 +3599,6 @@ html[data-theme="light"] .place-review-head {
 .sim-tbt.hidden { display: none; }
 
 .sim-tbt-main {
-    position: relative;
     display: flex;
     align-items: center;
     gap: 10px;
@@ -3654,16 +3645,17 @@ html[data-theme="light"] .place-review-head {
 
 /* 재생 중에는 안내 화면 재현 카드를 자동으로 띄우지 않는다 — 이 버튼으로만 연다. */
 .sim-tbt-detail {
-    position: absolute;
-    top: 6px;
-    right: 7px;
-    padding: 1px 6px;
-    border: 1px solid rgba(255, 255, 255, 0.45);
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.14);
+    flex: 0 0 auto;
+    width: 22px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgba(255, 255, 255, 0.4);
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.12);
     color: #ffffff;
-    font-size: 10px;
-    font-weight: 600;
+    font-size: 11px;
     cursor: pointer;
 }
 
@@ -3678,6 +3670,13 @@ html[data-theme="light"] .place-review-head {
     background: rgba(0, 0, 0, 0.22);
     font-size: 13px;
     font-weight: 700;
+}
+
+.sim-tbt-next-label {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: .06em;
+    color: rgba(255, 255, 255, 0.7);
 }
 
 .sim-tbt-next-figure { display: flex; align-items: center; opacity: 0.9; }
@@ -3731,79 +3730,61 @@ html[data-theme="light"] .place-review-head {
     text-overflow: ellipsis;
 }
 
-/* ===== 모의주행: 현재 속도 ===== */
-.sim-speed-badge {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    width: 54px;
-    height: 54px;
-    border-radius: 50%;
-    background: #ffffff;
-    border: 3px solid #e2e8f0;
-    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
-    color: #0f172a;
-}
-
-.sim-speed-badge.hidden { display: none; }
-
-.sim-speed-value {
-    font-size: 21px;
-    font-weight: 800;
-    line-height: 1;
-    font-variant-numeric: tabular-nums;
-}
-
-.sim-speed-unit {
-    margin-top: 1px;
-    font-size: 8px;
-    font-weight: 600;
-    color: #64748b;
-}
-
-/* ===== 모의주행: 하단 트립 바 (남은거리 / 로그 종료 시각) ===== */
+/* ===== 모의주행: 하단 바 (현재속도 / 남은거리 / 로그 종료) =====
+   이벤트 카드(.sim-state)와 같은 배경·테두리·라운드를 쓰고, 세 값을
+   '값 + 아래 라벨' 형식으로 통일한다. 하단 고정이라 위쪽 카드가 늘고 줄어도
+   현재속도 위치가 흔들리지 않는다. */
 .sim-trip {
     position: relative;
-    order: 2;              /* 참고 UI 처럼 화면 맨 아래 */
+    order: 2;
     display: flex;
-    white-space: nowrap;
-    align-items: center;
-    gap: 11px;
-    padding: 7px 13px;
-    background: rgba(12, 18, 32, 0.9);
-    border: 1px solid rgba(148, 163, 184, 0.28);
-    border-radius: 999px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
-    backdrop-filter: blur(6px);
+    align-items: stretch;
+    gap: 12px;
+    padding: 7px 14px;
+    background: rgba(15, 23, 42, 0.92);
+    border: 1px solid rgba(148, 163, 184, 0.3);
+    border-radius: 10px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
     color: #f1f5f9;
+    white-space: nowrap;
     pointer-events: none;
 }
 
 .sim-trip.hidden { display: none; }
 
-.sim-trip-item {
+.sim-trip-cell {
     display: flex;
-    align-items: baseline;
-    gap: 5px;
-    font-size: 14px;
-    font-variant-numeric: tabular-nums;
-    white-space: nowrap;
+    flex-direction: column;
+    align-items: center;
+    gap: 1px;
+    min-width: 56px;
 }
 
-.sim-trip-item .fa { font-size: 11px; color: #94a3b8; }
-.sim-trip-item b { font-weight: 800; }
+.sim-trip-value {
+    font-size: 17px;
+    font-weight: 800;
+    line-height: 1.1;
+    color: #f8fafc;
+    font-variant-numeric: tabular-nums;
+}
+
+.sim-trip-unit {
+    margin-left: 2px;
+    font-size: 10px;
+    font-weight: 700;
+    color: #cbd5e1;
+}
 
 .sim-trip-label {
-    font-size: 10px;
-    color: #94a3b8;
+    font-size: 9px;
     font-weight: 600;
+    letter-spacing: .04em;
+    color: #94a3b8;
 }
 
 .sim-trip-sep {
     width: 1px;
-    height: 16px;
-    background: rgba(148, 163, 184, 0.35);
+    background: rgba(148, 163, 184, 0.28);
 }
 
 /* 안내 스택 순서를 DOM 생성 순서와 무관하게 고정한다.
@@ -3811,4 +3792,3 @@ html[data-theme="light"] .place-review-head {
 #naviStack > #simTbt { order: 1; }
 #naviStack > #sdiBlockHud { order: 2; }
 #naviStack > #simAlerts { order: 3; }
-#naviStack > #simSpeed { order: 4; }

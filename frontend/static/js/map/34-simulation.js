@@ -282,11 +282,14 @@ function simRenderTbtBanner(state) {
         + `<div class="sim-tbt-dist">${simTbtDistanceHtml(first.dist)}</div>`
         + `<div class="sim-tbt-name">${escapeHtml(name)}</div>`
         + `</div>`
-        + `<button type="button" class="sim-tbt-detail" data-gp-id="${first.gp.id}" title="안내 화면 재현 열기">상세</button>`
+        + `<button type="button" class="sim-tbt-detail" data-gp-id="${first.gp.id}"`
+        + ` title="안내 화면 재현 열기" aria-label="안내 화면 재현 열기">`
+        + `<i class="fa fa-info"></i></button>`
         + `</div>`
         + (next
             ? `<div class="sim-tbt-next">`
-              + `<span class="sim-tbt-next-figure">${simTbtFigure(next.gp.turnCode, 18)}</span>`
+              + `<span class="sim-tbt-next-label">다음</span>`
+              + `<span class="sim-tbt-next-figure">${simTbtFigure(next.gp.turnCode, 16)}</span>`
               + `<span class="sim-tbt-next-dist">${simTbtDistanceHtml(next.dist)}</span>`
               + `</div>`
             : '');
@@ -302,24 +305,6 @@ function simTbtDistanceHtml(metres) {
 
 
 // ===== 현재 속도 표시 / 하단 트립 바 =======================================
-function simEnsureSpeedBadge() {
-    let el = document.getElementById('simSpeed');
-    if (!el) {
-        el = document.createElement('div');
-        el.id = 'simSpeed';
-        el.className = 'sim-speed-badge hidden';
-        naviStack().appendChild(el);   // 표지 아래 — 참고 UI 와 같은 위치
-    }
-    return el;
-}
-
-function simRenderSpeedBadge(state) {
-    const el = simEnsureSpeedBadge();
-    el.innerHTML = `<span class="sim-speed-value">${Math.round(state.speed)}</span>`
-        + `<span class="sim-speed-unit">km/h</span>`;
-    el.classList.remove('hidden');
-}
-
 function simEnsureTripBar() {
     let el = document.getElementById('simTrip');
     if (!el) {
@@ -331,8 +316,11 @@ function simEnsureTripBar() {
     return el;
 }
 
-// 남은거리는 트랙 누적거리에서, 도착 시각은 로그의 마지막 샘플 시각에서 온다.
-// (예측이 아니라 '이 로그가 끝나는 시각' 이다 — 실주행 기록을 되돌려 보는 것이므로.)
+// 하단 바는 세 값을 같은 형식(값 + 아래 라벨)으로 나란히 둔다.
+//   현재속도 : 안내 스택 안에 두면 위쪽 카드가 늘고 줄 때마다 위치가 흔들려서
+//              하단 고정 슬롯으로 내렸다.
+//   남은거리 : 트랙 누적거리에서 계산
+//   종료시각 : 로그의 마지막 샘플 시각 — 예측 도착이 아니라 이 로그가 끝나는 시각
 function simRenderTripBar(state) {
     const el = simEnsureTripBar();
     if (simTrack.length < 2 || simTrackCumM.length !== simTrack.length) {
@@ -345,20 +333,25 @@ function simRenderTripBar(state) {
     for (let i = 0; i < simTrack.length; i++) {
         if (simTrack[i].t <= state.t) index = i; else break;
     }
-    const doneM = simTrackCumM[index];
-    const remainM = Math.max(0, totalM - doneM);
+    const remainM = Math.max(0, totalM - simTrackCumM[index]);
     const endAt = new Date(simTrack[simTrack.length - 1].t);
     const hh = endAt.getHours();
-    const ampm = hh < 12 ? '오전' : '오후';
-    const h12 = hh % 12 === 0 ? 12 : hh % 12;
+    const clock = `${hh < 12 ? '오전' : '오후'} ${hh % 12 === 0 ? 12 : hh % 12}:`
+        + String(endAt.getMinutes()).padStart(2, '0');
+
+    const cell = (value, unit, label) => `<div class="sim-trip-cell">`
+        + `<div class="sim-trip-value">${value}<span class="sim-trip-unit">${unit}</span></div>`
+        + `<div class="sim-trip-label">${label}</div></div>`;
 
     el.innerHTML =
-        `<span class="sim-trip-item"><i class="fa fa-flag-checkered"></i>`
-        + `<b>${remainM >= 1000 ? `${(remainM / 1000).toFixed(1)} km` : `${Math.round(remainM)} m`}</b>`
-        + `<span class="sim-trip-label">남음</span></span>`
+        cell(Math.round(state.speed), 'km/h', '현재속도')
         + `<span class="sim-trip-sep"></span>`
-        + `<span class="sim-trip-item"><b>${ampm} ${h12}:${String(endAt.getMinutes()).padStart(2, '0')}</b>`
-        + `<span class="sim-trip-label">로그 종료</span></span>`;
+        + cell(
+            remainM >= 1000 ? (remainM / 1000).toFixed(1) : Math.round(remainM),
+            remainM >= 1000 ? 'km' : 'm',
+            '남은거리')
+        + `<span class="sim-trip-sep"></span>`
+        + cell(clock, '', '로그 종료');
     el.classList.remove('hidden');
 }
 
@@ -562,8 +555,8 @@ function simRenderReroute(state) {
     const toast = document.getElementById('simRerouteToast') || (() => {
         const el = document.createElement('div');
         el.id = 'simRerouteToast';
-        el.className = 'sim-reroute-toast hidden';
-        naviStack().appendChild(el);
+        el.className = 'sim-state sim-state-reroute hidden';
+        simEventStack().appendChild(el);
         return el;
     })();
 
@@ -571,9 +564,12 @@ function simRenderReroute(state) {
         && r.t <= state.t && (state.t - r.t) < 2000);
     if (due) {
         simFiredRerouteIds.add(due.id);
-        toast.innerHTML = `<i class="fa fa-refresh"></i>`
-            + `<span>경로 재탐색 · <b>${escapeHtml(due.reason)}</b></span>`
-            + `<span class="sim-reroute-id">${escapeHtml(String(due.requestId ?? ''))}</span>`;
+        toast.innerHTML = `<div class="sim-state-icon"><i class="fa fa-refresh"></i></div>`
+            + `<div class="sim-state-text">`
+            + `<div class="sim-state-name">경로 재탐색</div>`
+            + `<div class="sim-state-sub">${escapeHtml(due.reason)}`
+            + (due.requestId ? ` · ${escapeHtml(String(due.requestId))}` : '')
+            + `</div></div>`;
         toast.classList.remove('hidden');
         simRerouteToastUntil = state.t + SIM_REROUTE_TOAST_MS;
     } else if (state.t > simRerouteToastUntil) {
@@ -786,7 +782,6 @@ function simApply(state) {
     refreshSdiBlockHud(state.t);
     simRenderTbtBanner(state);
     simRenderAlerts(state);
-    simRenderSpeedBadge(state);
     simRenderTripBar(state);
     simRenderLaneAssist(state);
     simUpdateMarkerReveal(state);
@@ -889,6 +884,19 @@ function simRenderStatus(state) {
 
 let simStateStripKey = null;
 
+// 주행 이벤트(정차 / 주차장 / GPS 음영 / 맵매칭 피드백 / 경로 재탐색)는 모두 같은
+// 카드 모양으로 좌측 하단 한 줄에 쌓는다. 예전에는 재탐색만 안내 스택에 청록
+// 토스트로 따로 떠서 다른 이벤트와 언어가 어긋났다.
+function simEventStack() {
+    let el = document.getElementById('simEventStack');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'simEventStack';
+        (document.getElementById('main-content') || document.body).appendChild(el);
+    }
+    return el;
+}
+
 function simEnsureStateStrip() {
     let el = document.getElementById('simStateStrip');
     if (!el) {
@@ -899,9 +907,7 @@ function simEnsureStateStrip() {
         el.addEventListener('click', (e) => {
             if (e.target.closest('[data-action="skip-stop"]')) simSkipStop();
         });
-        // 안내 스택과 분리된 고정 슬롯에 둔다 — 위쪽 안내가 늘거나 줄어도
-        // 상태 카드의 위치가 흔들리지 않는다.
-        (document.getElementById('main-content') || document.body).appendChild(el);
+        simEventStack().appendChild(el);
     }
     return el;
 }
@@ -1025,7 +1031,6 @@ function resetSimulationForNewData() {
     document.getElementById('simStateStrip')?.classList.add('hidden');
     document.getElementById('simLaneAssist')?.classList.add('hidden');
     document.getElementById('simTbt')?.classList.add('hidden');
-    document.getElementById('simSpeed')?.classList.add('hidden');
     document.getElementById('simTrip')?.classList.add('hidden');
     simClearMarkerReveal();
     simLanePoints = [];
@@ -1064,7 +1069,6 @@ function simStop() {
     document.getElementById('simRerouteToast')?.classList.add('hidden');
     document.getElementById('simLaneAssist')?.classList.add('hidden');
     document.getElementById('simTbt')?.classList.add('hidden');
-    document.getElementById('simSpeed')?.classList.add('hidden');
     document.getElementById('simTrip')?.classList.add('hidden');
     simClearMarkerReveal();
     simFiredRerouteIds = new Set();
