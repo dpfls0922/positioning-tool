@@ -153,13 +153,25 @@ def create_tile_controller(base: str = "") -> Blueprint:
 
     @bp.get("/api/vsm/points")
     def vsm_points_api():
-        """선택한 타일 안의 SDI 좌표만 돌려준다."""
+        """선택한 범위의 SDI 좌표.
+
+        cell=<키> 를 주면 셀(= 메시, 7.5분 x 5분) 하나를 통째로, x/y 를 주면
+        타일 하나만 돌려준다.
+        """
+        cell_key = request.args.get("cell")
+        if cell_key:
+            try:
+                points = SdiCellSource.points_in_cell(int(cell_key))
+            except ValueError:
+                return jsonify({"ok": False, "error": f"셀 키가 잘못됐습니다: {cell_key}"}), 400
+            return jsonify({"ok": True, "points": annotate_with_log_types(points), "scope": "cell"})
+
         try:
             tile_x = int(request.args["x"]); tile_y = int(request.args["y"])
             zoom = int(request.args.get("zoom", geo.DEFAULT_TILE_ZOOM))
         except (KeyError, ValueError):
-            return jsonify({"ok": False, "error": "x, y 가 필요합니다."}), 400
+            return jsonify({"ok": False, "error": "cell 또는 x, y 가 필요합니다."}), 400
         points = annotate_with_log_types(SdiCellSource.points_in_tile(tile_x, tile_y, zoom))
-        return jsonify({"ok": True, "points": points})
+        return jsonify({"ok": True, "points": points, "scope": "tile"})
 
     return bp

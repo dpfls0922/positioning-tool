@@ -6,9 +6,10 @@ let vsmStatus = null;
 let vsmCellsLoading = false;
 let vsmPointsLoading = false;
 
-// 타일 하나만 그리므로 예전만큼 조일 필요가 없다. 이 아래에서는 타일이
-// 화면에서 너무 작아 점이 서로 겹친다.
-const VSM_POINT_MIN_ZOOM = 14;
+// 하한은 무엇을 골랐는지에 따라 다르다. 메시(7.5분 x 5분)로 찾으면 화면 폭에
+// 따라 z10 언저리에 맞춰지므로 거기까지는 그려야 "메시 하나를 통째로" 볼 수
+// 있다. 타일(약 1.2 km)은 그 줌에서 점 몇 개짜리 얼룩이라 의미가 없다.
+const VSM_POINT_MIN_ZOOM = { mesh: 10, tile: 13 };
 
 // 개수에 따른 색. 도심 셀이 1000건을 넘으므로 구간을 넓게 잡는다.
 const CELL_FILL_MAX_ZOOM = 12;
@@ -114,16 +115,28 @@ async function refreshSdiCells() {
 }
 
 // --- 선택한 타일의 SDI ---
+// 메시 하나를 통째로 보면 1,000건이 넘어 원래 크기로는 서로 덮는다.
+// 줌에 맞춰 줄여서 개수는 유지하되 형태가 남게 한다.
+function vsmPointSize(zoom, exact) {
+    if (zoom >= 15) return exact ? 30 : 22;
+    if (zoom >= 13) return exact ? 24 : 18;
+    if (zoom >= 12) return exact ? 17 : 13;
+    return exact ? 12 : 9;
+}
+
 function vsmPointIcon(point) {
-    const size = point.exact ? 30 : 22;
+    const zoom = map.getZoom();
+    const size = vsmPointSize(zoom, point.exact);
     const url = safeDriveIconUrl(point.type);
-    const badge = point.speed_limit
+    // 제한속도 배지는 작게 그리면 읽히지도 않고 아이콘만 가린다.
+    const badge = point.speed_limit && zoom >= 14
         ? `<div class="sdi-badge">${point.speed_limit}</div>` : '';
     // 설치점이 아닌 것(안내점)은 흐리게. 카메라 하나에 보통 둘씩 붙는다.
     const cls = point.exact ? 'sdi-pin' : 'sdi-pin ahead';
     const body = url
         ? `<img src="${url}" width="${size}" height="${size}" style="display:block">${badge}`
-        : `<span class="type-chip">${(point.type_name || '').slice(0, 2)}</span>${badge}`;
+        : `<span class="type-chip${size < 17 ? ' dot' : ''}">`
+          + `${size < 17 ? '' : (point.type_name || '').slice(0, 2)}</span>${badge}`;
     return L.divIcon({
         className: '',
         html: `<div class="${cls}" style="width:${size}px;height:${size}px">${body}</div>`,
@@ -168,18 +181,24 @@ async function refreshVsmPoints() {
         setVsmPointHint('');
         return;
     }
-    if (map.getZoom() < VSM_POINT_MIN_ZOOM) {
+    const byMesh = currentTarget.matched === 'mesh' && currentCell;
+    const minZoom = byMesh ? VSM_POINT_MIN_ZOOM.mesh : VSM_POINT_MIN_ZOOM.tile;
+    if (map.getZoom() < minZoom) {
         vsmPointLayer.clearLayers();
-        setVsmPointHint(`줌 ${VSM_POINT_MIN_ZOOM} 이상에서 표시됩니다 (현재 ${map.getZoom()}).`);
+        setVsmPointHint(`줌 ${minZoom} 이상에서 표시됩니다 (현재 ${map.getZoom()}).`);
         return;
     }
     if (vsmPointsLoading) return;
 
     vsmPointsLoading = true;
     try {
+        // 메시로 찾았으면 그 메시(셀) 전체를, 좌표/타일로 찾았으면 그 타일만
+        // 그린다. 찾은 단위와 보이는 단위를 맞춰 준다.
         const tile = currentTarget.tile;
-        const data = await getJson(API_BASE
-            + `/api/vsm/points?x=${tile.x}&y=${tile.y}&zoom=${currentTarget.zoom}`);
+        const query = byMesh
+            ? `/api/vsm/points?cell=${currentCell.key}`
+            : `/api/vsm/points?x=${tile.x}&y=${tile.y}&zoom=${currentTarget.zoom}`;
+        const data = await getJson(API_BASE + query);
         const exactOnly = $('toggleExactOnly').checked;
         const shown = exactOnly ? data.points.filter((p) => p.exact) : data.points;
 
@@ -191,10 +210,11 @@ async function refreshVsmPoints() {
         });
 
         const exact = data.points.filter((p) => p.exact).length;
+        const scope = byMesh ? '메시 전체' : '이 타일';
         setVsmPointHint(data.points.length
-            ? `SDI <b>${data.points.length}건</b> · 설치점 <b>${exact}건</b>`
+            ? `${scope} SDI <b>${fmtNum(data.points.length)}건</b> · 설치점 <b>${exact}건</b>`
               + (exactOnly ? ' <span class="sub">(설치점만 표시 중)</span>' : '')
-            : 'SDI 가 없는 타일입니다.');
+            : `${scope}에는 SDI 가 없습니다.`);
     } catch (ex) {
         setVsmPointHint(ex.message);
     } finally {

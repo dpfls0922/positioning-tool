@@ -865,3 +865,10 @@ button.ghost:hover {
 
 /* 앞쪽 .legend 규칙의 flex-direction: column 을 되돌린다. */
 .legend { flex-direction: row; flex-wrap: wrap; }
+
+/* 멀리서 볼 때는 글자가 안 들어가므로 점으로 떨어뜨린다. */
+.type-chip.dot {
+    border-radius: 50%;
+    border-width: 2px;
+    background: var(--accent-soft);
+}

@@ -83,7 +83,10 @@ class SdiCellSource:
     def points_in_cell(cls, key):
         if cls._db is None:
             return []
-        return cls._db.points_in_cell(key)
+        points = cls._db.points_in_cell(key)
+        for point in points:
+            point["cell"] = int(key)
+        return points
 
     @classmethod
     def cell_at(cls, lat, lon):
