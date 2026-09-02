@@ -6,3 +6,6 @@ result_*.html
 
 # API 키 등 로컬 환경변수
 .env
+
+# VSM 서버에서 받은 리소스 캐시 (서버에서 다시 받으면 된다)
+data/vsm_cache/

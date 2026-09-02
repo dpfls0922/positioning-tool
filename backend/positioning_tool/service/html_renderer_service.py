@@ -26,6 +26,10 @@ def render_html(markers_data=None, lines_data=None):
                 <div id="sidebar-header">
                     <span id="sidebar-brand">positioning map</span>
                 </div>
+                <nav class="app-tabs">
+                    <a class="app-tab active" href="/">포지셔닝</a>
+                    <a class="app-tab" href="/sdi">SDI 검색</a>
+                </nav>
                 <div id="sidebar-search">
                     <div id="omnibox-wrap">
                         <div id="omnibox-field">
