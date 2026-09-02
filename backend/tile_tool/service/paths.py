@@ -10,6 +10,9 @@ TILE_ASSET_DIR = os.path.join(STATIC_DIR, "tile")
 # 서버에서 받은 VSM 리소스를 캐시해 두는 곳(재실행해도 다시 받지 않는다).
 VSM_CACHE_DIR = os.path.join(PROJECT_ROOT, "data", "vsm_cache")
 
+# 패키지로 묶을 때 심는 빌드 표시(저장소에서 바로 돌리면 없다).
+BUILD_STAMP_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "BUILD")
+
 TILE_CSS = os.path.join(TILE_ASSET_DIR, "tile.css")
 
 # 포지셔닝 화면과 함께 쓰는 화면 전환 자산 (positioning-tool 에 마운트됐을 때만 사용)

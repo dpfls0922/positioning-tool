@@ -12,7 +12,9 @@ positioning-tool 저장소 전체가 아니라 이 툴이 실제로 쓰는 것�
 """
 
 import os
+import subprocess
 import zipfile
+from datetime import datetime
 
 from backend.tile_tool.service.paths import (
     PROJECT_ROOT,
@@ -102,12 +104,25 @@ def _add_tree(archive, src_dir, arc_prefix, skip_dirs=("__pycache__",)):
     return added
 
 
+def _build_stamp():
+    """언제 만든 패키지인지. 예전에 푼 폴더를 계속 쓰는 걸 알아채려고 넣는다."""
+    when = datetime.now().strftime("%Y-%m-%d %H:%M")
+    try:
+        sha = subprocess.run(
+            ["git", "-C", PROJECT_ROOT, "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=5).stdout.strip()
+    except Exception:
+        sha = ""
+    return f"{when} {sha}".strip()
+
+
 def build(out_path, include_cache=True):
     out_path = os.path.abspath(os.path.expanduser(out_path))
     counts = {}
 
     with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr(os.path.join(ROOT_NAME, "run.py"), RUN_PY)
+        archive.writestr(os.path.join(ROOT_NAME, "backend", "tile_tool", "BUILD"), _build_stamp())
         archive.writestr(os.path.join(ROOT_NAME, "README.md"), README)
         archive.writestr(os.path.join(ROOT_NAME, "requirements.txt"), REQUIREMENTS)
         # backend 를 패키지로 만들기 위한 빈 __init__.py

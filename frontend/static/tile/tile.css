@@ -872,3 +872,10 @@ button.ghost:hover {
     border-width: 2px;
     background: var(--accent-soft);
 }
+
+/* 어느 시점 패키지인지. 예전에 푼 폴더를 계속 쓰는 걸 알아채라고 둔다. */
+.src-line .build {
+    display: block;
+    margin-top: 3px;
+    opacity: .7;
+}

@@ -9,6 +9,7 @@ import os
 from backend.tile_tool.service.paths import (
     APP_SWITCH_CSS,
     APP_SWITCH_JS,
+    BUILD_STAMP_FILE,
     TILE_ASSET_DIR,
     TILE_CSS,
     TILE_JS_FILES,
@@ -20,6 +21,11 @@ def _read(path):
         return ""
     with open(path, "r", encoding="utf-8") as handle:
         return handle.read()
+
+
+def build_stamp():
+    """패키지로 받은 빌드면 언제 만든 것인지. 저장소에서 바로 돌리면 빈 값."""
+    return _read(BUILD_STAMP_FILE).strip()
 
 
 def load_script():
@@ -49,6 +55,8 @@ def render_page(base=""):
     # 마운트되면 positioning-tool 의 테마(기본 다크)를 따라가고, 단독으로 떼어
     # 가면 밝은 화면으로 연다. tile.css 가 두 팔레트를 다 들고 있다.
     theme = "" if base else ' data-theme="light"'
+    stamp = build_stamp()
+    build_line = f'<span class="build">빌드 {stamp}</span>' if stamp else ""
     # 화면 전환 자산은 탭이 있을 때만 심는다 — 단독 패키지로 떼어 가면 오갈
     # 상대 화면이 없다.
     app_switch_css = "<style>\n" + _read(APP_SWITCH_CSS) + "\n</style>" if base else ""
@@ -154,7 +162,10 @@ def render_page(base=""):
     </section>
 
     <div class="spacer"></div>
-    <footer id="vsmStatus" class="src-line"></footer>
+    <footer class="src-line">
+      <span id="vsmStatus"></span>
+      {build_line}
+    </footer>
   </aside>
 
   <main id="mapWrap">
