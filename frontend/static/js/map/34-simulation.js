@@ -344,7 +344,12 @@ function simRenderTripBar(state) {
         + `<div class="sim-trip-label">${label}</div></div>`;
 
     el.innerHTML =
-        cell(Math.round(state.speed), 'km/h', '현재속도')
+        // 로그의 speed 값은 그대로(m/s 로 보이는 값), 그리고 ×3.6 한 km/h 를 같이 둔다.
+        // navisdk 내부의 pParsedData->speed 는 km/h 이지만(FeedbackPositionDetector 가
+        // /3.6 해서 m/s 로 넘긴다) 로그 줄에 따라 어느 쪽인지 달라서 둘 다 표시한다.
+        cell(state.speed.toFixed(1), 'm/s', '현재속도')
+        + `<span class="sim-trip-sep"></span>`
+        + cell((state.speed * 3.6).toFixed(1), 'km/h', '×3.6')
         + `<span class="sim-trip-sep"></span>`
         + cell(
             remainM >= 1000 ? (remainM / 1000).toFixed(1) : Math.round(remainM),
@@ -889,7 +894,8 @@ function simRenderStatus(state) {
     const done = state.t - simTrack[0].t;
     el.querySelector('[data-role="clock"]').textContent = new Date(state.t)
         .toTimeString().slice(0, 8);
-    el.querySelector('[data-role="speed"]').textContent = `${Math.round(state.speed)} km/h`;
+    el.querySelector('[data-role="speed"]').textContent =
+        `${state.speed.toFixed(1)} m/s · ${(state.speed * 3.6).toFixed(1)} km/h`;
     const bar = el.querySelector('[data-role="bar"]');
     if (bar) bar.style.width = `${total > 0 ? (done / total) * 100 : 0}%`;
 
