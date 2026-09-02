@@ -2984,14 +2984,25 @@ html, body {
 }
 /* 레이어 토글은 원본이 어두운 아이콘이라 화이트 배경에서 반전이 필요 없다. */
 
+/* 지도 컨트롤은 다크 테마에서도 흰 패널로 두기 때문에(위 주석 참고) 글씨는
+   테마 토큰(--text: 밝은 회색)이 아니라 진한 회색으로 고정한다. 밝은 회색이면
+   흰 배경에 묻혀서 레이어 이름이 보이지 않았다. */
 .leaflet-control-layers-expanded {
     padding: 8px 10px;
     font-size: var(--fs-body);
-    color: var(--control-fg);
+    color: #1f2937;
 }
 
-.leaflet-control-layers-expanded label {
-    color: var(--text);
+.leaflet-control-layers-expanded label,
+.leaflet-control-layers-expanded label span,
+.leaflet-control-layers-base label,
+.leaflet-control-layers-overlays label {
+    color: #1f2937;
+    font-weight: 500;
+}
+
+.leaflet-control-layers-separator {
+    border-top-color: #d7dee8;
 }
 
 .leaflet-control-attribution {
@@ -3418,9 +3429,11 @@ html[data-theme="light"] .place-review-head {
     transition: opacity .35s ease, filter .35s ease;
 }
 
+/* 아직 안내 구간이 아닌 지점. 경로 위에 무엇이 있는지는 보이되 다가온 것과
+   구분되도록 절제해서 그린다(0.1 은 사실상 안 보여서 새 경로가 비어 보였다). */
 .leaflet-marker-icon.sim-marker-idle {
-    opacity: 0.1;
-    filter: grayscale(1);
+    opacity: 0.4;
+    filter: grayscale(0.85);
 }
 
 .leaflet-marker-icon.sim-marker-live {

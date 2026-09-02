@@ -834,6 +834,18 @@ function simFollowTo(state) {
 
 // Shows only the route that was live at this moment. The layers people had
 // toggled on are remembered so stopping the simulation puts the map back.
+// 경로에 딸린 마커 레이어(GP Guide / GP Lane Color / GP Lane Bubble 등,
+// '<이름> · Route Info N' 형태)까지 함께 켜고 끈다. 경로만 바꾸면 지나간 경로의
+// 안내지점·차선 버블이 새 경로 위에 그대로 남아 어느 경로의 것인지 알 수 없었다.
+function simSetRouteLayerVisible(name, show) {
+    [name, ...routeChildLayerNames(name)].forEach((layerName) => {
+        const group = featureGroups[layerName];
+        if (!group) return;
+        if (show && !map.hasLayer(group)) { map.addLayer(group); activeGroups.add(layerName); }
+        if (!show && map.hasLayer(group)) { map.removeLayer(group); activeGroups.delete(layerName); }
+    });
+}
+
 function simApplyActiveRoute(state) {
     if (simRouteLayerNames.length === 0) return;
     let active = null;
@@ -841,27 +853,29 @@ function simApplyActiveRoute(state) {
     if (active === simRouteHiddenFor) return;
 
     if (simRouteSavedActive === null) {
-        simRouteSavedActive = simRouteLayerNames.filter((n) => activeGroups.has(n));
+        // 경로와 그 하위 마커 레이어의 원래 on/off 를 함께 기억한다.
+        simRouteSavedActive = simRouteLayerNames
+            .flatMap((n) => [n, ...routeChildLayerNames(n)])
+            .filter((n) => activeGroups.has(n));
     }
     simRouteHiddenFor = active;
-    simRouteLayerNames.forEach((name) => {
-        const group = featureGroups[name];
-        if (!group) return;
-        const show = name === active;
-        if (show && !map.hasLayer(group)) { map.addLayer(group); activeGroups.add(name); }
-        if (!show && map.hasLayer(group)) { map.removeLayer(group); activeGroups.delete(name); }
-    });
+    simRouteLayerNames.forEach((name) => simSetRouteLayerVisible(name, name === active));
+    // 경로가 바뀌면 그 경로의 마커를 다시 수집한다 (숨어 있던 레이어의 마커는
+    // DOM 요소가 없어 노출 상태를 못 잡는다).
+    simMarkerTargets = [];
     renderLayerControls();
 }
 
 function simRestoreRoutes() {
     if (simRouteSavedActive === null) return;
     simRouteLayerNames.forEach((name) => {
-        const group = featureGroups[name];
-        if (!group) return;
-        const show = simRouteSavedActive.includes(name);
-        if (show && !map.hasLayer(group)) { map.addLayer(group); activeGroups.add(name); }
-        if (!show && map.hasLayer(group)) { map.removeLayer(group); activeGroups.delete(name); }
+        [name, ...routeChildLayerNames(name)].forEach((layerName) => {
+            const group = featureGroups[layerName];
+            if (!group) return;
+            const show = simRouteSavedActive.includes(layerName);
+            if (show && !map.hasLayer(group)) { map.addLayer(group); activeGroups.add(layerName); }
+            if (!show && map.hasLayer(group)) { map.removeLayer(group); activeGroups.delete(layerName); }
+        });
     });
     simRouteSavedActive = null;
     simRouteHiddenFor = null;

@@ -21,6 +21,12 @@ const baseLayers = {
         maxZoom: 22,
         attribution: 'Google Satellite'
     }),
+    // 구글 어스처럼 위성사진 위에 도로·지명 라벨이 얹힌 하이브리드(lyrs=y).
+    // 차로 형상을 위성으로 보면서 도로명을 같이 읽을 때 쓴다.
+    "Google Earth (위성+라벨)": L.tileLayer('http://mt0.google.com/vt/lyrs=y&hl=ko&x={x}&y={y}&z={z}', {
+        maxZoom: 22,
+        attribution: 'Google Hybrid'
+    }),
     "OpenStreetMap": L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         maxZoom: 25,
         attribution: '&copy; OpenStreetMap contributors'
