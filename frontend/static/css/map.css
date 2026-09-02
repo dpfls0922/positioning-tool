@@ -3792,3 +3792,12 @@ html[data-theme="light"] .place-review-head {
 #naviStack > #simTbt { order: 1; }
 #naviStack > #sdiBlockHud { order: 2; }
 #naviStack > #simAlerts { order: 3; }
+
+/* 툴바에는 <button> 과 <a>(다른 툴로 나가는 링크)가 섞여 있다.
+   앵커도 버튼과 똑같이 보이도록 맞춘다. */
+a.tool-btn {
+    display: grid;
+    place-items: center;
+    text-decoration: none;
+    box-sizing: border-box;
+}
