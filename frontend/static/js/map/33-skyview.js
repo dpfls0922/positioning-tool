@@ -27,7 +27,7 @@ function ensureSkyviewPanel() {
     if (skyviewApi) return skyviewApi;
     skyviewApi = createFloatingPanel({
         id: SKYVIEW_PANEL_ID,
-        title: '위성(스카이뷰)',
+        title: '카카오맵 (위성 / 일반)',
         defaultSize: { width: 460, height: 340 },
         storageKey: 'positioningTool.skyviewSize',
         bodyHtml: `
@@ -165,7 +165,7 @@ function bindSkyviewEvents() {
     const btn = addKakaoToolbarButton({
         id: 'toolSkyviewBtn',
         icon: 'fa-globe',
-        title: '위성(스카이뷰)',
+        title: '카카오맵 (위성 / 일반) — 카카오 타일은 배경지도로 못 쓰므로 별도 창',
         onClick: () => {
             if (skyviewApi && skyviewApi.isOpen()) {
                 skyviewApi.close();
@@ -176,7 +176,7 @@ function bindSkyviewEvents() {
     });
     if (btn && typeof kakaoJsKeySet !== 'undefined' && !kakaoJsKeySet) {
         btn.disabled = true;
-        btn.title = '위성(스카이뷰) — KAKAO_JS_KEY 환경변수를 설정하면 활성화됩니다';
+        btn.title = '카카오맵 — KAKAO_JS_KEY 환경변수를 설정하면 활성화됩니다';
     }
 
     // Leaflet 을 움직이면 위성 패널도 따라간다.
