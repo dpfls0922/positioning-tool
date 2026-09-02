@@ -30,6 +30,10 @@ function ensureSkyviewPanel() {
         title: '카카오맵 (위성 / 일반)',
         defaultSize: { width: 460, height: 340 },
         storageKey: 'positioningTool.skyviewSize',
+        // 레이어 목록의 '카카오맵' 체크와 상태를 맞춘다.
+        onClose: () => {
+            if (typeof syncKakaoOverlayCheckbox === 'function') syncKakaoOverlayCheckbox(false);
+        },
         bodyHtml: `
             <div class="skyview-toolbar">
                 <label class="skyview-check"><input type="checkbox" data-skyview-sync checked> 지도와 동기화</label>
@@ -128,6 +132,7 @@ function updateSkyviewMarker(lat, lon) {
 async function openSkyview(lat = null, lon = null) {
     const api = ensureSkyviewPanel();
     api.open();
+    if (typeof syncKakaoOverlayCheckbox === 'function') syncKakaoOverlayCheckbox(true);
 
     const center = Number.isFinite(lat) && Number.isFinite(lon)
         ? { lat, lng: lon }
