@@ -76,6 +76,9 @@ function refreshDrSelectionStyles(clickedMarker) {
 function drawPolylines(lines) {
     polylines = [];
     clearRouteInfoSelection();
+    // 처음엔 모든 레이어가 켜져 있으므로 전체 기준으로 겹침을 센다;
+    // 이후 레이어 토글 시 보이는 레이어 기준으로 재계산된다.
+    rebuildRouteInfoOverlapCounts(lines);
     refreshRouteInfoLinkIds(lines);
     renderRouteInfoMarkers(lines);
     lines.forEach(line => {
@@ -121,8 +124,10 @@ function drawPolylines(lines) {
             }
             else if (type === "Route Info" && extra) {
                 const routeAngle = computeSegmentHeadingDegrees(line.start, line.end);
+                const overlapCount = getRouteInfoOverlapCount(line);
                 const popupRows = [
                     `session: ${extra.route_session_name ?? 'Route Info'}`,
+                    ...(overlapCount >= 2 ? [`겹침: ${overlapCount}개 경로선`] : []),
                     `order: ${extra.route_sequence ?? '-'}`,
                     `LINK_ID: ${extra.link_id ?? '-'}`,
                     `dir: ${extra.dir ?? '-'}`,

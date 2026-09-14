@@ -449,6 +449,11 @@ function appendLayerRows(childWrap, groups) {
                 }
             }
 
+            // Route Info 세션을 켜고 끄면 겹침 음영도 보이는 레이어 기준으로 재계산
+            if (name === 'Route Info' || name.startsWith(ROUTE_INFO_LAYER_PREFIX)) {
+                refreshRouteInfoOverlapShading();
+            }
+
             if (name === SEGMENT_FB_LAYER) refreshLaneWidthLayer();
             updateMap();
             renderLayerControls();

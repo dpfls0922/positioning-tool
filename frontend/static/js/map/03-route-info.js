@@ -280,6 +280,44 @@ function getRouteInfoMarkerLayerName(routeLayerName) {
 // 캔버스에서 실제로 먹는 속성(두께·둥근 끝·불투명 실선)으로만 대비를 올린다.
 const ROUTE_LINE_NAV_COLOR = '#1a73e8';
 
+// ---- 겹침 음영 ------------------------------------------------------------ //
+// 경로선은 원래대로 또렷하게 그리고, 2개 이상의 경로선이 지나는 구간만 더
+// 진한 파랑으로 칠한다. 링크 ID(없으면 좌표) 기준으로 겹침 횟수를 세며,
+// Route Info 레이어를 켜고 끌 때마다 보이는 레이어 기준으로 재계산한다.
+const ROUTE_LINE_OVERLAP2_COLOR = '#0d47a1';
+const ROUTE_LINE_OVERLAP3_COLOR = '#062b6e';
+let routeInfoOverlapCounts = new Map();
+
+function routeInfoOverlapKey(line) {
+    const linkId = Number(line?.extra?.link_id);
+    if (Number.isFinite(linkId)) return `L${linkId}`;
+    const fmt = (pt) => `${Number(pt?.[0]).toFixed(6)},${Number(pt?.[1]).toFixed(6)}`;
+    const a = fmt(line?.start);
+    const b = fmt(line?.end);
+    // 방향이 반대여도 같은 도로면 같은 키가 되도록 정렬
+    return a < b ? `G${a}|${b}` : `G${b}|${a}`;
+}
+
+function rebuildRouteInfoOverlapCounts(lines, { onlyActiveLayers = false } = {}) {
+    routeInfoOverlapCounts = new Map();
+    (Array.isArray(lines) ? lines : []).forEach((line) => {
+        if (line?.type !== 'Route Info') return;
+        if (onlyActiveLayers && !activeGroups.has(getRouteInfoLayerName(line))) return;
+        const key = routeInfoOverlapKey(line);
+        routeInfoOverlapCounts.set(key, (routeInfoOverlapCounts.get(key) || 0) + 1);
+    });
+}
+
+function getRouteInfoOverlapCount(line) {
+    return routeInfoOverlapCounts.get(routeInfoOverlapKey(line)) || 0;
+}
+
+// 현재 켜져 있는 Route Info 레이어 기준으로 겹침 음영을 다시 계산한다
+function refreshRouteInfoOverlapShading() {
+    rebuildRouteInfoOverlapCounts(linesData, { onlyActiveLayers: true });
+    refreshRouteInfoPolylineStyles();
+}
+
 function getRouteInfoLineStyle(line) {
     const isSelected = Number.isFinite(selectedRouteInfoLineId) && line?.id === selectedRouteInfoLineId;
     const isNext = Number.isFinite(selectedRouteInfoNextLineId) && line?.id === selectedRouteInfoNextLineId;
@@ -290,14 +328,18 @@ function getRouteInfoLineStyle(line) {
     if (isNext) {
         return { color: '#f59e0b', weight: 7, dashArray: null, opacity: 1, lineCap: 'round', lineJoin: 'round' };
     }
-    // 약간 반투명하게 그려서 경로가 겹치는 구간은 알파가 누적되어 저절로 더
-    // 진하게 보인다 (1겹 0.6 → 2겹 0.84 → 3겹 0.94). 실선이라 점선 위상 문제
-    // 없이 깔끔하게 포개진다.
+    const overlap = getRouteInfoOverlapCount(line);
+    if (overlap >= 3) {
+        return { color: ROUTE_LINE_OVERLAP3_COLOR, weight: 7, dashArray: null, opacity: 1, lineCap: 'round', lineJoin: 'round' };
+    }
+    if (overlap === 2) {
+        return { color: ROUTE_LINE_OVERLAP2_COLOR, weight: 7, dashArray: null, opacity: 1, lineCap: 'round', lineJoin: 'round' };
+    }
     return {
         color: ROUTE_LINE_NAV_COLOR,
         weight: 7,
         dashArray: null,
-        opacity: 0.6,
+        opacity: 1,
         lineCap: 'round',
         lineJoin: 'round'
     };
@@ -314,6 +356,13 @@ function applyRouteInfoPolylineStyle(polyline) {
         polyline.setStyle({ ...style, opacity: 0, weight: 0 });
     } else {
         polyline.setStyle(style);
+        // 선택/다음 구간이 겹친 다른 경로선 밑에 깔리지 않게 맨 위로 올린다
+        const isHighlighted =
+            (Number.isFinite(selectedRouteInfoLineId) && line.id === selectedRouteInfoLineId) ||
+            (Number.isFinite(selectedRouteInfoNextLineId) && line.id === selectedRouteInfoNextLineId);
+        if (isHighlighted && typeof polyline.bringToFront === 'function' && polyline._map) {
+            polyline.bringToFront();
+        }
     }
 }
 
