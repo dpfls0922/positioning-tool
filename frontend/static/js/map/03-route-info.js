@@ -32,25 +32,33 @@ function renderRouteInfoMarkers(lines) {
         const group = ensureTmapFeatureGroup(routeLayerName);
         removeRoutePointMarkersFromGroup(group);
 
-        const firstLine = sessionLines[0];
-        const lastLine = sessionLines[sessionLines.length - 1];
+        // Order by route_sequence so the fallback S/E markers really land on the
+        // route's first/last segment, not just the first/last parsed log line.
+        const orderedLines = sessionLines.slice().sort(
+            (a, b) => (a.extra?.route_sequence ?? 0) - (b.extra?.route_sequence ?? 0)
+        );
+        const firstLine = orderedLines[0];
+        const lastLine = orderedLines[orderedLines.length - 1];
 
         // Prefer the request's own [출발지, 경유지..., 목적지] set when available
-        const request = findRequestForRouteSession(sessionLines[0]?.extra?.route_session_id);
+        const request = findRequestForRouteSession(orderedLines[0]?.extra?.route_session_id);
         let routePointMarkers = buildRoutePointSetMarkers(request, routeLayerName);
 
         if (routePointMarkers.length === 0) {
-            // Fallback: first/last parsed segment endpoints
+            // Fallback: first/last segment endpoints (경로 파싱 지점 기준 — 요청
+            // 로그의 출발/도착 지점이 없을 때의 근사값임을 팝업에 명시)
             routePointMarkers = [
                 L.marker(firstLine.start, { icon: buildRoutePointIcon('S', '#16a34a', '출발') })
                     .bindPopup(
                         `<b>${routeLayerName} Start</b><br>` +
+                        `(경로 첫 세그먼트 기준 근사값)<br>` +
                         `Lat: ${Number(firstLine.start[0]).toFixed(7)}<br>` +
                         `Lon: ${Number(firstLine.start[1]).toFixed(7)}`
                     ),
                 L.marker(lastLine.end, { icon: buildRoutePointIcon('E', '#dc2626', '도착') })
                     .bindPopup(
                         `<b>${routeLayerName} End</b><br>` +
+                        `(경로 마지막 세그먼트 기준 근사값)<br>` +
                         `Lat: ${Number(lastLine.end[0]).toFixed(7)}<br>` +
                         `Lon: ${Number(lastLine.end[1]).toFixed(7)}`
                     )
@@ -147,8 +155,10 @@ function routePointToLatLng(point) {
 }
 
 // Build the [출발지, 경유지..., 목적지] marker set for one route request.
-// Points without coordinates are skipped, per-role styling:
-//   출발지 S(green) / 경유지 1..N(orange) / 목적지 E(red)
+// Points without coordinates are skipped (with a console warning), per-role
+// styling: 출발지 S(green) / 경유지 1..N(orange) / 목적지 E(red).
+// 경유지 numbering follows the log's own wayPoint index (0-based → 1-based),
+// so a skipped/unconvertible point no longer shifts the visible numbers.
 function buildRoutePointSetMarkers(request, layerLabel) {
     const routePoints = request?.extra?.route_points;
     if (!Array.isArray(routePoints) || routePoints.length === 0) return [];
@@ -158,24 +168,35 @@ function buildRoutePointSetMarkers(request, layerLabel) {
 
     routePoints.forEach((point) => {
         const latLng = routePointToLatLng(point);
-        if (!latLng) return;
+        if (!latLng) {
+            console.warn(
+                `[route_points] 좌표 변환 실패로 마커 생략: ${point.role}` +
+                `${point.name ? ` (${point.name})` : ''} SK=(${point.sk_x}, ${point.sk_y})`
+            );
+            return;
+        }
 
         let icon;
+        let viaRow = '';
         if (point.role === '출발지') {
             icon = buildRoutePointIcon('S', '#16a34a', '출발');
         } else if (point.role === '목적지') {
             icon = buildRoutePointIcon('E', '#dc2626', '도착');
         } else {
             viaCounter += 1;
-            icon = buildRoutePointIcon(String(viaCounter), '#f59e0b', `경유${viaCounter}`);
+            const viaNo = Number.isFinite(point.waypoint_index) ? point.waypoint_index + 1 : viaCounter;
+            icon = buildRoutePointIcon(String(viaNo), '#f59e0b', `경유${viaNo}`);
+            viaRow = `<br>wayPoint index: ${Number.isFinite(point.waypoint_index) ? point.waypoint_index : '-'}`;
+            if (point.fixed !== undefined) viaRow += `<br>fixed: ${escapeHtml(String(point.fixed))}`;
         }
 
         const nameRow = point.name ? `<br>이름: ${escapeHtml(point.name)}` : '';
         const marker = L.marker(latLng, { icon }).bindPopup(
             `<b>${escapeHtml(layerLabel || 'Route')} ${point.role}</b>` +
-            `${nameRow}` +
+            `${nameRow}${viaRow}` +
             `<br>Content ID: ${escapeHtml(String(request?.extra?.group_1 ?? '-'))}` +
-            `<br>Lat: ${latLng[0].toFixed(7)}<br>Lon: ${latLng[1].toFixed(7)}`
+            `<br>Lat: ${latLng[0].toFixed(7)}<br>Lon: ${latLng[1].toFixed(7)}` +
+            `<br>SK: (${escapeHtml(String(point.sk_x))}, ${escapeHtml(String(point.sk_y))})`
         );
         markers.push(marker);
     });
@@ -269,11 +290,14 @@ function getRouteInfoLineStyle(line) {
     if (isNext) {
         return { color: '#f59e0b', weight: 7, dashArray: null, opacity: 1, lineCap: 'round', lineJoin: 'round' };
     }
+    // 약간 반투명하게 그려서 경로가 겹치는 구간은 알파가 누적되어 저절로 더
+    // 진하게 보인다 (1겹 0.6 → 2겹 0.84 → 3겹 0.94). 실선이라 점선 위상 문제
+    // 없이 깔끔하게 포개진다.
     return {
         color: ROUTE_LINE_NAV_COLOR,
         weight: 7,
         dashArray: null,
-        opacity: 1,
+        opacity: 0.6,
         lineCap: 'round',
         lineJoin: 'round'
     };

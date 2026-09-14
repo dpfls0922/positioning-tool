@@ -578,7 +578,10 @@ function handleRequestIdSearch() {
                 const latLng = routePointToLatLng(point);
                 const coordText = latLng ? `[${latLng[0].toFixed(6)}, ${latLng[1].toFixed(6)}]` : '(좌표 변환 실패)';
                 const nameText = point.name ? ` ${escapeHtml(point.name)}` : '';
-                infoMsg += `${point.role}:${nameText} ${coordText}<br>`;
+                const roleText = point.role === '경유지' && Number.isFinite(point.waypoint_index)
+                    ? `경유지 ${point.waypoint_index + 1}`
+                    : point.role;
+                infoMsg += `${roleText}:${nameText} ${coordText}<br>`;
             });
         } else {
             infoMsg += `<br><b>목적지 위치 (경로 마지막 지점):</b><br>[${destination.lat}, ${destination.lon}]<br>`;

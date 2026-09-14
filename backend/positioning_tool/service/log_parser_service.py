@@ -1335,6 +1335,7 @@ def parse_route_request_points(line):
         entry = ROUTE_REQUEST_POINTS.setdefault(match.group(1), {"waypoints": {}})
         entry.setdefault("waypoints", {})[int(match.group(2))] = {
             "name": match.group(4).strip(),
+            "fixed": int(match.group(3)),
             "sk_x": int(match.group(5)),
             "sk_y": int(match.group(6)),
         }
