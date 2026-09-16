@@ -213,23 +213,7 @@ function classifyRoadNodeRule() {
     return 'default';
 }
 
-function getRoadLinkResolvedRule(props) {
-    if (Array.isArray(roadCustomLinkRules) && roadCustomLinkRules.length > 0) {
-        for (let i = 0; i < roadCustomLinkRules.length; i += 1) {
-            const customRule = roadCustomLinkRules[i];
-            if (!matchesCustomLinkRule(customRule, props)) continue;
-            const customKey = getCustomRoadLinkRuleKey(customRule);
-            return {
-                key: customKey || 'default',
-                label: customRule.customName || `${customRule.propKey}=${customRule.rawValue}`,
-                color: customRule.color || '#8b5cf6',
-                weight: Number(customRule.weight) || 2.1,
-                isCustom: true
-            };
-        }
-    }
-
-    const builtInKey = classifyRoadLinkRule(props);
+function resolveBuiltInRoadLinkRuleStyle(builtInKey) {
     const builtInRule = roadLinkRuleMap[builtInKey] || roadLinkRuleMap.default;
     const baseStyle = roadLinkBaseStyles?.[builtInRule?.key || 'default'] || {};
     return {
@@ -239,6 +223,41 @@ function getRoadLinkResolvedRule(props) {
         weight: clampRoadLinkWeight(baseStyle.weight ?? builtInRule?.weight ?? 2.1),
         isCustom: false
     };
+}
+
+// 한 링크는 여러 분류에 동시에 해당할 수 있다(예: 터널이면서 커스텀 '국도'
+// 규칙에도 매칭, 단지내도로이면서 지하도로). 매칭되는 규칙을 전부 반환하며,
+// 배열 첫 항목이 대표 규칙(기본 선 색)이다. 나머지는 점선 오버레이로 표현된다.
+function getRoadLinkMatchedRules(props) {
+    const rules = [];
+
+    if (Array.isArray(roadCustomLinkRules) && roadCustomLinkRules.length > 0) {
+        roadCustomLinkRules.forEach((customRule) => {
+            if (!matchesCustomLinkRule(customRule, props)) return;
+            const customKey = getCustomRoadLinkRuleKey(customRule);
+            rules.push({
+                key: customKey || 'default',
+                label: customRule.customName || `${customRule.propKey}=${customRule.rawValue}`,
+                color: customRule.color || '#8b5cf6',
+                weight: Number(customRule.weight) || 2.1,
+                isCustom: true
+            });
+        });
+    }
+
+    const roadCate = toRoadInt(findRoadPropValue(props, 'ROAD_CATE'));
+    const linkFacil = toRoadInt(findRoadPropValue(props, 'LINK_FACIL'));
+    if (roadCate === 11) rules.push(resolveBuiltInRoadLinkRuleStyle('parkingRoad'));
+    if (linkFacil === 4) rules.push(resolveBuiltInRoadLinkRuleStyle('underpass'));
+    if (linkFacil === 3) rules.push(resolveBuiltInRoadLinkRuleStyle('overpass'));
+    if (linkFacil === 2) rules.push(resolveBuiltInRoadLinkRuleStyle('tunnel'));
+
+    if (rules.length === 0) rules.push(resolveBuiltInRoadLinkRuleStyle('default'));
+    return rules;
+}
+
+function getRoadLinkResolvedRule(props) {
+    return getRoadLinkMatchedRules(props)[0];
 }
 
 function isRoadLinkRuleEnabled(ruleKey) {

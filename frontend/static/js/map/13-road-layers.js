@@ -275,6 +275,25 @@ function ensureRoadShapeLayers() {
         addLayerToGroup(ROAD_LINK_LAYER, roadLinkGeoLayer);
     }
 
+    if (!roadLinkMultiRuleGeoLayer) {
+        // 여러 분류에 동시에 해당하는 링크의 2번째 이후 규칙 색을 점선으로 겹쳐
+        // 그린다(기본 선 색은 대표 규칙). Road Link 레이어와 함께 켜지고 꺼진다.
+        roadLinkMultiRuleGeoLayer = L.geoJSON(null, {
+            pane: 'roadLinkPane',
+            renderer: roadCanvasRenderer,
+            interactive: false,
+            style: (feature) => ({
+                color: feature?.properties?.__overlayColor || '#8b5cf6',
+                weight: Number(feature?.properties?.__overlayWeight) || 2.1,
+                opacity: 0.95,
+                dashArray: (Number(feature?.properties?.__overlayIdx) || 0) % 2 === 0 ? '5 7' : '2 12'
+            })
+        });
+        addLayerToGroup(ROAD_LINK_LAYER, roadLinkMultiRuleGeoLayer);
+        // addLayerToGroup이 options.pane을 덮어쓰므로 복원
+        roadLinkMultiRuleGeoLayer.options.pane = 'roadLinkPane';
+    }
+
     if (!roadLaneWidthGeoLayer) {
         roadLaneWidthGeoLayer = createLaneWidthGeoLayer('roadLaneWidthPane', roadCanvasRendererLane, laneWidthConfig);
         addLayerToGroup(LANE_WIDTH_LAYER, roadLaneWidthGeoLayer);

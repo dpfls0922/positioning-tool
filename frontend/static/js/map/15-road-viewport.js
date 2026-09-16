@@ -6,6 +6,7 @@ function queryRoadViewport() {
     const zoom = map.getZoom();
     if (zoom < roadMinZoom) {
         if (roadLinkGeoLayer) roadLinkGeoLayer.clearLayers();
+        if (roadLinkMultiRuleGeoLayer) roadLinkMultiRuleGeoLayer.clearLayers();
         if (roadNodeGeoLayer) roadNodeGeoLayer.clearLayers();
         if (roadLinkVertexGeoLayer) roadLinkVertexGeoLayer.clearLayers();
         if (roadLaneWidthGeoLayer) roadLaneWidthGeoLayer.clearLayers();
@@ -63,6 +64,7 @@ function renderRoadViewportFeatures(linkFeatures, nodeFeatures) {
     ensureRoadShapeLayers();
     if (map.getZoom() < roadMinZoom) {
         if (roadLinkGeoLayer) roadLinkGeoLayer.clearLayers();
+        if (roadLinkMultiRuleGeoLayer) roadLinkMultiRuleGeoLayer.clearLayers();
         if (roadNodeGeoLayer) roadNodeGeoLayer.clearLayers();
         if (roadLinkVertexGeoLayer) roadLinkVertexGeoLayer.clearLayers();
         if (roadLaneWidthGeoLayer) roadLaneWidthGeoLayer.clearLayers();
@@ -81,22 +83,24 @@ function renderRoadViewportFeatures(linkFeatures, nodeFeatures) {
         const props = feature?.properties || {};
         return {
             feature,
-            rule: getRoadLinkResolvedRule(props)
+            rules: getRoadLinkMatchedRules(props)
         };
     });
 
+    // 한 링크가 여러 분류에 해당하면 각 분류의 카운트에 모두 포함시킨다
     const linkRuleCounts = {};
     resolvedLinkEntries.forEach((entry) => {
-        const ruleKey = entry.rule?.key || 'default';
-        linkRuleCounts[ruleKey] = (linkRuleCounts[ruleKey] || 0) + 1;
+        (entry.rules || []).forEach((rule) => {
+            const ruleKey = rule?.key || 'default';
+            linkRuleCounts[ruleKey] = (linkRuleCounts[ruleKey] || 0) + 1;
+        });
     });
     roadLinkRenderedRuleCounts = linkRuleCounts;
 
-    const visibleLinks = sourceLinks.filter((feature) => {
-        const props = feature?.properties || {};
-        const resolvedRule = getRoadLinkResolvedRule(props);
-        return isRoadLinkRuleEnabled(resolvedRule.key);
-    });
+    // 매칭된 분류 중 하나라도 켜져 있으면 표시한다
+    const visibleLinks = resolvedLinkEntries
+        .filter((entry) => (entry.rules || []).some((rule) => isRoadLinkRuleEnabled(rule.key)))
+        .map((entry) => entry.feature);
     const visibleNodes = sourceNodes.filter((feature) => {
         const props = feature?.properties || {};
         return isRoadNodeRuleEnabled(classifyRoadNodeRule(props));
@@ -114,6 +118,32 @@ function renderRoadViewportFeatures(linkFeatures, nodeFeatures) {
         roadLinkGeoLayer.clearLayers();
         if (activeGroups.has(ROAD_LINK_LAYER) && visibleLinks.length > 0) {
             roadLinkGeoLayer.addData({ type: 'FeatureCollection', features: visibleLinks });
+        }
+    }
+
+    if (roadLinkMultiRuleGeoLayer) {
+        roadLinkMultiRuleGeoLayer.clearLayers();
+        if (activeGroups.has(ROAD_LINK_LAYER)) {
+            const overlayFeatures = [];
+            resolvedLinkEntries.forEach((entry) => {
+                const enabledRules = (entry.rules || []).filter((rule) => isRoadLinkRuleEnabled(rule.key));
+                if (enabledRules.length < 2 || !entry.feature?.geometry) return;
+                // 대표(첫) 규칙 색은 기본 선으로 이미 그려졌으므로 나머지를 점선으로 겹친다
+                enabledRules.slice(1).forEach((rule, overlayIdx) => {
+                    overlayFeatures.push({
+                        type: 'Feature',
+                        geometry: entry.feature.geometry,
+                        properties: {
+                            __overlayColor: rule.color,
+                            __overlayWeight: Math.max(Number(rule.weight) || 2.1, 2.1),
+                            __overlayIdx: overlayIdx
+                        }
+                    });
+                });
+            });
+            if (overlayFeatures.length > 0) {
+                roadLinkMultiRuleGeoLayer.addData({ type: 'FeatureCollection', features: overlayFeatures });
+            }
         }
     }
 
@@ -214,6 +244,7 @@ function removeRoadShapeLayers() {
     layerOrder = layerOrder.filter((name) => name !== ROAD_LINK_LAYER && name !== ROAD_NODE_LAYER && name !== ROAD_LINK_VERTEX_LAYER && name !== LANE_WIDTH_LAYER && name !== LANE_WIDTH_LAYER_2 && name !== LANE_WIDTH_EXT_CALC_LAYER);
 
     roadLinkGeoLayer = null;
+    roadLinkMultiRuleGeoLayer = null;
     roadNodeGeoLayer = null;
     roadLinkVertexGeoLayer = null;
     roadLaneWidthGeoLayer = null;
@@ -249,6 +280,7 @@ function handleRoadZoomChanged() {
             return;
         }
         if (roadLinkGeoLayer) roadLinkGeoLayer.clearLayers();
+        if (roadLinkMultiRuleGeoLayer) roadLinkMultiRuleGeoLayer.clearLayers();
         if (roadNodeGeoLayer) roadNodeGeoLayer.clearLayers();
         if (roadLinkVertexGeoLayer) roadLinkVertexGeoLayer.clearLayers();
         if (roadLaneWidthGeoLayer) roadLaneWidthGeoLayer.clearLayers();
@@ -276,7 +308,9 @@ function pickRoadLabelText(feature, props) {
 }
 
 function getRoadLinkStyle(props) {
-    const resolvedRule = getRoadLinkResolvedRule(props);
+    const matchedRules = getRoadLinkMatchedRules(props);
+    // 대표 규칙이 꺼져 있으면 켜져 있는 다음 매칭 규칙의 색으로 그린다
+    const resolvedRule = matchedRules.find((rule) => isRoadLinkRuleEnabled(rule.key)) || matchedRules[0];
     const linkIdCandidate = Number(
         findRoadPropValue(props, 'LINK_ID') ??
         findRoadPropValue(props, 'LINBK_ID') ??
@@ -384,6 +418,10 @@ function pickRoadPopupValue(props, keys) {
 
 function buildRoadSummaryRows(props, title) {
     const specs = getRoadPopupFieldSpecs(title);
+    // 링크가 속한 모든 분류(터널·국도처럼 중복 포함)를 맨 위에 보여준다
+    const ruleRow = title === 'Road Link'
+        ? [{ key: '분류', value: getRoadLinkMatchedRules(props).map((rule) => rule.label).join(', ') }]
+        : [];
     // 확장 차선수(계산)를 팝업 맨 위에 표시한다.
     const extCalcEntry = (title === 'Road Link' || title === 'Road Link Vertex')
         ? laneExtCalcEntryForProps(props)
@@ -395,7 +433,8 @@ function buildRoadSummaryRows(props, title) {
                 + (extCalcEntry.ext > extCalcEntry.lane ? ' (확장 적용)' : ' (변화 없음)')
         }]
         : [];
-    return extCalcRow
+    return ruleRow
+        .concat(extCalcRow)
         .concat(specs.map((spec) => ({
             key: spec.label,
             value: pickRoadPopupValue(props, spec.keys)

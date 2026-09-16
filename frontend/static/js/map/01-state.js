@@ -89,6 +89,7 @@ const TMAP_WAYPOINT_LAYER = 'Tmap Waypoints';
 const ROUTE_INFO_LAYER_PREFIX = 'Route Info ';
 const ROUTE_INFO_MARKER_LAYER_PREFIX = 'Route Info Markers ';
 let roadLinkGeoLayer = null;
+let roadLinkMultiRuleGeoLayer = null;
 let roadNodeGeoLayer = null;
 let roadLinkVertexGeoLayer = null;
 let roadLaneWidthGeoLayer = null;
