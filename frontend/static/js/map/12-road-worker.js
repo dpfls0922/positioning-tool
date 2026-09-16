@@ -247,12 +247,15 @@ function getRoadLinkMatchedRules(props) {
 
     const roadCate = toRoadInt(findRoadPropValue(props, 'ROAD_CATE'));
     const linkFacil = toRoadInt(findRoadPropValue(props, 'LINK_FACIL'));
+    const beforeBuiltIn = rules.length;
     if (roadCate === 11) rules.push(resolveBuiltInRoadLinkRuleStyle('parkingRoad'));
     if (linkFacil === 4) rules.push(resolveBuiltInRoadLinkRuleStyle('underpass'));
     if (linkFacil === 3) rules.push(resolveBuiltInRoadLinkRuleStyle('overpass'));
     if (linkFacil === 2) rules.push(resolveBuiltInRoadLinkRuleStyle('tunnel'));
 
-    if (rules.length === 0) rules.push(resolveBuiltInRoadLinkRuleStyle('default'));
+    // 시설물 분류(터널·단지내·지하·고가)에 해당하지 않으면 '일반'에도 속한다.
+    // 커스텀 규칙(국도 등)에 매칭됐더라도 일반 도로라는 분류는 유지된다.
+    if (rules.length === beforeBuiltIn) rules.push(resolveBuiltInRoadLinkRuleStyle('default'));
     return rules;
 }
 
