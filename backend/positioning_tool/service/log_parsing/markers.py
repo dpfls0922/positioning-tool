@@ -4,57 +4,71 @@
 """
 
 
-def build_parking_lot_state_markers(coords):
-    """Extract DR-based coordinates with parking state and format as markers."""
-    markers = []
-    marker_id_counter = 30000  # Start from 30000 to avoid conflicts
+def build_parking_lot_state_bands(coords):
+    """주차장 상태가 이어지는 DR 구간을 밑면 띠(폴리라인) 세그먼트로 묶는다.
 
-    dr_based_count = 0
-    with_parking_state = 0
+    점마다 마커를 찍는 대신 연속 구간 하나를 띠 하나로 표현한다. 상태 구분:
+      ParkingLot(주차장 모드): 진분홍 / EnterCandidate·EnterReady(진입 후보/준비): 연분홍
+    """
+    dr_coords = [c for c in coords if c.get('type') == 'DR-based']
+    dr_coords.sort(key=lambda c: (c.get('id') or 0))
 
-    for coord in coords:
-        if coord.get('type') != 'DR-based':
-            continue
-
-        dr_based_count += 1
-        parking_state = coord.get('extra', {}).get('parking_state')
-        if not parking_state:
-            continue
-
-        with_parking_state += 1
-
-        # 분홍 계열로 통일:
-        #   ParkingLot(주차장 내): 진분홍 / EnterCandidate·EnterReady: 연분홍
+    def state_group(parking_state):
         if parking_state == 'ParkingLot':
-            color = '#db2777'
-        elif parking_state in ('EnterCandidate', 'EnterReady'):
-            color = '#f9a8d4'
-        else:
-            continue  # Skip unknown states
+            return ('ParkingLot', '#db2777')
+        if parking_state in ('EnterCandidate', 'EnterReady'):
+            return ('Enter', '#f9a8d4')
+        return (None, None)
 
-        marker = {
-            "id": marker_id_counter,
-            "dlt_id": coord.get('dlt_id'),
-            "type": "Parking Lot State",
-            "latitude": coord.get("latitude"),
-            "longitude": coord.get("longitude"),
-            "heading": coord.get("heading"),
-            "color": color,
-            "fill": True,
-            "timestamp_ms": coord.get("timestamp_ms"),
-            "timestamp_str": coord.get("timestamp_str"),
-            "extra": {
-                "parking_state": parking_state,
-                "parking_candidate_count": coord.get('extra', {}).get('parking_candidate_count', 0),
-                "parking_best_link_id": coord.get('extra', {}).get('parking_best_link_id', -1),
+    bands = []
+    band_id_counter = 30000  # Start from 30000 to avoid conflicts
+    current = None
+
+    def close_current():
+        nonlocal current, band_id_counter
+        if current is not None:
+            current['id'] = band_id_counter
+            band_id_counter += 1
+            bands.append(current)
+        current = None
+
+    for coord in dr_coords:
+        parking_state = coord.get('extra', {}).get('parking_state')
+        group, color = state_group(parking_state)
+        if group is None:
+            close_current()
+            continue
+
+        if current is not None and current['state_group'] != group:
+            close_current()
+
+        if current is None:
+            current = {
+                "type": "Parking Lot State",
+                "state_group": group,
+                "color": color,
+                "points": [],
+                "states": [],
+                "start_dlt_id": coord.get('dlt_id'),
+                "end_dlt_id": coord.get('dlt_id'),
+                "start_timestamp_ms": coord.get('timestamp_ms'),
+                "end_timestamp_ms": coord.get('timestamp_ms'),
+                "start_timestamp_str": coord.get('timestamp_str'),
+                "end_timestamp_str": coord.get('timestamp_str'),
             }
-        }
-        markers.append(marker)
-        marker_id_counter += 1
+
+        current['points'].append([coord.get('latitude'), coord.get('longitude')])
+        if parking_state not in current['states']:
+            current['states'].append(parking_state)
+        current['end_dlt_id'] = coord.get('dlt_id')
+        current['end_timestamp_ms'] = coord.get('timestamp_ms')
+        current['end_timestamp_str'] = coord.get('timestamp_str')
+
+    close_current()
 
     import sys
-    print(f'[DEBUG] build_parking_lot_state_markers: DR-based={dr_based_count}, with_parking_state={with_parking_state}, markers created={len(markers)}', file=sys.stderr)
-    return markers
+    print(f'[DEBUG] build_parking_lot_state_bands: DR-based={len(dr_coords)}, bands created={len(bands)}', file=sys.stderr)
+    return bands
 
 
 def build_roll_pitch_reset_markers(coords):

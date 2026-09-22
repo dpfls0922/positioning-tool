@@ -71,7 +71,7 @@ function isInSelectedRange(timestampMs, minVal, maxVal) {
 
 function resetVisualization() {
     markers.forEach(marker => map.removeLayer(marker));
-    parkingLotStateMarkers.forEach(marker => map.removeLayer(marker));
+    parkingLotStateBands.forEach(layer => map.removeLayer(layer));
     rollPitchResetMarkers.forEach(marker => map.removeLayer(marker));
     mmFeedbackMarkers.forEach(marker => map.removeLayer(marker));
     polylines.forEach(polyline => map.removeLayer(polyline));
@@ -91,7 +91,7 @@ function resetVisualization() {
     });
 
     markers = [];
-    parkingLotStateMarkers = [];
+    parkingLotStateBands = [];
     rollPitchResetMarkers = [];
     mmFeedbackMarkers = [];
     polylines = [];

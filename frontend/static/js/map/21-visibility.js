@@ -130,7 +130,6 @@ function refreshVisibleMarkers() {
     };
 
     markers.forEach(cullPoint);
-    parkingLotStateMarkers.forEach(cullPoint);
     rollPitchResetMarkers.forEach(cullPoint);
     mmFeedbackMarkers.forEach(cullPoint);
     polylines.forEach(cullLine);

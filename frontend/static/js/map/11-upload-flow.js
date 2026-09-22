@@ -189,7 +189,7 @@ function handleUploadAndParse() {
         }
 
         markersData = response.coords || [];
-        parkingLotStateMarkersData = response.parking_lot_state_markers || [];
+        parkingLotStateBandsData = response.parking_lot_state_bands || [];
         rollPitchResetMarkersData = response.roll_pitch_reset_markers || [];
         mmFeedbackMarkersData = response.mm_feedback_markers || [];
         linesData = response.lines || [];
@@ -197,7 +197,7 @@ function handleUploadAndParse() {
         setSimShadeTimeline(response.shade_timeline || []);
         console.log('[DEBUG] Loaded data:', {
             markersCount: markersData.length,
-            parkingLotStateMarkersCount: parkingLotStateMarkersData.length,
+            parkingLotStateBandsCount: parkingLotStateBandsData.length,
             rollPitchResetMarkersCount: rollPitchResetMarkersData.length,
             mmFeedbackMarkersCount: mmFeedbackMarkersData.length,
             linesCount: linesData.length

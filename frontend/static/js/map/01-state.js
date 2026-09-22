@@ -44,7 +44,7 @@ let layerControl = null;
 let baseLayerInitialized = false;
 
 let markers = [];
-let parkingLotStateMarkers = [];
+let parkingLotStateBands = [];
 let rollPitchResetMarkers = [];
 let mmFeedbackMarkers = [];
 let polylines = [];

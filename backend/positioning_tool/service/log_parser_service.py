@@ -61,7 +61,7 @@ from backend.positioning_tool.service.log_parsing.gp_guide import (
 )
 from backend.positioning_tool.service.log_parsing.markers import (
     build_mm_feedback_markers,
-    build_parking_lot_state_markers,
+    build_parking_lot_state_bands,
     build_roll_pitch_reset_markers,
     build_route_info_markers,
 )
@@ -2095,9 +2095,9 @@ def build_runtime_payload():
     attach_route_points_to_requests(all_coords)
 
     # Extract parking lot state markers from DR-based coordinates with parking state
-    parking_lot_state_markers = build_parking_lot_state_markers(all_coords)
+    parking_lot_state_bands = build_parking_lot_state_bands(all_coords)
     import sys
-    print(f'[DEBUG] build_runtime_payload: created parking_lot_state_markers = {len(parking_lot_state_markers)}', file=sys.stderr)
+    print(f'[DEBUG] build_runtime_payload: created parking_lot_state_bands = {len(parking_lot_state_bands)}', file=sys.stderr)
 
     # Extract 정차(roll/pitch reset) / MM feedback markers from DR-based coordinates
     roll_pitch_reset_markers = build_roll_pitch_reset_markers(all_coords)
@@ -2130,7 +2130,7 @@ def build_runtime_payload():
         "max_timestamp_ms": max_ts_ms,
         "max_id": max_id,
         "coords": all_coords,
-        "parking_lot_state_markers": parking_lot_state_markers,
+        "parking_lot_state_bands": parking_lot_state_bands,
         "roll_pitch_reset_markers": roll_pitch_reset_markers,
         "mm_feedback_markers": mm_feedback_markers,
         "sdi_block_timeline": build_sdi_block_timeline(),

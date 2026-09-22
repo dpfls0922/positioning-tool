@@ -141,10 +141,10 @@ function drawMarkers(coordinates) {
     }
 }
 
-// DR 이벤트 링 레이어 공통 스타일: DR 점(반지름 3) 위에 두 배 크기 링으로
-// 얹히는 상태/이벤트 마커. Parking Lot State / Roll/Pitch Reset / MM Feedback
-// 세 레이어가 모두 이 팩토리를 사용해 스타일이 통일된다.
-const RING_MARKER_STYLE = { radius: 6, weight: 2, fillOpacity: 0.6 };
+// DR 이벤트 링 레이어 공통 스타일: DR 점(반지름 3) 뒤에 두 배 크기의
+// 반투명 원판으로 얹히는 이벤트 마커. 테두리는 그리지 않는다(색이 겹쳐
+// 보이는 노이즈를 줄인다). Roll/Pitch Reset / MM Feedback 이 사용한다.
+const RING_MARKER_STYLE = { radius: 6, fillOpacity: 0.55 };
 
 function createRingMarker(coord, groupName, popupType, alwaysShow) {
     const latitude = coord.latitude;
@@ -153,9 +153,9 @@ function createRingMarker(coord, groupName, popupType, alwaysShow) {
 
     const marker = L.circleMarker([latitude, longitude], {
         radius: RING_MARKER_STYLE.radius,
-        color: coord.color || '#808080',
-        weight: RING_MARKER_STYLE.weight,
+        stroke: false,
         fill: true,
+        fillColor: coord.color || '#808080',
         fillOpacity: RING_MARKER_STYLE.fillOpacity,
         bubblingMouseEvents: false
     });
@@ -168,7 +168,7 @@ function createRingMarker(coord, groupName, popupType, alwaysShow) {
     marker._baseStyle = {
         opacity: 1,
         fillOpacity: RING_MARKER_STYLE.fillOpacity,
-        weight: RING_MARKER_STYLE.weight,
+        weight: 0,
         radius: RING_MARKER_STYLE.radius
     };
     marker._popupContent = makePopupText(coord, popupType);
@@ -230,9 +230,81 @@ function drawRingMarkerLayer(coordsData, groupName, popupType, alwaysShow, assig
     processBatch(0);
 }
 
-function drawParkingLotStateMarkers(coordsData) {
-    drawRingMarkerLayer(coordsData, 'Parking Lot State', 'Parking Lot State', false,
-        (arr) => { parkingLotStateMarkers = arr; });
+// 주차장 상태는 구간(상태)이므로 점 마커 대신 DR 궤적 밑에 깔리는 반투명
+// 띠(폴리라인)로 그린다. 진분홍 = ParkingLot(주차장 모드), 연분홍 =
+// EnterCandidate/EnterReady(진입 후보/준비).
+function drawParkingLotStateBands(bandsData) {
+    parkingLotStateBands = [];
+    if (!bandsData || bandsData.length === 0) return;
+
+    const group = ensureTmapFeatureGroup('Parking Lot State');
+    group.clearLayers();
+
+    bandsData.forEach((band) => {
+        const points = (band.points || []).filter((pt) =>
+            Array.isArray(pt) && Number.isFinite(pt[0]) && Number.isFinite(pt[1]));
+        if (points.length === 0) return;
+
+        // 점이 하나뿐인 구간은 짧은 띠 대신 같은 색 원판으로 그린다.
+        const layer = points.length === 1
+            ? L.circleMarker(points[0], {
+                radius: 9,
+                stroke: false,
+                fill: true,
+                fillColor: band.color,
+                fillOpacity: 0.45,
+                bubblingMouseEvents: false
+            })
+            : L.polyline(points, {
+                color: band.color,
+                weight: 14,
+                opacity: 0.45,
+                lineCap: 'round',
+                lineJoin: 'round',
+                bubblingMouseEvents: false
+            });
+
+        layer.dlt_id = band.start_dlt_id;
+        layer.timestamp_ms = band.start_timestamp_ms;
+        layer.id = band.id || 0;
+        layer.data = band;
+        layer._groupName = 'Parking Lot State';
+
+        const stateLabel = band.state_group === 'ParkingLot'
+            ? '주차장 모드'
+            : `진입 후보/준비 (${(band.states || []).join(', ')})`;
+        const rows = [
+            popupRow('상태', escapeHtml(stateLabel)),
+            popupRow('시작', escapeHtml(String(band.start_timestamp_str || '-'))),
+            popupRow('끝', escapeHtml(String(band.end_timestamp_str || '-'))),
+            popupRow('DR 점 개수', points.length),
+            popupRow('DLT', `${band.start_dlt_id ?? '-'} ~ ${band.end_dlt_id ?? '-'}`)
+        ].join('');
+        layer._popupContent = `<div class="mk-popup"><div class="mk-head">`
+            + `<span class="mk-head-type">Parking Lot State</span></div>`
+            + `<div class="mk-rows">${rows}</div></div>`;
+
+        layer.on('click', (e) => {
+            if (inspectMode !== 'marker') {
+                if (inspectMode === 'road' && e?.latlng) {
+                    openNearestRoadPopupAt(e.latlng, getPreferredRoadKinds());
+                }
+                if (e) L.DomEvent.stopPropagation(e);
+                return;
+            }
+            const latlng = e?.latlng || L.latLng(points[0][0], points[0][1]);
+            L.popup().setLatLng(latlng).setContent(layer._popupContent).openOn(map);
+            if (e) L.DomEvent.stopPropagation(e);
+        });
+
+        group.addLayer(layer);
+        parkingLotStateBands.push(layer);
+    });
+
+    layerCountOverride['Parking Lot State'] = parkingLotStateBands.length;
+    addOverlayLayers(featureGroups);
+    lastCullState = null;
+    scheduleVisibleMarkerRefresh();
 }
 
 // Roll/pitch reset (정차) markers: a DR point where the DR estimator
@@ -251,17 +323,21 @@ function drawMmFeedbackMarkers(coordsData) {
         (arr) => { mmFeedbackMarkers = arr; });
 }
 
-// Re-order the shared canvas draw list so ring-marker layers paint last
-// (= on top). Called after each batched render completes; whichever draw
-// call finishes last wins, so ring markers always end up above DR-based /
-// Road Match markers.
+// Re-order the shared canvas draw list after each batched render: event ring
+// markers paint above DR-based / Road Match markers, while parking bands sink
+// below them so the 띠 never covers the trace.
 function bringParkingLotMarkersToFront() {
-    [mmFeedbackMarkers, rollPitchResetMarkers, parkingLotStateMarkers].forEach((list) => {
+    [mmFeedbackMarkers, rollPitchResetMarkers].forEach((list) => {
         list.forEach((marker) => {
             if (marker._map && typeof marker.bringToFront === 'function') {
                 marker.bringToFront();
             }
         });
+    });
+    parkingLotStateBands.forEach((layer) => {
+        if (layer._map && typeof layer.bringToBack === 'function') {
+            layer.bringToBack();
+        }
     });
 }
 
