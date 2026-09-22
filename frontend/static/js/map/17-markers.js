@@ -266,6 +266,10 @@ function drawGnssModeBands(bandsData) {
 // Re-order the shared canvas draw list after each batched render: state bands
 // sink below the point markers so the 띠 never covers the trace. Fills go
 // back first, then outlines, so each outline ends up under its fill.
+// 이벤트 색 DR 점(_alwaysShow: 정차 초기화/MM feedback)은 맨 위로 올린다 —
+// 정차 구간은 같은 좌표에 DR 점이 겹겹이 쌓여서, 이벤트 이후에 찍힌 빨간
+// 점들이 나중에 그려지며 보라/검정 점을 덮는다 (줌아웃에선 솎아내기가 겹친
+// 점을 지워 보였지만, 줌인하면 전부 그려져 이벤트 점이 밑에 깔렸다).
 function bringParkingLotMarkersToFront() {
     [parkingLotStateBands, gnssModeBands].forEach((list) => {
         list.forEach((layer) => {
@@ -278,6 +282,11 @@ function bringParkingLotMarkersToFront() {
                 layer.bringToBack();
             }
         });
+    });
+    markers.forEach((marker) => {
+        if (marker._alwaysShow && marker._map && typeof marker.bringToFront === 'function') {
+            marker.bringToFront();
+        }
     });
 }
 
