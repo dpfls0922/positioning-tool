@@ -61,8 +61,8 @@ from backend.positioning_tool.service.log_parsing.gp_guide import (
 )
 from backend.positioning_tool.service.log_parsing.markers import (
     attach_dr_event_deltas,
-    build_gnss_mode_bands,
-    build_parking_lot_state_bands,
+    build_parking_lot_state_markers,
+    build_roll_pitch_reset_markers,
     build_route_info_markers,
 )
 
@@ -2095,12 +2095,13 @@ def build_runtime_payload():
     attach_route_points_to_requests(all_coords)
 
     # Extract parking lot state markers from DR-based coordinates with parking state
-    parking_lot_state_bands = build_parking_lot_state_bands(all_coords)
-    import sys
-    print(f'[DEBUG] build_runtime_payload: created parking_lot_state_bands = {len(parking_lot_state_bands)}', file=sys.stderr)
-
     # 이벤트가 붙은 DR 좌표(MM feedback / roll-pitch reset)에 변화량을 계산해 붙인다
     attach_dr_event_deltas(all_coords)
+
+    parking_lot_state_markers = build_parking_lot_state_markers(all_coords)
+    roll_pitch_reset_markers = build_roll_pitch_reset_markers(all_coords)
+    import sys
+    print(f'[DEBUG] build_runtime_payload: parking markers = {len(parking_lot_state_markers)}, roll/pitch markers = {len(roll_pitch_reset_markers)}', file=sys.stderr)
 
     # Attach per-link GP / turnCode info to the route links themselves so the
     # Route Info layer shows the guidance decision for each link.
@@ -2129,8 +2130,8 @@ def build_runtime_payload():
         "max_timestamp_ms": max_ts_ms,
         "max_id": max_id,
         "coords": all_coords,
-        "parking_lot_state_bands": parking_lot_state_bands,
-        "gnss_mode_bands": build_gnss_mode_bands(all_coords),
+        "parking_lot_state_markers": parking_lot_state_markers,
+        "roll_pitch_reset_markers": roll_pitch_reset_markers,
         "sdi_block_timeline": build_sdi_block_timeline(),
         "shade_timeline": build_shade_timeline(),
         "lines": all_lines,

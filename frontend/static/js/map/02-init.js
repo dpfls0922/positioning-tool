@@ -4,8 +4,8 @@ function init() {
     console.log(`[positioning-tool] frontend build: ${FRONTEND_BUILD}`);
     // Initialize data variables
     if (typeof markersData === 'undefined') markersData = [];
-    if (typeof parkingLotStateBandsData === 'undefined') parkingLotStateBandsData = [];
-    if (typeof gnssModeBandsData === 'undefined') gnssModeBandsData = [];
+    if (typeof parkingLotStateMarkersData === 'undefined') parkingLotStateMarkersData = [];
+    if (typeof rollPitchResetMarkersData === 'undefined') rollPitchResetMarkersData = [];
     if (typeof linesData === 'undefined') linesData = [];
 
     map.zoomControl.remove();
@@ -278,8 +278,8 @@ function renderFromCurrentData() {
     // 새 파싱 결과가 들어오면 모의주행 궤적도 버린다(이전 로그를 계속 주행하는 문제).
     resetSimulationForNewData();
     drawMarkers(markersData);
-    drawParkingLotStateBands(parkingLotStateBandsData);
-    drawGnssModeBands(gnssModeBandsData);
+    drawParkingLotStateMarkers(parkingLotStateMarkersData);
+    drawRollPitchResetMarkers(rollPitchResetMarkersData);
     drawPolylines(linesData);
     addControlLayers();
     renderLayerControls();

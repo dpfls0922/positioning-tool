@@ -370,22 +370,20 @@ function isRouteLayerName(name) {
 // 좌표 레이어에서 파생된 하위 레이어. 최상위 행이 아니라 부모 행 하위에
 // 중첩해 관리하되, 부모가 꺼져 있어도 독립적으로 켜고 끌 수 있다.
 const COORD_CHILD_LAYERS = {
-    'DR-based': ['Parking Lot State'],
-    'Filtered GNSS': ['GNSS Mode']
+    'DR-based': ['Parking Lot State', 'Roll/Pitch Reset (정차)']
 };
 
 // 점/띠 색 의미 범례 (부모 행 아래 상시 표시).
 const COORD_COLOR_LEGENDS = {
     'DR-based': [
-        { color: '#7c3aed', label: '정차 Roll/Pitch 초기화' },
         { color: '#000000', label: 'MM Feedback 위치 보정' },
         { color: '#9e9e9e', label: 'MM Feedback 헤딩 보정' },
         { color: 'orange', label: 'isDRGps = 0' }
     ],
     'Filtered GNSS': [
-        { color: '#22c55e', label: '모드 전환 지점' },
-        { color: '#99f6e4', label: 'Normal 구간 띠' },
-        { color: '#e879f9', label: 'BusSleep 구간 띠' }
+        { color: '#14b8a6', label: 'Normal 모드' },
+        { color: '#d946ef', label: 'BusSleep 모드' },
+        { color: '#22c55e', label: '모드 전환 지점' }
     ]
 };
 
@@ -1159,7 +1157,7 @@ function getLayerSwatchColor(name) {
         'Filtered GNSS': '#14b8a6',
         'DR-based': '#ef4444',
         'Parking Lot State': '#ff1493',
-        'GNSS Mode': '#e879f9',
+        'Roll/Pitch Reset (정차)': '#7c3aed',
         'Road Match': '#22d3ee',
         'Route Match': '#84cc16',
         'VPM': '#2563eb',

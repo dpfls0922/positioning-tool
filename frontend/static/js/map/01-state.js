@@ -44,8 +44,8 @@ let layerControl = null;
 let baseLayerInitialized = false;
 
 let markers = [];
-let parkingLotStateBands = [];
-let gnssModeBands = [];
+let parkingLotStateMarkers = [];
+let rollPitchResetMarkers = [];
 let polylines = [];
 let requestGroups = {};
 let activeGroups = new Set();

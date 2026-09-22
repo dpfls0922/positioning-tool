@@ -141,152 +141,121 @@ function drawMarkers(coordinates) {
     }
 }
 
-// 상태 구간을 궤적 밑에 깔리는 반투명 띠(폴리라인)로 그리는 공통 렌더러.
-// 띠 채움 위에 얇은 실선 테두리를 겹쳐 그려 구간 경계를 또렷하게 한다.
-// Parking Lot State(주차장)와 GNSS Mode(Normal/BusSleep)가 사용한다.
-const STATE_BAND_STYLE = { weight: 14, fillOpacity: 0.45, outlineWeight: 1 };
-
-function drawStateBandLayer(bandsData, groupName, stateLabelFor, assign) {
+// DR 좌표에서 파생된 상태/이벤트 점 마커 레이어 공통 렌더러.
+// Parking Lot State(주차장)와 Roll/Pitch Reset(정차)이 사용하며,
+// 각 레이어는 독립적으로 켜고 끌 수 있다.
+function drawDerivedPointLayer(coordsData, groupName, popupType, styleFor, alwaysShow, assign) {
     const collected = [];
     assign(collected);
-    if (!bandsData || bandsData.length === 0) {
+    if (!coordsData || coordsData.length === 0) {
         layerCountOverride[groupName] = 0;
         return;
     }
 
-    const group = ensureTmapFeatureGroup(groupName);
-    group.clearLayers();
-    let bandCount = 0;
+    const layerGroup = ensureTmapFeatureGroup(groupName);
+    layerGroup.clearLayers();
 
-    bandsData.forEach((band) => {
-        const points = (band.points || []).filter((pt) =>
-            Array.isArray(pt) && Number.isFinite(pt[0]) && Number.isFinite(pt[1]));
-        if (points.length === 0) return;
-        bandCount += 1;
+    // Markers are created detached (viewport culling attaches them later),
+    // so batches are pure JS work: large batches are safe. Hidden tabs have
+    // no frame budget at all, so process even bigger chunks there.
+    const BATCH_SIZE = (typeof document !== 'undefined' && document.hidden) ? 20000 : 2000;
+    const totalCount = coordsData.length;
 
-        const outlineColor = band.outline_color || band.color;
-        let fillLayer;
-        let outlineLayer = null;
+    function processBatch(startIndex) {
+        const endIndex = Math.min(startIndex + BATCH_SIZE, totalCount);
 
-        if (points.length === 1) {
-            // 점이 하나뿐인 구간은 짧은 띠 대신 같은 색 원판으로 그린다.
-            fillLayer = L.circleMarker(points[0], {
-                radius: 9,
-                stroke: true,
-                color: outlineColor,
-                weight: STATE_BAND_STYLE.outlineWeight,
-                opacity: 0.9,
-                fill: true,
-                fillColor: band.color,
-                fillOpacity: STATE_BAND_STYLE.fillOpacity,
+        for (let i = startIndex; i < endIndex; i++) {
+            const coord = coordsData[i];
+            const latitude = coord.latitude;
+            const longitude = coord.longitude;
+            if (latitude === undefined || longitude === undefined) continue;
+
+            const marker = L.circleMarker([latitude, longitude], {
+                ...styleFor(coord),
                 bubblingMouseEvents: false
             });
-        } else {
-            // 테두리: 채움보다 살짝 넓은 진한 실선을 아래에 깔아 가장자리만 보이게 한다.
-            outlineLayer = L.polyline(points, {
-                color: outlineColor,
-                weight: STATE_BAND_STYLE.weight + STATE_BAND_STYLE.outlineWeight * 2,
-                opacity: 0.85,
-                lineCap: 'round',
-                lineJoin: 'round',
-                interactive: false,
-                bubblingMouseEvents: false
-            });
-            fillLayer = L.polyline(points, {
-                color: band.color,
-                weight: STATE_BAND_STYLE.weight,
-                opacity: STATE_BAND_STYLE.fillOpacity,
-                lineCap: 'round',
-                lineJoin: 'round',
-                bubblingMouseEvents: false
-            });
-        }
 
-        fillLayer.dlt_id = band.start_dlt_id;
-        fillLayer.timestamp_ms = band.start_timestamp_ms;
-        fillLayer.id = band.id || 0;
-        fillLayer.data = band;
-        fillLayer._groupName = groupName;
-        fillLayer._bandRole = 'fill';
-
-        const rows = [
-            popupRow('상태', escapeHtml(stateLabelFor(band))),
-            popupRow('시작', escapeHtml(String(band.start_timestamp_str || '-'))),
-            popupRow('끝', escapeHtml(String(band.end_timestamp_str || '-'))),
-            popupRow('점 개수', points.length),
-            popupRow('DLT', `${band.start_dlt_id ?? '-'} ~ ${band.end_dlt_id ?? '-'}`)
-        ].join('');
-        fillLayer._popupContent = `<div class="mk-popup"><div class="mk-head">`
-            + `<span class="mk-head-type">${escapeHtml(groupName)}</span></div>`
-            + `<div class="mk-rows">${rows}</div></div>`;
-
-        fillLayer.on('click', (e) => {
-            if (inspectMode !== 'marker') {
-                if (inspectMode === 'road' && e?.latlng) {
-                    openNearestRoadPopupAt(e.latlng, getPreferredRoadKinds());
+            marker.dlt_id = coord.dlt_id;
+            marker.timestamp_ms = coord.timestamp_ms;
+            marker.id = coord.id || 0;
+            marker.data = coord;
+            marker._alwaysShow = !!alwaysShow;
+            marker._baseStyle = {
+                opacity: marker.options.opacity ?? 1,
+                fillOpacity: marker.options.fillOpacity ?? 0.8,
+                weight: marker.options.weight ?? 1,
+                radius: marker.options.radius ?? 3
+            };
+            marker._popupContent = makePopupText(coord, popupType);
+            marker.on('click', (e) => {
+                if (inspectMode !== 'marker') {
+                    if (inspectMode === 'road') {
+                        const latlng = e?.latlng || L.latLng(latitude, longitude);
+                        openNearestRoadPopupAt(latlng, getPreferredRoadKinds());
+                    }
+                    if (e) L.DomEvent.stopPropagation(e);
+                    return;
                 }
+                L.popup().setLatLng([latitude, longitude]).setContent(marker._popupContent).openOn(map);
                 if (e) L.DomEvent.stopPropagation(e);
-                return;
-            }
-            const latlng = e?.latlng || L.latLng(points[0][0], points[0][1]);
-            L.popup().setLatLng(latlng).setContent(fillLayer._popupContent).openOn(map);
-            if (e) L.DomEvent.stopPropagation(e);
-        });
+            });
 
-        if (outlineLayer) {
-            outlineLayer._groupName = groupName;
-            outlineLayer._bandRole = 'outline';
-            group.addLayer(outlineLayer);
-            collected.push(outlineLayer);
+            marker._groupName = groupName;
+            marker._culledOnMap = false;
+            collected.push(marker);
         }
-        group.addLayer(fillLayer);
-        collected.push(fillLayer);
-    });
 
-    layerCountOverride[groupName] = bandCount;
-    addOverlayLayers(featureGroups);
-    lastCullState = null;
-    scheduleVisibleMarkerRefresh();
+        if (endIndex < totalCount) {
+            scheduleFrame(() => processBatch(endIndex));
+        } else {
+            layerCountOverride[groupName] = collected.length;
+            addOverlayLayers(featureGroups);
+            lastCullState = null;
+            scheduleVisibleMarkerRefresh();
+        }
+    }
+
+    processBatch(0);
 }
 
-function drawParkingLotStateBands(bandsData) {
-    drawStateBandLayer(bandsData, 'Parking Lot State', (band) => (
-        band.state_group === 'ParkingLot'
-            ? '주차장 모드'
-            : `진입 후보/준비 (${(band.states || []).join(', ')})`
-    ), (arr) => { parkingLotStateBands = arr; });
+function drawParkingLotStateMarkers(coordsData) {
+    drawDerivedPointLayer(coordsData, 'Parking Lot State', 'Parking Lot State',
+        (coord) => ({
+            radius: 3,
+            color: coord.color || '#808080',
+            weight: 1,
+            fill: true,
+            fillOpacity: 0.8
+        }), false, (arr) => { parkingLotStateMarkers = arr; });
 }
 
-function drawGnssModeBands(bandsData) {
-    drawStateBandLayer(bandsData, 'GNSS Mode', (band) => (
-        (band.states || []).join(', ') || band.state_group || '-'
-    ), (arr) => { gnssModeBands = arr; });
+// 정차(roll/pitch 초기화) 지점: 테두리 없는 보라 반투명 원판.
+function drawRollPitchResetMarkers(coordsData) {
+    drawDerivedPointLayer(coordsData, 'Roll/Pitch Reset (정차)', 'Roll/Pitch Reset',
+        (coord) => ({
+            radius: 6,
+            stroke: false,
+            fill: true,
+            fillColor: coord.color || '#7c3aed',
+            fillOpacity: 0.55
+        }), true, (arr) => { rollPitchResetMarkers = arr; });
 }
 
-// Re-order the shared canvas draw list after each batched render: state bands
-// sink below the point markers so the 띠 never covers the trace. Fills go
-// back first, then outlines, so each outline ends up under its fill.
-// 이벤트 색 DR 점(_alwaysShow: 정차 초기화/MM feedback)은 맨 위로 올린다 —
-// 정차 구간은 같은 좌표에 DR 점이 겹겹이 쌓여서, 이벤트 이후에 찍힌 빨간
-// 점들이 나중에 그려지며 보라/검정 점을 덮는다 (줌아웃에선 솎아내기가 겹친
-// 점을 지워 보였지만, 줌인하면 전부 그려져 이벤트 점이 밑에 깔렸다).
+// Re-order the shared canvas draw list after each batched render: derived
+// point layers paint above DR-based / Road Match markers, and _alwaysShow
+// DR dots (MM feedback) stay on top of stacked stationary points.
 function bringParkingLotMarkersToFront() {
-    [parkingLotStateBands, gnssModeBands].forEach((list) => {
-        list.forEach((layer) => {
-            if (layer._map && layer._bandRole === 'fill' && typeof layer.bringToBack === 'function') {
-                layer.bringToBack();
-            }
-        });
-        list.forEach((layer) => {
-            if (layer._map && layer._bandRole === 'outline' && typeof layer.bringToBack === 'function') {
-                layer.bringToBack();
-            }
-        });
-    });
     markers.forEach((marker) => {
         if (marker._alwaysShow && marker._map && typeof marker.bringToFront === 'function') {
             marker.bringToFront();
         }
+    });
+    [rollPitchResetMarkers, parkingLotStateMarkers].forEach((list) => {
+        list.forEach((marker) => {
+            if (marker._map && typeof marker.bringToFront === 'function') {
+                marker.bringToFront();
+            }
+        });
     });
 }
 
@@ -471,7 +440,10 @@ function makePopupText(coordinate, coordtype) {
     if (coordtype === 'DR-based') {
         details.push(popupRow('isDRGps', escapeHtml(String(coordinate.extra?.isDRGps ?? ''))));
         details.push(popupRow('MM Feedback', escapeHtml(String(coordinate.extra?.mm_feedback_reason || ''))));
+    }
 
+    // DR 점과 정차(Roll/Pitch Reset) 마커 공통: 초기화/보정 변화량 상세
+    if (coordtype === 'DR-based' || coordtype === 'Roll/Pitch Reset') {
         // 보정/초기화 직후 궤적이 얼마나 움직였는지 (직전 DR 좌표 대비)
         const extra = coordinate.extra || {};
         if (Number.isFinite(extra.delta_dist_m)) {

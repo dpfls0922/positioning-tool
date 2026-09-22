@@ -75,96 +75,82 @@ def attach_dr_event_deltas(coords):
         prev = coord
 
 
-def _build_state_bands(coords, coord_type, band_type, classify, id_start):
-    """상태가 이어지는 좌표 구간을 밑면 띠(폴리라인) 세그먼트로 묶는 공통 빌더.
+def build_parking_lot_state_markers(coords):
+    """주차장 상태가 붙은 DR 좌표를 점 마커로 추출한다.
+    회색 = ParkingLot(주차장 모드), 핑크 = EnterCandidate·EnterReady(진입 평가/준비)."""
+    markers = []
+    marker_id_counter = 30000  # Start from 30000 to avoid conflicts
 
-    점마다 마커를 찍는 대신 연속 구간 하나를 띠 하나로 표현한다.
-    classify(coord) 는 (group_key, color, outline_color, state_label) 을 돌려주고,
-    group_key 가 None 이면 그 좌표는 띠에 포함되지 않는다(구간이 끊긴다).
-    outline_color 는 띠 가장자리에 얇은 실선으로 그려져 구간 경계를 또렷하게 한다.
-    """
-    typed_coords = [c for c in coords if c.get('type') == coord_type]
-    typed_coords.sort(key=lambda c: (c.get('id') or 0))
-
-    bands = []
-    band_id_counter = id_start
-    current = None
-
-    def close_current():
-        nonlocal current, band_id_counter
-        if current is not None:
-            current['id'] = band_id_counter
-            band_id_counter += 1
-            bands.append(current)
-        current = None
-
-    for coord in typed_coords:
-        group, color, outline_color, state_label = classify(coord)
-        if group is None:
-            close_current()
+    for coord in coords:
+        if coord.get('type') != 'DR-based':
             continue
 
-        if current is not None and current['state_group'] != group:
-            close_current()
-
-        if current is None:
-            current = {
-                "type": band_type,
-                "state_group": group,
-                "color": color,
-                "outline_color": outline_color,
-                "points": [],
-                "states": [],
-                "start_dlt_id": coord.get('dlt_id'),
-                "end_dlt_id": coord.get('dlt_id'),
-                "start_timestamp_ms": coord.get('timestamp_ms'),
-                "end_timestamp_ms": coord.get('timestamp_ms'),
-                "start_timestamp_str": coord.get('timestamp_str'),
-                "end_timestamp_str": coord.get('timestamp_str'),
-            }
-
-        current['points'].append([coord.get('latitude'), coord.get('longitude')])
-        if state_label not in current['states']:
-            current['states'].append(state_label)
-        current['end_dlt_id'] = coord.get('dlt_id')
-        current['end_timestamp_ms'] = coord.get('timestamp_ms')
-        current['end_timestamp_str'] = coord.get('timestamp_str')
-
-    close_current()
-    return bands
-
-
-def build_parking_lot_state_bands(coords):
-    """주차장 상태 DR 구간 띠. 페이지 범례와 같은 색을 쓴다:
-    회색 = ParkingLot(주차장 모드), 핑크 = EnterCandidate·EnterReady(진입 평가/준비)."""
-    def classify(coord):
         parking_state = coord.get('extra', {}).get('parking_state')
         if parking_state == 'ParkingLot':
-            return ('ParkingLot', '#808080', '#4b5563', parking_state)
-        if parking_state in ('EnterCandidate', 'EnterReady'):
-            return ('Enter', '#ff1493', '#c2185b', parking_state)
-        return (None, None, None, None)
+            color = '#808080'
+        elif parking_state in ('EnterCandidate', 'EnterReady'):
+            color = '#ff1493'
+        else:
+            continue
 
-    bands = _build_state_bands(coords, 'DR-based', 'Parking Lot State', classify, 30000)
-    import sys
-    print(f'[DEBUG] build_parking_lot_state_bands: bands created={len(bands)}', file=sys.stderr)
-    return bands
+        markers.append({
+            "id": marker_id_counter,
+            "dlt_id": coord.get('dlt_id'),
+            "type": "Parking Lot State",
+            "latitude": coord.get("latitude"),
+            "longitude": coord.get("longitude"),
+            "heading": coord.get("heading"),
+            "color": color,
+            "fill": True,
+            "timestamp_ms": coord.get("timestamp_ms"),
+            "timestamp_str": coord.get("timestamp_str"),
+            "extra": {
+                "parking_state": parking_state,
+                "parking_candidate_count": coord.get('extra', {}).get('parking_candidate_count', 0),
+                "parking_best_link_id": coord.get('extra', {}).get('parking_best_link_id', -1),
+            }
+        })
+        marker_id_counter += 1
+
+    return markers
 
 
-def build_gnss_mode_bands(coords):
-    """Filtered GNSS 모드 구간 띠. 점 색 대신 밑면 띠로 모드를 표현한다.
-    연청록 = Normal, 연마젠타 = BusSleep, 회색 = 그 외 모드."""
-    def classify(coord):
-        mode = str(coord.get('extra', {}).get('gnss_mode', '') or '').strip()
-        if not mode:
-            return (None, None, None, None)
-        if mode == 'Normal':
-            return ('Normal', '#99f6e4', '#2dd4bf', mode)
-        if mode == 'BusSleep':
-            return ('BusSleep', '#e879f9', '#c026d3', mode)
-        return (mode, '#cbd5e1', '#94a3b8', mode)
+def build_roll_pitch_reset_markers(coords):
+    """정차 중 roll/pitch가 초기화된 DR 좌표를 점 마커로 추출한다 (보라).
+    attach_dr_event_deltas 가 먼저 돌아 이벤트 상세/변화량이 extra 에 있어야 한다."""
+    markers = []
+    marker_id_counter = 50000  # Start from 50000 to avoid conflicts
 
-    return _build_state_bands(coords, 'Filtered GNSS', 'GNSS Mode', classify, 35000)
+    for coord in coords:
+        if coord.get('type') != 'DR-based':
+            continue
+
+        extra = coord.get('extra', {})
+        events = extra.get('roll_pitch_reset_events')
+        if not events:
+            continue
+
+        markers.append({
+            "id": marker_id_counter,
+            "dlt_id": coord.get('dlt_id'),
+            "type": "Roll/Pitch Reset",
+            "latitude": coord.get("latitude"),
+            "longitude": coord.get("longitude"),
+            "heading": coord.get("heading"),
+            "color": '#7c3aed',
+            "fill": True,
+            "timestamp_ms": coord.get("timestamp_ms"),
+            "timestamp_str": coord.get("timestamp_str"),
+            "extra": {
+                "roll_pitch_reset_events": events,
+                "Speed": extra.get('Speed'),
+                "delta_dist_m": extra.get('delta_dist_m'),
+                "delta_heading_deg": extra.get('delta_heading_deg'),
+            }
+        })
+        marker_id_counter += 1
+
+    return markers
 
 
 def build_route_info_markers(lines):
