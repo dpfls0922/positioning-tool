@@ -61,9 +61,16 @@ class CoordType(Enum):
             if gnss_mode == "Normal":
                 return "#14b8a6"  # 청록 — 기존 노랑은 DR 주황과 혼동
         if self == CoordType.DR:
-            # MM feedback no longer recolors the DR dot itself — feedback
-            # points are shown on the dedicated 'MM Feedback' ring layer so
-            # the DR layer stays a single red/orange family.
+            # 이벤트가 있으면 DR 점 자체에 색을 입힌다 (별도 레이어 없이).
+            #   보라: 정차 중 roll/pitch 초기화 (드물어서 우선 표시)
+            #   검정: MM feedback 위치 보정 / 회색: 헤딩만 보정
+            if coord.extra.get("roll_pitch_reset"):
+                return "#7c3aed"
+            if coord.extra.get("mm_feedback"):
+                reason = str(coord.extra.get("mm_feedback_reason", "")).lower()
+                if "heading only" in reason or "correction normal" in reason:
+                    return "#9e9e9e"
+                return "black"
             if coord.extra.get("isDRGps") == 0:
                 return "orange"
         return self.color

@@ -5,8 +5,6 @@ function init() {
     // Initialize data variables
     if (typeof markersData === 'undefined') markersData = [];
     if (typeof parkingLotStateBandsData === 'undefined') parkingLotStateBandsData = [];
-    if (typeof rollPitchResetMarkersData === 'undefined') rollPitchResetMarkersData = [];
-    if (typeof mmFeedbackMarkersData === 'undefined') mmFeedbackMarkersData = [];
     if (typeof linesData === 'undefined') linesData = [];
 
     map.zoomControl.remove();
@@ -280,8 +278,6 @@ function renderFromCurrentData() {
     resetSimulationForNewData();
     drawMarkers(markersData);
     drawParkingLotStateBands(parkingLotStateBandsData);
-    drawRollPitchResetMarkers(rollPitchResetMarkersData);
-    drawMmFeedbackMarkers(mmFeedbackMarkersData);
     drawPolylines(linesData);
     addControlLayers();
     renderLayerControls();

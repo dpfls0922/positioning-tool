@@ -45,8 +45,6 @@ let baseLayerInitialized = false;
 
 let markers = [];
 let parkingLotStateBands = [];
-let rollPitchResetMarkers = [];
-let mmFeedbackMarkers = [];
 let polylines = [];
 let requestGroups = {};
 let activeGroups = new Set();

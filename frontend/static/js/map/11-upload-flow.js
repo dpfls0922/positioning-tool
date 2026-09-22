@@ -190,16 +190,12 @@ function handleUploadAndParse() {
 
         markersData = response.coords || [];
         parkingLotStateBandsData = response.parking_lot_state_bands || [];
-        rollPitchResetMarkersData = response.roll_pitch_reset_markers || [];
-        mmFeedbackMarkersData = response.mm_feedback_markers || [];
         linesData = response.lines || [];
         setSdiBlockTimeline(response.sdi_block_timeline || []);
         setSimShadeTimeline(response.shade_timeline || []);
         console.log('[DEBUG] Loaded data:', {
             markersCount: markersData.length,
             parkingLotStateBandsCount: parkingLotStateBandsData.length,
-            rollPitchResetMarkersCount: rollPitchResetMarkersData.length,
-            mmFeedbackMarkersCount: mmFeedbackMarkersData.length,
             linesCount: linesData.length
         });
         currentResultName = response.result_name || 'result';

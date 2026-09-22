@@ -367,47 +367,47 @@ function isRouteLayerName(name) {
     ].includes(name);
 }
 
-// DR 좌표에서 파생된 상태/이벤트 링 레이어들. 최상위 행이 아니라
-// DR-based 행 하위에 중첩해 관리한다 (Route Info 하위 레이어와 동일 패턴).
-const DR_CHILD_LAYERS = ['MM Feedback', 'Roll/Pitch Reset (정차)', 'Parking Lot State'];
+// DR 좌표에서 파생된 레이어. 최상위 행이 아니라 DR-based 행 하위에 중첩해
+// 관리하되, DR-based가 꺼져 있어도 독립적으로 켜고 끌 수 있다.
+const DR_CHILD_LAYERS = ['Parking Lot State'];
+
+// DR 점 자체에 입히는 이벤트 색 범례 (별도 레이어가 아니라 점 색으로 표현).
+const DR_DOT_COLOR_LEGEND = [
+    { color: '#7c3aed', label: '정차 Roll/Pitch 초기화' },
+    { color: '#000000', label: 'MM Feedback 위치 보정' },
+    { color: '#9e9e9e', label: 'MM Feedback 헤딩 보정' },
+    { color: 'orange', label: 'isDRGps = 0' }
+];
 
 function isDrChildLayerName(name) {
     return DR_CHILD_LAYERS.includes(name);
 }
 
-// DR-based를 끄면 하위 링 레이어도 함께 끄고, 다시 켜면 꺼지기 전 상태를 복원한다.
-let drChildActiveBeforeParentDisabled = null;
-
-function hideDrChildLayers() {
-    drChildActiveBeforeParentDisabled = DR_CHILD_LAYERS.filter((child) => activeGroups.has(child));
-    DR_CHILD_LAYERS.forEach((child) => {
-        const group = featureGroups[child];
-        if (group && map.hasLayer(group)) map.removeLayer(group);
-        activeGroups.delete(child);
-    });
-}
-
-function restoreDrChildLayers() {
-    if (!drChildActiveBeforeParentDisabled) return;
-    drChildActiveBeforeParentDisabled.forEach((child) => {
-        const group = featureGroups[child];
-        if (!group) return;
-        if (!map.hasLayer(group)) map.addLayer(group);
-        activeGroups.add(child);
-    });
-    drChildActiveBeforeParentDisabled = null;
-}
-
-// DR 하위 링 레이어 체크박스 목록을 DR-based 행 아래에 붙인다.
+// DR 하위 레이어 체크박스와 DR 점 색 범례를 DR-based 행 아래에 붙인다.
 function appendDrChildLayerControls(parent, layerName) {
     if (layerName !== 'DR-based') return;
 
-    const children = DR_CHILD_LAYERS.filter((name) => !!featureGroups[name]);
-    if (children.length === 0) return;
-    const parentActive = activeGroups.has('DR-based');
-
     const wrap = document.createElement('div');
     wrap.className = 'layer-rule-list';
+
+    DR_DOT_COLOR_LEGEND.forEach((entry) => {
+        const item = document.createElement('div');
+        item.className = 'layer-rule-item';
+
+        const swatch = document.createElement('span');
+        swatch.className = 'layer-rule-swatch';
+        swatch.style.background = entry.color;
+        item.appendChild(swatch);
+
+        const label = document.createElement('span');
+        label.className = 'layer-rule-label';
+        label.textContent = entry.label;
+        item.appendChild(label);
+
+        wrap.appendChild(item);
+    });
+
+    const children = DR_CHILD_LAYERS.filter((name) => !!featureGroups[name]);
 
     children.forEach((childName) => {
         const group = featureGroups[childName];
@@ -419,8 +419,6 @@ function appendDrChildLayerControls(parent, layerName) {
         checkbox.type = 'checkbox';
         checkbox.className = 'layer-control-check';
         checkbox.checked = activeGroups.has(childName);
-        // DR-based가 꺼진 동안 하위만 켜는 건 캐스케이드와 모순이므로 비활성화.
-        checkbox.disabled = !parentActive;
         checkbox.onchange = () => {
             if (checkbox.checked) {
                 if (!map.hasLayer(group)) map.addLayer(group);
@@ -509,8 +507,6 @@ function appendLayerRows(childWrap, groups) {
                 // Route Info를 다시 키면 함께 껐던 하위 레이어를 복원
                 restoreRouteChildLayers(name);
 
-                // DR-based를 다시 키면 하위 링 레이어 이전 상태 복원
-                if (name === 'DR-based') restoreDrChildLayers();
 
                 // Road Node를 키면 Vertex 이전 상태 복원
                 if (name === ROAD_NODE_LAYER && vertexWasActiveBeforeNodeDisabled) {
@@ -527,8 +523,6 @@ function appendLayerRows(childWrap, groups) {
                 // Route Info를 끄면 그 경로에서 파싱된 하위 레이어도 함께 끔
                 hideRouteChildLayers(name);
 
-                // DR-based를 끄면 하위 링 레이어 상태 기억 후 함께 끔
-                if (name === 'DR-based') hideDrChildLayers();
 
                 // Road Node를 끄면 Vertex 상태 기억 후 함께 끔 (UI 일관성)
                 if (name === ROAD_NODE_LAYER) {
@@ -1152,8 +1146,6 @@ function getLayerSwatchColor(name) {
         'Raw GNSS': '#a855f7',
         'Filtered GNSS': '#14b8a6',
         'DR-based': '#ef4444',
-        'MM Feedback': '#111827',
-        'Roll/Pitch Reset (정차)': '#7c3aed',
         'Parking Lot State': '#db2777',
         'Road Match': '#22d3ee',
         'Route Match': '#84cc16',

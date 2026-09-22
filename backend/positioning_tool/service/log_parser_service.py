@@ -60,9 +60,8 @@ from backend.positioning_tool.service.log_parsing.gp_guide import (
     lane_color_from_voice_code,
 )
 from backend.positioning_tool.service.log_parsing.markers import (
-    build_mm_feedback_markers,
+    attach_dr_event_deltas,
     build_parking_lot_state_bands,
-    build_roll_pitch_reset_markers,
     build_route_info_markers,
 )
 
@@ -2099,9 +2098,8 @@ def build_runtime_payload():
     import sys
     print(f'[DEBUG] build_runtime_payload: created parking_lot_state_bands = {len(parking_lot_state_bands)}', file=sys.stderr)
 
-    # Extract 정차(roll/pitch reset) / MM feedback markers from DR-based coordinates
-    roll_pitch_reset_markers = build_roll_pitch_reset_markers(all_coords)
-    mm_feedback_markers = build_mm_feedback_markers(all_coords)
+    # 이벤트가 붙은 DR 좌표(MM feedback / roll-pitch reset)에 변화량을 계산해 붙인다
+    attach_dr_event_deltas(all_coords)
 
     # Attach per-link GP / turnCode info to the route links themselves so the
     # Route Info layer shows the guidance decision for each link.
@@ -2131,8 +2129,6 @@ def build_runtime_payload():
         "max_id": max_id,
         "coords": all_coords,
         "parking_lot_state_bands": parking_lot_state_bands,
-        "roll_pitch_reset_markers": roll_pitch_reset_markers,
-        "mm_feedback_markers": mm_feedback_markers,
         "sdi_block_timeline": build_sdi_block_timeline(),
         "shade_timeline": build_shade_timeline(),
         "lines": all_lines,

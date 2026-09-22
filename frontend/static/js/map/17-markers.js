@@ -53,8 +53,8 @@ function drawMarkers(coordinates) {
                 const isGnssTransitionHighlight = coordtype === 'Filtered GNSS' && !!coord?.extra?.gnss_transition_highlight;
                 const useDrHeadingArrow = coordtype === 'DR-based' && drHeadingArrowEnabled;
 
-                // Use color set by backend. MM feedback no longer recolors the
-                // DR dot — feedback points live on the 'MM Feedback' ring layer.
+                // Use color set by backend: DR 점 자체에 이벤트 색이 입혀진다
+                // (보라=정차 초기화, 검정/회색=MM 보정, 주황=isDRGps 0).
                 let markerColor = coord.color || 'black';
 
                 const marker = useDrHeadingArrow
@@ -141,95 +141,6 @@ function drawMarkers(coordinates) {
     }
 }
 
-// DR 이벤트 링 레이어 공통 스타일: DR 점(반지름 3) 뒤에 두 배 크기의
-// 반투명 원판으로 얹히는 이벤트 마커. 테두리는 그리지 않는다(색이 겹쳐
-// 보이는 노이즈를 줄인다). Roll/Pitch Reset / MM Feedback 이 사용한다.
-const RING_MARKER_STYLE = { radius: 6, fillOpacity: 0.55 };
-
-function createRingMarker(coord, groupName, popupType, alwaysShow) {
-    const latitude = coord.latitude;
-    const longitude = coord.longitude;
-    if (latitude === undefined || longitude === undefined) return null;
-
-    const marker = L.circleMarker([latitude, longitude], {
-        radius: RING_MARKER_STYLE.radius,
-        stroke: false,
-        fill: true,
-        fillColor: coord.color || '#808080',
-        fillOpacity: RING_MARKER_STYLE.fillOpacity,
-        bubblingMouseEvents: false
-    });
-
-    marker.dlt_id = coord.dlt_id;
-    marker.timestamp_ms = coord.timestamp_ms;
-    marker.id = coord.id || 0;
-    marker.data = coord;
-    marker._alwaysShow = !!alwaysShow;
-    marker._baseStyle = {
-        opacity: 1,
-        fillOpacity: RING_MARKER_STYLE.fillOpacity,
-        weight: 0,
-        radius: RING_MARKER_STYLE.radius
-    };
-    marker._popupContent = makePopupText(coord, popupType);
-    marker.on('click', (e) => {
-        if (inspectMode !== 'marker') {
-            if (inspectMode === 'road') {
-                const latlng = e?.latlng || L.latLng(latitude, longitude);
-                openNearestRoadPopupAt(latlng, getPreferredRoadKinds());
-            }
-            if (e) L.DomEvent.stopPropagation(e);
-            return;
-        }
-        L.popup().setLatLng([latitude, longitude]).setContent(marker._popupContent).openOn(map);
-        if (e) L.DomEvent.stopPropagation(e);
-    });
-
-    marker._groupName = groupName;
-    marker._culledOnMap = false;
-    return marker;
-}
-
-// Shared batched renderer for ring-marker layers. `assign` receives the
-// (initially empty) marker array so the caller's global always points at
-// the array being filled.
-function drawRingMarkerLayer(coordsData, groupName, popupType, alwaysShow, assign) {
-    const collected = [];
-    assign(collected);
-    if (!coordsData || coordsData.length === 0) {
-        return;
-    }
-
-    const layerGroup = ensureTmapFeatureGroup(groupName);
-    layerGroup.clearLayers();
-
-    // Markers are created detached (viewport culling attaches them later),
-    // so batches are pure JS work: large batches are safe. Hidden tabs have
-    // no frame budget at all, so process even bigger chunks there.
-    const BATCH_SIZE = (typeof document !== 'undefined' && document.hidden) ? 20000 : 2000;
-    const totalCount = coordsData.length;
-
-    function processBatch(startIndex) {
-        const endIndex = Math.min(startIndex + BATCH_SIZE, totalCount);
-
-        for (let i = startIndex; i < endIndex; i++) {
-            const marker = createRingMarker(coordsData[i], groupName, popupType, alwaysShow);
-            if (marker) collected.push(marker);
-        }
-
-        if (endIndex < totalCount) {
-            scheduleFrame(() => processBatch(endIndex));
-        } else {
-            layerCountOverride[groupName] = collected.length;
-            addOverlayLayers(featureGroups);
-            lastCullState = null;
-            scheduleVisibleMarkerRefresh();
-        }
-    }
-
-    processBatch(0);
-}
-
 // 주차장 상태는 구간(상태)이므로 점 마커 대신 DR 궤적 밑에 깔리는 반투명
 // 띠(폴리라인)로 그린다. 진분홍 = ParkingLot(주차장 모드), 연분홍 =
 // EnterCandidate/EnterReady(진입 후보/준비).
@@ -307,33 +218,10 @@ function drawParkingLotStateBands(bandsData) {
     scheduleVisibleMarkerRefresh();
 }
 
-// Roll/pitch reset (정차) markers: a DR point where the DR estimator
-// re-initialized roll/pitch — SetRollPitchFromAccelerometer fires while the
-// vehicle is stationary, ResetRollPitch on an MM feedback orientation reset.
-function drawRollPitchResetMarkers(coordsData) {
-    drawRingMarkerLayer(coordsData, 'Roll/Pitch Reset (정차)', 'Roll/Pitch Reset', true,
-        (arr) => { rollPitchResetMarkers = arr; });
-}
-
-// MM feedback correction markers: a DR point that was corrected by MM
-// feedback (position clamp or heading-only). Replaces the old black/gray
-// recoloring of the DR dot itself.
-function drawMmFeedbackMarkers(coordsData) {
-    drawRingMarkerLayer(coordsData, 'MM Feedback', 'MM Feedback', true,
-        (arr) => { mmFeedbackMarkers = arr; });
-}
-
 // Re-order the shared canvas draw list after each batched render: event ring
 // markers paint above DR-based / Road Match markers, while parking bands sink
 // below them so the 띠 never covers the trace.
 function bringParkingLotMarkersToFront() {
-    [mmFeedbackMarkers, rollPitchResetMarkers].forEach((list) => {
-        list.forEach((marker) => {
-            if (marker._map && typeof marker.bringToFront === 'function') {
-                marker.bringToFront();
-            }
-        });
-    });
     parkingLotStateBands.forEach((layer) => {
         if (layer._map && typeof layer.bringToBack === 'function') {
             layer.bringToBack();
@@ -522,20 +410,39 @@ function makePopupText(coordinate, coordtype) {
     if (coordtype === 'DR-based') {
         details.push(popupRow('isDRGps', escapeHtml(String(coordinate.extra?.isDRGps ?? ''))));
         details.push(popupRow('MM Feedback', escapeHtml(String(coordinate.extra?.mm_feedback_reason || ''))));
-    }
 
-    if (coordtype === 'MM Feedback') {
-        details.push(popupRow('MM Feedback', escapeHtml(String(coordinate.extra?.mm_feedback_reason || ''))));
-    }
+        // 보정/초기화 직후 궤적이 얼마나 움직였는지 (직전 DR 좌표 대비)
+        const extra = coordinate.extra || {};
+        if (Number.isFinite(extra.delta_dist_m)) {
+            details.push(popupRow('이동 (직전 DR 대비)', `${extra.delta_dist_m.toFixed(2)} m`));
+        }
+        if (Number.isFinite(extra.delta_heading_deg)) {
+            details.push(popupRow('헤딩 변화 (직전 DR)', `${extra.delta_heading_deg.toFixed(1)}°`));
+        }
+        if (Number.isFinite(extra.feedback_heading_delta)) {
+            details.push(popupRow('피드백 헤딩 보정량', `${extra.feedback_heading_delta.toFixed(1)}°`));
+        }
 
-    if (coordtype === 'DR-based' || coordtype === 'Roll/Pitch Reset') {
-        const rollPitchEvents = coordinate.extra?.roll_pitch_reset_events;
+        const rollPitchEvents = extra.roll_pitch_reset_events;
         if (Array.isArray(rollPitchEvents)) {
             rollPitchEvents.forEach((event) => {
-                const label = event?.event === 'SetRollPitchFromAccelerometer'
-                    ? '정차 초기화 (가속도계)'
-                    : '정차 초기화 (리셋)';
-                details.push(popupRow(label, escapeHtml(String(event?.detail || ''))));
+                const isAccel = event?.event === 'SetRollPitchFromAccelerometer';
+                const label = isAccel ? '정차 초기화 (가속도계)' : '정차 초기화 (리셋)';
+                const v = event?.values || {};
+                let desc;
+                if (Number.isFinite(v.before_roll) && Number.isFinite(v.after_roll)) {
+                    const dRoll = Number.isFinite(event.delta_roll) ? event.delta_roll : (v.after_roll - v.before_roll);
+                    const dPitch = Number.isFinite(event.delta_pitch) ? event.delta_pitch : ((v.after_pitch ?? 0) - (v.before_pitch ?? 0));
+                    desc = `roll ${v.before_roll.toFixed(2)}→${v.after_roll.toFixed(2)} (Δ${dRoll >= 0 ? '+' : ''}${dRoll.toFixed(2)}°)`
+                        + `, pitch ${Number.isFinite(v.before_pitch) ? v.before_pitch.toFixed(2) : '-'}→${Number.isFinite(v.after_pitch) ? v.after_pitch.toFixed(2) : '-'}`
+                        + ` (Δ${dPitch >= 0 ? '+' : ''}${dPitch.toFixed(2)}°)`;
+                } else if (Number.isFinite(v.roll)) {
+                    desc = `roll→${v.roll.toFixed(1)}°, pitch→${Number.isFinite(v.pitch) ? v.pitch.toFixed(1) : '-'}° 리셋`
+                        + `${Number.isFinite(v.heading) ? `, heading ${v.heading.toFixed(1)}°` : ''}`;
+                } else {
+                    desc = String(event?.detail || '');
+                }
+                details.push(popupRow(label, escapeHtml(desc)));
             });
         }
     }

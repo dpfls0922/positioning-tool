@@ -3,6 +3,77 @@
 입력으로 받은 좌표/라인 목록만 사용하며 전역 상태를 참조하지 않는다.
 """
 
+import math
+import re
+
+_EARTH_RADIUS_M = 6371000.0
+_DEG2RAD = math.pi / 180.0
+_NUM_KV_PATTERN = re.compile(r"([A-Za-z_]+)\s*=\s*(-?\d+(?:\.\d+)?)")
+
+
+def _lat_lon_dist_m(lat1, lon1, lat2, lon2):
+    local_x = -(((lon2 - lon1) * _DEG2RAD) * math.cos(_DEG2RAD * lat1)) * _EARTH_RADIUS_M
+    local_y = ((lat2 - lat1) * _DEG2RAD) * _EARTH_RADIUS_M
+    return math.sqrt(local_x * local_x + local_y * local_y)
+
+
+def _heading_delta_deg(prev_heading, heading):
+    return (heading - prev_heading + 180.0) % 360.0 - 180.0
+
+
+def _parse_numeric_fields(text):
+    return {key: float(value) for key, value in _NUM_KV_PATTERN.findall(text or '')}
+
+
+def attach_dr_event_deltas(coords):
+    """MM feedback / roll-pitch reset이 붙은 DR 좌표에 변화량을 계산해 붙인다.
+
+    - delta_dist_m / delta_heading_deg: 직전 DR 좌표 대비 이 좌표가 얼마나
+      움직였는지(보정/초기화 직후 궤적이 튄 정도).
+    - roll_pitch_reset_events[*].values / delta_roll / delta_pitch: 로그의
+      before/after 각도와 그 차이.
+    - feedback_values / feedback_heading_delta: MM feedback 사유 문자열의
+      수치들(dist, laneWidth, dr, feedback ...)과 헤딩 보정량.
+    """
+    dr_coords = [c for c in coords if c.get('type') == 'DR-based']
+    dr_coords.sort(key=lambda c: (c.get('id') or 0))
+
+    prev = None
+    for coord in dr_coords:
+        extra = coord.get('extra', {})
+        is_event = extra.get('mm_feedback') or extra.get('roll_pitch_reset')
+
+        if is_event and prev is not None:
+            try:
+                extra['delta_dist_m'] = round(_lat_lon_dist_m(
+                    prev.get('latitude'), prev.get('longitude'),
+                    coord.get('latitude'), coord.get('longitude')), 2)
+            except (TypeError, ValueError):
+                pass
+            prev_heading = prev.get('heading')
+            heading = coord.get('heading')
+            if isinstance(prev_heading, (int, float)) and isinstance(heading, (int, float)):
+                extra['delta_heading_deg'] = round(_heading_delta_deg(prev_heading, heading), 2)
+
+        if extra.get('mm_feedback'):
+            values = _parse_numeric_fields(extra.get('mm_feedback_reason', ''))
+            if values:
+                extra['feedback_values'] = values
+            if 'dr' in values and 'feedback' in values:
+                extra['feedback_heading_delta'] = round(
+                    _heading_delta_deg(values['dr'], values['feedback']), 2)
+
+        for event in extra.get('roll_pitch_reset_events', []) or []:
+            values = _parse_numeric_fields(event.get('detail', ''))
+            if values:
+                event['values'] = values
+            if 'before_roll' in values and 'after_roll' in values:
+                event['delta_roll'] = round(values['after_roll'] - values['before_roll'], 3)
+            if 'before_pitch' in values and 'after_pitch' in values:
+                event['delta_pitch'] = round(values['after_pitch'] - values['before_pitch'], 3)
+
+        prev = coord
+
 
 def build_parking_lot_state_bands(coords):
     """주차장 상태가 이어지는 DR 구간을 밑면 띠(폴리라인) 세그먼트로 묶는다.
@@ -69,94 +140,6 @@ def build_parking_lot_state_bands(coords):
     import sys
     print(f'[DEBUG] build_parking_lot_state_bands: DR-based={len(dr_coords)}, bands created={len(bands)}', file=sys.stderr)
     return bands
-
-
-def build_roll_pitch_reset_markers(coords):
-    """Extract DR-based coordinates where roll/pitch was reset (정차) as markers."""
-    markers = []
-    marker_id_counter = 50000  # Start from 50000 to avoid conflicts
-
-    for coord in coords:
-        if coord.get('type') != 'DR-based':
-            continue
-
-        events = coord.get('extra', {}).get('roll_pitch_reset_events')
-        if not events:
-            continue
-
-        event_names = {event.get('event') for event in events}
-        # 보라 계열로 통일:
-        #   SetRollPitchFromAccelerometer: 정차 중 가속도계 기반 자동 초기화 (진보라)
-        #   ResetRollPitch: MM feedback 기반 강제 초기화 (연보라)
-        if 'SetRollPitchFromAccelerometer' in event_names:
-            color = '#7c3aed'
-        else:
-            color = '#c084fc'
-
-        marker = {
-            "id": marker_id_counter,
-            "dlt_id": coord.get('dlt_id'),
-            "type": "Roll/Pitch Reset",
-            "latitude": coord.get("latitude"),
-            "longitude": coord.get("longitude"),
-            "heading": coord.get("heading"),
-            "color": color,
-            "fill": True,
-            "timestamp_ms": coord.get("timestamp_ms"),
-            "timestamp_str": coord.get("timestamp_str"),
-            "extra": {
-                "roll_pitch_reset_events": events,
-                "Speed": coord.get('extra', {}).get('Speed'),
-            }
-        }
-        markers.append(marker)
-        marker_id_counter += 1
-
-    return markers
-
-
-def build_mm_feedback_markers(coords):
-    """Extract DR-based coordinates with an MM feedback correction as markers."""
-    markers = []
-    marker_id_counter = 60000  # Start from 60000 to avoid conflicts
-
-    for coord in coords:
-        if coord.get('type') != 'DR-based':
-            continue
-
-        extra = coord.get('extra', {})
-        if not extra.get('mm_feedback'):
-            continue
-
-        reason = str(extra.get('mm_feedback_reason', '')).lower()
-        # 무채색 계열로 통일:
-        #   위치 보정 (clamped / force correction): 진한 무채색
-        #   헤딩만 보정 (heading only / correction normal): 연한 무채색
-        if "heading only" in reason or "correction normal" in reason:
-            color = '#9ca3af'
-        else:
-            color = '#111827'
-
-        marker = {
-            "id": marker_id_counter,
-            "dlt_id": coord.get('dlt_id'),
-            "type": "MM Feedback",
-            "latitude": coord.get("latitude"),
-            "longitude": coord.get("longitude"),
-            "heading": coord.get("heading"),
-            "color": color,
-            "fill": True,
-            "timestamp_ms": coord.get("timestamp_ms"),
-            "timestamp_str": coord.get("timestamp_str"),
-            "extra": {
-                "mm_feedback_reason": extra.get('mm_feedback_reason', ''),
-                "Speed": extra.get('Speed'),
-            }
-        }
-        markers.append(marker)
-        marker_id_counter += 1
-
-    return markers
 
 
 def build_route_info_markers(lines):
