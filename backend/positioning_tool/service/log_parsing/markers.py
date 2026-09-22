@@ -75,24 +75,19 @@ def attach_dr_event_deltas(coords):
         prev = coord
 
 
-def build_parking_lot_state_bands(coords):
-    """주차장 상태가 이어지는 DR 구간을 밑면 띠(폴리라인) 세그먼트로 묶는다.
+def _build_state_bands(coords, coord_type, band_type, classify, id_start):
+    """상태가 이어지는 좌표 구간을 밑면 띠(폴리라인) 세그먼트로 묶는 공통 빌더.
 
-    점마다 마커를 찍는 대신 연속 구간 하나를 띠 하나로 표현한다. 상태 구분:
-      ParkingLot(주차장 모드): 진분홍 / EnterCandidate·EnterReady(진입 후보/준비): 연분홍
+    점마다 마커를 찍는 대신 연속 구간 하나를 띠 하나로 표현한다.
+    classify(coord) 는 (group_key, color, outline_color, state_label) 을 돌려주고,
+    group_key 가 None 이면 그 좌표는 띠에 포함되지 않는다(구간이 끊긴다).
+    outline_color 는 띠 가장자리에 얇은 실선으로 그려져 구간 경계를 또렷하게 한다.
     """
-    dr_coords = [c for c in coords if c.get('type') == 'DR-based']
-    dr_coords.sort(key=lambda c: (c.get('id') or 0))
-
-    def state_group(parking_state):
-        if parking_state == 'ParkingLot':
-            return ('ParkingLot', '#db2777')
-        if parking_state in ('EnterCandidate', 'EnterReady'):
-            return ('Enter', '#f9a8d4')
-        return (None, None)
+    typed_coords = [c for c in coords if c.get('type') == coord_type]
+    typed_coords.sort(key=lambda c: (c.get('id') or 0))
 
     bands = []
-    band_id_counter = 30000  # Start from 30000 to avoid conflicts
+    band_id_counter = id_start
     current = None
 
     def close_current():
@@ -103,9 +98,8 @@ def build_parking_lot_state_bands(coords):
             bands.append(current)
         current = None
 
-    for coord in dr_coords:
-        parking_state = coord.get('extra', {}).get('parking_state')
-        group, color = state_group(parking_state)
+    for coord in typed_coords:
+        group, color, outline_color, state_label = classify(coord)
         if group is None:
             close_current()
             continue
@@ -115,9 +109,10 @@ def build_parking_lot_state_bands(coords):
 
         if current is None:
             current = {
-                "type": "Parking Lot State",
+                "type": band_type,
                 "state_group": group,
                 "color": color,
+                "outline_color": outline_color,
                 "points": [],
                 "states": [],
                 "start_dlt_id": coord.get('dlt_id'),
@@ -129,17 +124,47 @@ def build_parking_lot_state_bands(coords):
             }
 
         current['points'].append([coord.get('latitude'), coord.get('longitude')])
-        if parking_state not in current['states']:
-            current['states'].append(parking_state)
+        if state_label not in current['states']:
+            current['states'].append(state_label)
         current['end_dlt_id'] = coord.get('dlt_id')
         current['end_timestamp_ms'] = coord.get('timestamp_ms')
         current['end_timestamp_str'] = coord.get('timestamp_str')
 
     close_current()
-
-    import sys
-    print(f'[DEBUG] build_parking_lot_state_bands: DR-based={len(dr_coords)}, bands created={len(bands)}', file=sys.stderr)
     return bands
+
+
+def build_parking_lot_state_bands(coords):
+    """주차장 상태 DR 구간 띠. 진분홍 = ParkingLot(주차장 모드),
+    연분홍 = EnterCandidate·EnterReady(진입 후보/준비)."""
+    def classify(coord):
+        parking_state = coord.get('extra', {}).get('parking_state')
+        if parking_state == 'ParkingLot':
+            return ('ParkingLot', '#db2777', '#9d174d', parking_state)
+        if parking_state in ('EnterCandidate', 'EnterReady'):
+            return ('Enter', '#f9a8d4', '#db2777', parking_state)
+        return (None, None, None, None)
+
+    bands = _build_state_bands(coords, 'DR-based', 'Parking Lot State', classify, 30000)
+    import sys
+    print(f'[DEBUG] build_parking_lot_state_bands: bands created={len(bands)}', file=sys.stderr)
+    return bands
+
+
+def build_gnss_mode_bands(coords):
+    """Filtered GNSS 모드 구간 띠. 점 색 대신 밑면 띠로 모드를 표현한다.
+    연청록 = Normal, 연마젠타 = BusSleep, 회색 = 그 외 모드."""
+    def classify(coord):
+        mode = str(coord.get('extra', {}).get('gnss_mode', '') or '').strip()
+        if not mode:
+            return (None, None, None, None)
+        if mode == 'Normal':
+            return ('Normal', '#99f6e4', '#2dd4bf', mode)
+        if mode == 'BusSleep':
+            return ('BusSleep', '#e879f9', '#c026d3', mode)
+        return (mode, '#cbd5e1', '#94a3b8', mode)
+
+    return _build_state_bands(coords, 'Filtered GNSS', 'GNSS Mode', classify, 35000)
 
 
 def build_route_info_markers(lines):

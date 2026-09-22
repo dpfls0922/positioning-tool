@@ -141,61 +141,86 @@ function drawMarkers(coordinates) {
     }
 }
 
-// 주차장 상태는 구간(상태)이므로 점 마커 대신 DR 궤적 밑에 깔리는 반투명
-// 띠(폴리라인)로 그린다. 진분홍 = ParkingLot(주차장 모드), 연분홍 =
-// EnterCandidate/EnterReady(진입 후보/준비).
-function drawParkingLotStateBands(bandsData) {
-    parkingLotStateBands = [];
-    if (!bandsData || bandsData.length === 0) return;
+// 상태 구간을 궤적 밑에 깔리는 반투명 띠(폴리라인)로 그리는 공통 렌더러.
+// 띠 채움 위에 얇은 실선 테두리를 겹쳐 그려 구간 경계를 또렷하게 한다.
+// Parking Lot State(주차장)와 GNSS Mode(Normal/BusSleep)가 사용한다.
+const STATE_BAND_STYLE = { weight: 14, fillOpacity: 0.45, outlineWeight: 1.5 };
 
-    const group = ensureTmapFeatureGroup('Parking Lot State');
+function drawStateBandLayer(bandsData, groupName, stateLabelFor, assign) {
+    const collected = [];
+    assign(collected);
+    if (!bandsData || bandsData.length === 0) {
+        layerCountOverride[groupName] = 0;
+        return;
+    }
+
+    const group = ensureTmapFeatureGroup(groupName);
     group.clearLayers();
+    let bandCount = 0;
 
     bandsData.forEach((band) => {
         const points = (band.points || []).filter((pt) =>
             Array.isArray(pt) && Number.isFinite(pt[0]) && Number.isFinite(pt[1]));
         if (points.length === 0) return;
+        bandCount += 1;
 
-        // 점이 하나뿐인 구간은 짧은 띠 대신 같은 색 원판으로 그린다.
-        const layer = points.length === 1
-            ? L.circleMarker(points[0], {
+        const outlineColor = band.outline_color || band.color;
+        let fillLayer;
+        let outlineLayer = null;
+
+        if (points.length === 1) {
+            // 점이 하나뿐인 구간은 짧은 띠 대신 같은 색 원판으로 그린다.
+            fillLayer = L.circleMarker(points[0], {
                 radius: 9,
-                stroke: false,
+                stroke: true,
+                color: outlineColor,
+                weight: STATE_BAND_STYLE.outlineWeight,
+                opacity: 0.9,
                 fill: true,
                 fillColor: band.color,
-                fillOpacity: 0.45,
+                fillOpacity: STATE_BAND_STYLE.fillOpacity,
                 bubblingMouseEvents: false
-            })
-            : L.polyline(points, {
+            });
+        } else {
+            // 테두리: 채움보다 살짝 넓은 진한 실선을 아래에 깔아 가장자리만 보이게 한다.
+            outlineLayer = L.polyline(points, {
+                color: outlineColor,
+                weight: STATE_BAND_STYLE.weight + STATE_BAND_STYLE.outlineWeight * 2,
+                opacity: 0.85,
+                lineCap: 'round',
+                lineJoin: 'round',
+                interactive: false,
+                bubblingMouseEvents: false
+            });
+            fillLayer = L.polyline(points, {
                 color: band.color,
-                weight: 14,
-                opacity: 0.45,
+                weight: STATE_BAND_STYLE.weight,
+                opacity: STATE_BAND_STYLE.fillOpacity,
                 lineCap: 'round',
                 lineJoin: 'round',
                 bubblingMouseEvents: false
             });
+        }
 
-        layer.dlt_id = band.start_dlt_id;
-        layer.timestamp_ms = band.start_timestamp_ms;
-        layer.id = band.id || 0;
-        layer.data = band;
-        layer._groupName = 'Parking Lot State';
+        fillLayer.dlt_id = band.start_dlt_id;
+        fillLayer.timestamp_ms = band.start_timestamp_ms;
+        fillLayer.id = band.id || 0;
+        fillLayer.data = band;
+        fillLayer._groupName = groupName;
+        fillLayer._bandRole = 'fill';
 
-        const stateLabel = band.state_group === 'ParkingLot'
-            ? '주차장 모드'
-            : `진입 후보/준비 (${(band.states || []).join(', ')})`;
         const rows = [
-            popupRow('상태', escapeHtml(stateLabel)),
+            popupRow('상태', escapeHtml(stateLabelFor(band))),
             popupRow('시작', escapeHtml(String(band.start_timestamp_str || '-'))),
             popupRow('끝', escapeHtml(String(band.end_timestamp_str || '-'))),
-            popupRow('DR 점 개수', points.length),
+            popupRow('점 개수', points.length),
             popupRow('DLT', `${band.start_dlt_id ?? '-'} ~ ${band.end_dlt_id ?? '-'}`)
         ].join('');
-        layer._popupContent = `<div class="mk-popup"><div class="mk-head">`
-            + `<span class="mk-head-type">Parking Lot State</span></div>`
+        fillLayer._popupContent = `<div class="mk-popup"><div class="mk-head">`
+            + `<span class="mk-head-type">${escapeHtml(groupName)}</span></div>`
             + `<div class="mk-rows">${rows}</div></div>`;
 
-        layer.on('click', (e) => {
+        fillLayer.on('click', (e) => {
             if (inspectMode !== 'marker') {
                 if (inspectMode === 'road' && e?.latlng) {
                     openNearestRoadPopupAt(e.latlng, getPreferredRoadKinds());
@@ -204,28 +229,55 @@ function drawParkingLotStateBands(bandsData) {
                 return;
             }
             const latlng = e?.latlng || L.latLng(points[0][0], points[0][1]);
-            L.popup().setLatLng(latlng).setContent(layer._popupContent).openOn(map);
+            L.popup().setLatLng(latlng).setContent(fillLayer._popupContent).openOn(map);
             if (e) L.DomEvent.stopPropagation(e);
         });
 
-        group.addLayer(layer);
-        parkingLotStateBands.push(layer);
+        if (outlineLayer) {
+            outlineLayer._groupName = groupName;
+            outlineLayer._bandRole = 'outline';
+            group.addLayer(outlineLayer);
+            collected.push(outlineLayer);
+        }
+        group.addLayer(fillLayer);
+        collected.push(fillLayer);
     });
 
-    layerCountOverride['Parking Lot State'] = parkingLotStateBands.length;
+    layerCountOverride[groupName] = bandCount;
     addOverlayLayers(featureGroups);
     lastCullState = null;
     scheduleVisibleMarkerRefresh();
 }
 
-// Re-order the shared canvas draw list after each batched render: event ring
-// markers paint above DR-based / Road Match markers, while parking bands sink
-// below them so the 띠 never covers the trace.
+function drawParkingLotStateBands(bandsData) {
+    drawStateBandLayer(bandsData, 'Parking Lot State', (band) => (
+        band.state_group === 'ParkingLot'
+            ? '주차장 모드'
+            : `진입 후보/준비 (${(band.states || []).join(', ')})`
+    ), (arr) => { parkingLotStateBands = arr; });
+}
+
+function drawGnssModeBands(bandsData) {
+    drawStateBandLayer(bandsData, 'GNSS Mode', (band) => (
+        (band.states || []).join(', ') || band.state_group || '-'
+    ), (arr) => { gnssModeBands = arr; });
+}
+
+// Re-order the shared canvas draw list after each batched render: state bands
+// sink below the point markers so the 띠 never covers the trace. Fills go
+// back first, then outlines, so each outline ends up under its fill.
 function bringParkingLotMarkersToFront() {
-    parkingLotStateBands.forEach((layer) => {
-        if (layer._map && typeof layer.bringToBack === 'function') {
-            layer.bringToBack();
-        }
+    [parkingLotStateBands, gnssModeBands].forEach((list) => {
+        list.forEach((layer) => {
+            if (layer._map && layer._bandRole === 'fill' && typeof layer.bringToBack === 'function') {
+                layer.bringToBack();
+            }
+        });
+        list.forEach((layer) => {
+            if (layer._map && layer._bandRole === 'outline' && typeof layer.bringToBack === 'function') {
+                layer.bringToBack();
+            }
+        });
     });
 }
 

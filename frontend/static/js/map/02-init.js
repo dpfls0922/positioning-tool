@@ -5,6 +5,7 @@ function init() {
     // Initialize data variables
     if (typeof markersData === 'undefined') markersData = [];
     if (typeof parkingLotStateBandsData === 'undefined') parkingLotStateBandsData = [];
+    if (typeof gnssModeBandsData === 'undefined') gnssModeBandsData = [];
     if (typeof linesData === 'undefined') linesData = [];
 
     map.zoomControl.remove();
@@ -278,6 +279,7 @@ function renderFromCurrentData() {
     resetSimulationForNewData();
     drawMarkers(markersData);
     drawParkingLotStateBands(parkingLotStateBandsData);
+    drawGnssModeBands(gnssModeBandsData);
     drawPolylines(linesData);
     addControlLayers();
     renderLayerControls();

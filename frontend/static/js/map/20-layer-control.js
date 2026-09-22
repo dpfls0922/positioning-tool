@@ -367,30 +367,42 @@ function isRouteLayerName(name) {
     ].includes(name);
 }
 
-// DR 좌표에서 파생된 레이어. 최상위 행이 아니라 DR-based 행 하위에 중첩해
-// 관리하되, DR-based가 꺼져 있어도 독립적으로 켜고 끌 수 있다.
-const DR_CHILD_LAYERS = ['Parking Lot State'];
+// 좌표 레이어에서 파생된 하위 레이어. 최상위 행이 아니라 부모 행 하위에
+// 중첩해 관리하되, 부모가 꺼져 있어도 독립적으로 켜고 끌 수 있다.
+const COORD_CHILD_LAYERS = {
+    'DR-based': ['Parking Lot State'],
+    'Filtered GNSS': ['GNSS Mode']
+};
 
-// DR 점 자체에 입히는 이벤트 색 범례 (별도 레이어가 아니라 점 색으로 표현).
-const DR_DOT_COLOR_LEGEND = [
-    { color: '#7c3aed', label: '정차 Roll/Pitch 초기화' },
-    { color: '#000000', label: 'MM Feedback 위치 보정' },
-    { color: '#9e9e9e', label: 'MM Feedback 헤딩 보정' },
-    { color: 'orange', label: 'isDRGps = 0' }
-];
+// 점/띠 색 의미 범례 (부모 행 아래 상시 표시).
+const COORD_COLOR_LEGENDS = {
+    'DR-based': [
+        { color: '#7c3aed', label: '정차 Roll/Pitch 초기화' },
+        { color: '#000000', label: 'MM Feedback 위치 보정' },
+        { color: '#9e9e9e', label: 'MM Feedback 헤딩 보정' },
+        { color: 'orange', label: 'isDRGps = 0' }
+    ],
+    'Filtered GNSS': [
+        { color: '#22c55e', label: '모드 전환 지점' },
+        { color: '#99f6e4', label: 'Normal 구간 띠' },
+        { color: '#e879f9', label: 'BusSleep 구간 띠' }
+    ]
+};
 
 function isDrChildLayerName(name) {
-    return DR_CHILD_LAYERS.includes(name);
+    return Object.values(COORD_CHILD_LAYERS).some((list) => list.includes(name));
 }
 
-// DR 하위 레이어 체크박스와 DR 점 색 범례를 DR-based 행 아래에 붙인다.
+// 하위 레이어 체크박스와 색 범례를 부모 좌표 행 아래에 붙인다.
 function appendDrChildLayerControls(parent, layerName) {
-    if (layerName !== 'DR-based') return;
+    const childNames = COORD_CHILD_LAYERS[layerName];
+    const legend = COORD_COLOR_LEGENDS[layerName];
+    if (!childNames && !legend) return;
 
     const wrap = document.createElement('div');
     wrap.className = 'layer-rule-list';
 
-    DR_DOT_COLOR_LEGEND.forEach((entry) => {
+    (legend || []).forEach((entry) => {
         const item = document.createElement('div');
         item.className = 'layer-rule-item';
 
@@ -407,7 +419,7 @@ function appendDrChildLayerControls(parent, layerName) {
         wrap.appendChild(item);
     });
 
-    const children = DR_CHILD_LAYERS.filter((name) => !!featureGroups[name]);
+    const children = (childNames || []).filter((name) => !!featureGroups[name]);
 
     children.forEach((childName) => {
         const group = featureGroups[childName];
@@ -1147,6 +1159,7 @@ function getLayerSwatchColor(name) {
         'Filtered GNSS': '#14b8a6',
         'DR-based': '#ef4444',
         'Parking Lot State': '#db2777',
+        'GNSS Mode': '#e879f9',
         'Road Match': '#22d3ee',
         'Route Match': '#84cc16',
         'VPM': '#2563eb',

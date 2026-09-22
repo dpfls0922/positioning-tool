@@ -61,6 +61,7 @@ from backend.positioning_tool.service.log_parsing.gp_guide import (
 )
 from backend.positioning_tool.service.log_parsing.markers import (
     attach_dr_event_deltas,
+    build_gnss_mode_bands,
     build_parking_lot_state_bands,
     build_route_info_markers,
 )
@@ -2129,6 +2130,7 @@ def build_runtime_payload():
         "max_id": max_id,
         "coords": all_coords,
         "parking_lot_state_bands": parking_lot_state_bands,
+        "gnss_mode_bands": build_gnss_mode_bands(all_coords),
         "sdi_block_timeline": build_sdi_block_timeline(),
         "shade_timeline": build_shade_timeline(),
         "lines": all_lines,

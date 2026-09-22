@@ -72,6 +72,7 @@ function isInSelectedRange(timestampMs, minVal, maxVal) {
 function resetVisualization() {
     markers.forEach(marker => map.removeLayer(marker));
     parkingLotStateBands.forEach(layer => map.removeLayer(layer));
+    gnssModeBands.forEach(layer => map.removeLayer(layer));
     polylines.forEach(polyline => map.removeLayer(polyline));
     highlightLayer.clearLayers();
     clearDistanceVisuals();
@@ -90,6 +91,7 @@ function resetVisualization() {
 
     markers = [];
     parkingLotStateBands = [];
+    gnssModeBands = [];
     polylines = [];
     requestGroups = {};
     cullTotalCounts = {};

@@ -53,13 +53,10 @@ class CoordType(Enum):
 
     def get_color(self, coord):
         if self == CoordType.GNSS1:
+            # 모드(Normal/BusSleep)는 점 색이 아니라 'GNSS Mode' 밑면 띠로
+            # 구간 표시한다. 점 색은 청록 단색, 모드 전환 순간만 초록 강조.
             if coord.extra.get("gnss_transition_highlight"):
                 return "#22c55e"
-            gnss_mode = str(coord.extra.get("gnss_mode", "")).strip()
-            if gnss_mode == "BusSleep":
-                return "#d946ef"  # 마젠타 — 기존 주황은 DR(isDRGps=0)과 겹침
-            if gnss_mode == "Normal":
-                return "#14b8a6"  # 청록 — 기존 노랑은 DR 주황과 혼동
         if self == CoordType.DR:
             # 이벤트가 있으면 DR 점 자체에 색을 입힌다 (별도 레이어 없이).
             #   보라: 정차 중 roll/pitch 초기화 (드물어서 우선 표시)

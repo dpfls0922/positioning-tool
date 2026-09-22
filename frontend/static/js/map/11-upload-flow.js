@@ -190,12 +190,14 @@ function handleUploadAndParse() {
 
         markersData = response.coords || [];
         parkingLotStateBandsData = response.parking_lot_state_bands || [];
+        gnssModeBandsData = response.gnss_mode_bands || [];
         linesData = response.lines || [];
         setSdiBlockTimeline(response.sdi_block_timeline || []);
         setSimShadeTimeline(response.shade_timeline || []);
         console.log('[DEBUG] Loaded data:', {
             markersCount: markersData.length,
             parkingLotStateBandsCount: parkingLotStateBandsData.length,
+            gnssModeBandsCount: gnssModeBandsData.length,
             linesCount: linesData.length
         });
         currentResultName = response.result_name || 'result';

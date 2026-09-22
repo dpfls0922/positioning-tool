@@ -45,6 +45,7 @@ let baseLayerInitialized = false;
 
 let markers = [];
 let parkingLotStateBands = [];
+let gnssModeBands = [];
 let polylines = [];
 let requestGroups = {};
 let activeGroups = new Set();
