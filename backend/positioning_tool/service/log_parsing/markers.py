@@ -135,14 +135,14 @@ def _build_state_bands(coords, coord_type, band_type, classify, id_start):
 
 
 def build_parking_lot_state_bands(coords):
-    """주차장 상태 DR 구간 띠. 진분홍 = ParkingLot(주차장 모드),
-    연분홍 = EnterCandidate·EnterReady(진입 후보/준비)."""
+    """주차장 상태 DR 구간 띠. 페이지 범례와 같은 색을 쓴다:
+    회색 = ParkingLot(주차장 모드), 핑크 = EnterCandidate·EnterReady(진입 평가/준비)."""
     def classify(coord):
         parking_state = coord.get('extra', {}).get('parking_state')
         if parking_state == 'ParkingLot':
-            return ('ParkingLot', '#db2777', '#9d174d', parking_state)
+            return ('ParkingLot', '#808080', '#4b5563', parking_state)
         if parking_state in ('EnterCandidate', 'EnterReady'):
-            return ('Enter', '#f9a8d4', '#db2777', parking_state)
+            return ('Enter', '#ff1493', '#c2185b', parking_state)
         return (None, None, None, None)
 
     bands = _build_state_bands(coords, 'DR-based', 'Parking Lot State', classify, 30000)

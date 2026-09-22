@@ -1158,7 +1158,7 @@ function getLayerSwatchColor(name) {
         'Raw GNSS': '#a855f7',
         'Filtered GNSS': '#14b8a6',
         'DR-based': '#ef4444',
-        'Parking Lot State': '#db2777',
+        'Parking Lot State': '#ff1493',
         'GNSS Mode': '#e879f9',
         'Road Match': '#22d3ee',
         'Route Match': '#84cc16',

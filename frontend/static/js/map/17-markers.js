@@ -144,7 +144,7 @@ function drawMarkers(coordinates) {
 // 상태 구간을 궤적 밑에 깔리는 반투명 띠(폴리라인)로 그리는 공통 렌더러.
 // 띠 채움 위에 얇은 실선 테두리를 겹쳐 그려 구간 경계를 또렷하게 한다.
 // Parking Lot State(주차장)와 GNSS Mode(Normal/BusSleep)가 사용한다.
-const STATE_BAND_STYLE = { weight: 14, fillOpacity: 0.45, outlineWeight: 1.5 };
+const STATE_BAND_STYLE = { weight: 14, fillOpacity: 0.45, outlineWeight: 1 };
 
 function drawStateBandLayer(bandsData, groupName, stateLabelFor, assign) {
     const collected = [];
