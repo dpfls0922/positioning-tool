@@ -229,16 +229,16 @@ function drawParkingLotStateMarkers(coordsData) {
         }), false, (arr) => { parkingLotStateMarkers = arr; });
 }
 
-// 정차(roll/pitch 초기화) 지점: 다른 점 마커와 같은 스타일의 보라 마커.
-// DR 점(반지름 3)보다 큰 반지름으로 그려 겹쳐도 식별된다.
+// 정차(roll/pitch 초기화) 지점: 다른 점 마커와 같은 크기/스타일의 보라 마커.
+// 항상 DR 점 위에 그려지므로 크기를 키우지 않아도 식별된다.
 function drawRollPitchResetMarkers(coordsData) {
     drawDerivedPointLayer(coordsData, 'Roll/Pitch Reset (정차)', 'Roll/Pitch Reset',
         (coord) => ({
-            radius: 5,
+            radius: 3,
             color: coord.color || '#7c3aed',
             weight: 1,
             fill: true,
-            fillOpacity: 0.9
+            fillOpacity: 0.8
         }), true, (arr) => { rollPitchResetMarkers = arr; });
 }
 
