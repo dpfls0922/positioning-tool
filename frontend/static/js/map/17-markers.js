@@ -229,28 +229,30 @@ function drawParkingLotStateMarkers(coordsData) {
         }), false, (arr) => { parkingLotStateMarkers = arr; });
 }
 
-// 정차(roll/pitch 초기화) 지점: 테두리 없는 보라 반투명 원판.
+// 정차(roll/pitch 초기화) 지점: 다른 점 마커와 같은 스타일의 보라 마커.
+// DR 점(반지름 3)보다 큰 반지름으로 그려 겹쳐도 식별된다.
 function drawRollPitchResetMarkers(coordsData) {
     drawDerivedPointLayer(coordsData, 'Roll/Pitch Reset (정차)', 'Roll/Pitch Reset',
         (coord) => ({
-            radius: 6,
-            stroke: false,
+            radius: 5,
+            color: coord.color || '#7c3aed',
+            weight: 1,
             fill: true,
-            fillColor: coord.color || '#7c3aed',
-            fillOpacity: 0.55
+            fillOpacity: 0.9
         }), true, (arr) => { rollPitchResetMarkers = arr; });
 }
 
 // Re-order the shared canvas draw list after each batched render: derived
 // point layers paint above DR-based / Road Match markers, and _alwaysShow
 // DR dots (MM feedback) stay on top of stacked stationary points.
+// Roll/Pitch Reset(정차) 마커는 마지막에 올려 DR 점보다 항상 위에 보인다.
 function bringParkingLotMarkersToFront() {
     markers.forEach((marker) => {
         if (marker._alwaysShow && marker._map && typeof marker.bringToFront === 'function') {
             marker.bringToFront();
         }
     });
-    [rollPitchResetMarkers, parkingLotStateMarkers].forEach((list) => {
+    [parkingLotStateMarkers, rollPitchResetMarkers].forEach((list) => {
         list.forEach((marker) => {
             if (marker._map && typeof marker.bringToFront === 'function') {
                 marker.bringToFront();
