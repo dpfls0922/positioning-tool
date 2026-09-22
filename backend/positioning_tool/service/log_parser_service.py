@@ -17,6 +17,7 @@ from backend.positioning_tool.service.log_parsing.patterns import (
     GP_TYPE_PATTERN,
     MFS_CONTENT_PATTERN,
     MM_FEEDBACK_PATTERN,
+    ROLL_PITCH_RESET_PATTERN,
     PARKING_LOT_APPLY_PATTERN,
     PARKING_LOT_STATE_CHANGE_PATTERN,
     ROUTE_MATCH_LINK_PATTERN,
@@ -59,7 +60,9 @@ from backend.positioning_tool.service.log_parsing.gp_guide import (
     lane_color_from_voice_code,
 )
 from backend.positioning_tool.service.log_parsing.markers import (
+    build_mm_feedback_markers,
     build_parking_lot_state_markers,
+    build_roll_pitch_reset_markers,
     build_route_info_markers,
 )
 
@@ -153,6 +156,8 @@ class _LogParseState:
         self.last_road_match_coord = None
         self.last_route_match_coord = None
         self.pending_mm_feedback_reason = None
+        # Roll/pitch resets (정차 재초기화) waiting for the next DR coordinate
+        self.pending_roll_pitch_resets = []
         # Requests waiting for their TVAS session id (which arrives later in the log)
         self.pending_route_request_coords = []
         self.pending_candidate_link_scores = []
@@ -195,6 +200,7 @@ def parse_log(log_file_path=None):
         _collect_route_information(state, line, timestamp)
         _track_match_states(line)
         _track_mm_feedback(state, line)
+        _track_roll_pitch_reset(state, line)
         _collect_coordinates(state, line, dlt_id, timestamp)
 
     state.flush_pending_raw_gnss()
@@ -363,6 +369,23 @@ def _track_mm_feedback(state, line):
         state.pending_mm_feedback_reason = reason
 
 
+def _track_roll_pitch_reset(state, line):
+    """정차 중 roll/pitch 재초기화 이벤트를 잡아 다음 DR 좌표에 표시한다.
+
+    SetRollPitchFromAccelerometer는 정차 중에만 발생하고, ResetRollPitch는
+    MM feedback 방향 재설정 시 발생한다. 다음 DR 좌표까지 발생한 이벤트를
+    모두 모아 붙인다.
+    """
+    roll_pitch_match = ROLL_PITCH_RESET_PATTERN.search(line)
+    if not roll_pitch_match:
+        return
+
+    state.pending_roll_pitch_resets.append({
+        "event": roll_pitch_match.group(1),
+        "detail": roll_pitch_match.group(2).strip(),
+    })
+
+
 def _collect_coordinates(state, line, dlt_id, timestamp):
     """줄에서 좌표 패턴을 찾아 타입별 핸들러로 넘긴다."""
     for coord_type in CoordType:
@@ -475,6 +498,11 @@ def _handle_dr_coord(state, coord_type, match, line, dlt_id, timestamp):
         dr_coordinate.extra["mm_feedback"] = True
         dr_coordinate.extra["mm_feedback_reason"] = state.pending_mm_feedback_reason
         state.pending_mm_feedback_reason = None
+
+    if state.pending_roll_pitch_resets:
+        dr_coordinate.extra["roll_pitch_reset"] = True
+        dr_coordinate.extra["roll_pitch_reset_events"] = state.pending_roll_pitch_resets
+        state.pending_roll_pitch_resets = []
 
     COORDINATES[coord_type].append(dr_coordinate)
     state.last_dr_coordinate = dr_coordinate
@@ -2071,6 +2099,10 @@ def build_runtime_payload():
     import sys
     print(f'[DEBUG] build_runtime_payload: created parking_lot_state_markers = {len(parking_lot_state_markers)}', file=sys.stderr)
 
+    # Extract 정차(roll/pitch reset) / MM feedback markers from DR-based coordinates
+    roll_pitch_reset_markers = build_roll_pitch_reset_markers(all_coords)
+    mm_feedback_markers = build_mm_feedback_markers(all_coords)
+
     # Attach per-link GP / turnCode info to the route links themselves so the
     # Route Info layer shows the guidance decision for each link.
     attached_guides = attach_guide_info_to_route_lines(all_lines)
@@ -2099,6 +2131,8 @@ def build_runtime_payload():
         "max_id": max_id,
         "coords": all_coords,
         "parking_lot_state_markers": parking_lot_state_markers,
+        "roll_pitch_reset_markers": roll_pitch_reset_markers,
+        "mm_feedback_markers": mm_feedback_markers,
         "sdi_block_timeline": build_sdi_block_timeline(),
         "shade_timeline": build_shade_timeline(),
         "lines": all_lines,

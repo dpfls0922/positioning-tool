@@ -53,14 +53,9 @@ function drawMarkers(coordinates) {
                 const isGnssTransitionHighlight = coordtype === 'Filtered GNSS' && !!coord?.extra?.gnss_transition_highlight;
                 const useDrHeadingArrow = coordtype === 'DR-based' && drHeadingArrowEnabled;
 
-                // Use color set by backend based on parking state
+                // Use color set by backend. MM feedback no longer recolors the
+                // DR dot — feedback points live on the 'MM Feedback' ring layer.
                 let markerColor = coord.color || 'black';
-
-                // MM feedback 색상 덮어쓰기: 검정(위치+헤딩 동시보정) / 회색(헤딩보정만)
-                if (coordtype === 'DR-based' && coord.extra?.mm_feedback) {
-                    const reason = (coord.extra.mm_feedback_reason || '').toLowerCase();
-                    markerColor = reason.startsWith('heading only') ? '#888888' : '#000000';
-                }
 
                 const marker = useDrHeadingArrow
                     ? L.marker([latitude, longitude], {
@@ -79,8 +74,10 @@ function drawMarkers(coordinates) {
                 marker.id = coord.id || 0;
                 marker.data = coord;
                 marker._isIconMarker = useDrHeadingArrow;
-                // MM feedback-corrected DR points must never be decimated away
-                marker._alwaysShow = coordtype === 'DR-based' && !!coord.extra?.mm_feedback;
+                // MM feedback-corrected / roll-pitch-reset(정차) DR points must
+                // never be decimated away
+                marker._alwaysShow = coordtype === 'DR-based' &&
+                    (!!coord.extra?.mm_feedback || !!coord.extra?.roll_pitch_reset);
                 marker._baseStyle = {
                     opacity: 1,
                     fillOpacity: useDrHeadingArrow ? 1 : 0.8,
@@ -144,102 +141,127 @@ function drawMarkers(coordinates) {
     }
 }
 
-function drawParkingLotStateMarkers(coordsData) {
-    console.log('[DEBUG] drawParkingLotStateMarkers called with:', coordsData?.length || 0, 'markers');
+// DR 이벤트 링 레이어 공통 스타일: DR 점(반지름 3) 위에 두 배 크기 링으로
+// 얹히는 상태/이벤트 마커. Parking Lot State / Roll/Pitch Reset / MM Feedback
+// 세 레이어가 모두 이 팩토리를 사용해 스타일이 통일된다.
+const RING_MARKER_STYLE = { radius: 6, weight: 2, fillOpacity: 0.6 };
+
+function createRingMarker(coord, groupName, popupType, alwaysShow) {
+    const latitude = coord.latitude;
+    const longitude = coord.longitude;
+    if (latitude === undefined || longitude === undefined) return null;
+
+    const marker = L.circleMarker([latitude, longitude], {
+        radius: RING_MARKER_STYLE.radius,
+        color: coord.color || '#808080',
+        weight: RING_MARKER_STYLE.weight,
+        fill: true,
+        fillOpacity: RING_MARKER_STYLE.fillOpacity,
+        bubblingMouseEvents: false
+    });
+
+    marker.dlt_id = coord.dlt_id;
+    marker.timestamp_ms = coord.timestamp_ms;
+    marker.id = coord.id || 0;
+    marker.data = coord;
+    marker._alwaysShow = !!alwaysShow;
+    marker._baseStyle = {
+        opacity: 1,
+        fillOpacity: RING_MARKER_STYLE.fillOpacity,
+        weight: RING_MARKER_STYLE.weight,
+        radius: RING_MARKER_STYLE.radius
+    };
+    marker._popupContent = makePopupText(coord, popupType);
+    marker.on('click', (e) => {
+        if (inspectMode !== 'marker') {
+            if (inspectMode === 'road') {
+                const latlng = e?.latlng || L.latLng(latitude, longitude);
+                openNearestRoadPopupAt(latlng, getPreferredRoadKinds());
+            }
+            if (e) L.DomEvent.stopPropagation(e);
+            return;
+        }
+        L.popup().setLatLng([latitude, longitude]).setContent(marker._popupContent).openOn(map);
+        if (e) L.DomEvent.stopPropagation(e);
+    });
+
+    marker._groupName = groupName;
+    marker._culledOnMap = false;
+    return marker;
+}
+
+// Shared batched renderer for ring-marker layers. `assign` receives the
+// (initially empty) marker array so the caller's global always points at
+// the array being filled.
+function drawRingMarkerLayer(coordsData, groupName, popupType, alwaysShow, assign) {
+    const collected = [];
+    assign(collected);
     if (!coordsData || coordsData.length === 0) {
-        console.log('[DEBUG] No parking lot state markers to render');
-        parkingLotStateMarkers = [];
         return;
     }
 
-    const parkingLotLayer = ensureTmapFeatureGroup('Parking Lot State');
-    parkingLotLayer.clearLayers();
-    parkingLotStateMarkers = [];
+    const layerGroup = ensureTmapFeatureGroup(groupName);
+    layerGroup.clearLayers();
 
     // Markers are created detached (viewport culling attaches them later),
     // so batches are pure JS work: large batches are safe. Hidden tabs have
     // no frame budget at all, so process even bigger chunks there.
     const BATCH_SIZE = (typeof document !== 'undefined' && document.hidden) ? 20000 : 2000;
-    let processedCount = 0;
     const totalCount = coordsData.length;
 
     function processBatch(startIndex) {
         const endIndex = Math.min(startIndex + BATCH_SIZE, totalCount);
 
         for (let i = startIndex; i < endIndex; i++) {
-            const coord = coordsData[i];
-            const latitude = coord.latitude;
-            const longitude = coord.longitude;
-            if (latitude === undefined || longitude === undefined) continue;
-
-            const markerColor = coord.color || '#808080';
-            const popupText = makePopupText(coord, 'Parking Lot State');
-
-            const marker = L.circleMarker([latitude, longitude], {
-                radius: 3,
-                color: markerColor,
-                weight: 1,
-                fill: true,
-                fillOpacity: 0.8,
-                bubblingMouseEvents: false
-            });
-
-            marker.dlt_id = coord.dlt_id;
-            marker.timestamp_ms = coord.timestamp_ms;
-            marker.id = coord.id || 0;
-            marker.data = coord;
-            marker._baseStyle = {
-                opacity: 1,
-                fillOpacity: 0.8,
-                weight: 1,
-                radius: 3
-            };
-            marker._popupContent = popupText;
-            marker.on('click', (e) => {
-                if (inspectMode !== 'marker') {
-                    if (inspectMode === 'road') {
-                        const latlng = e?.latlng || L.latLng(latitude, longitude);
-                        openNearestRoadPopupAt(latlng, getPreferredRoadKinds());
-                    }
-                    if (e) L.DomEvent.stopPropagation(e);
-                    return;
-                }
-                L.popup().setLatLng([latitude, longitude]).setContent(marker._popupContent).openOn(map);
-                if (e) L.DomEvent.stopPropagation(e);
-            });
-
-            marker._groupName = 'Parking Lot State';
-            marker._culledOnMap = false;
-            parkingLotStateMarkers.push(marker);
+            const marker = createRingMarker(coordsData[i], groupName, popupType, alwaysShow);
+            if (marker) collected.push(marker);
         }
 
-        processedCount = endIndex;
         if (endIndex < totalCount) {
             scheduleFrame(() => processBatch(endIndex));
         } else {
-            layerCountOverride['Parking Lot State'] = parkingLotStateMarkers.length;
+            layerCountOverride[groupName] = collected.length;
             addOverlayLayers(featureGroups);
             lastCullState = null;
             scheduleVisibleMarkerRefresh();
         }
     }
 
-    if (totalCount > 0) {
-        processBatch(0);
-    } else {
-        addOverlayLayers(featureGroups);
-    }
+    processBatch(0);
 }
 
-// Re-order the shared canvas draw list so Parking Lot State markers paint last
-// (= on top). Called after each batched render completes; whichever of
-// drawMarkers / drawParkingLotStateMarkers finishes last wins, so parking
-// markers always end up above DR-based / Road Match markers.
+function drawParkingLotStateMarkers(coordsData) {
+    drawRingMarkerLayer(coordsData, 'Parking Lot State', 'Parking Lot State', false,
+        (arr) => { parkingLotStateMarkers = arr; });
+}
+
+// Roll/pitch reset (정차) markers: a DR point where the DR estimator
+// re-initialized roll/pitch — SetRollPitchFromAccelerometer fires while the
+// vehicle is stationary, ResetRollPitch on an MM feedback orientation reset.
+function drawRollPitchResetMarkers(coordsData) {
+    drawRingMarkerLayer(coordsData, 'Roll/Pitch Reset (정차)', 'Roll/Pitch Reset', true,
+        (arr) => { rollPitchResetMarkers = arr; });
+}
+
+// MM feedback correction markers: a DR point that was corrected by MM
+// feedback (position clamp or heading-only). Replaces the old black/gray
+// recoloring of the DR dot itself.
+function drawMmFeedbackMarkers(coordsData) {
+    drawRingMarkerLayer(coordsData, 'MM Feedback', 'MM Feedback', true,
+        (arr) => { mmFeedbackMarkers = arr; });
+}
+
+// Re-order the shared canvas draw list so ring-marker layers paint last
+// (= on top). Called after each batched render completes; whichever draw
+// call finishes last wins, so ring markers always end up above DR-based /
+// Road Match markers.
 function bringParkingLotMarkersToFront() {
-    parkingLotStateMarkers.forEach((marker) => {
-        if (marker._map && typeof marker.bringToFront === 'function') {
-            marker.bringToFront();
-        }
+    [mmFeedbackMarkers, rollPitchResetMarkers, parkingLotStateMarkers].forEach((list) => {
+        list.forEach((marker) => {
+            if (marker._map && typeof marker.bringToFront === 'function') {
+                marker.bringToFront();
+            }
+        });
     });
 }
 
@@ -424,6 +446,22 @@ function makePopupText(coordinate, coordtype) {
     if (coordtype === 'DR-based') {
         details.push(popupRow('isDRGps', escapeHtml(String(coordinate.extra?.isDRGps ?? ''))));
         details.push(popupRow('MM Feedback', escapeHtml(String(coordinate.extra?.mm_feedback_reason || ''))));
+    }
+
+    if (coordtype === 'MM Feedback') {
+        details.push(popupRow('MM Feedback', escapeHtml(String(coordinate.extra?.mm_feedback_reason || ''))));
+    }
+
+    if (coordtype === 'DR-based' || coordtype === 'Roll/Pitch Reset') {
+        const rollPitchEvents = coordinate.extra?.roll_pitch_reset_events;
+        if (Array.isArray(rollPitchEvents)) {
+            rollPitchEvents.forEach((event) => {
+                const label = event?.event === 'SetRollPitchFromAccelerometer'
+                    ? '정차 초기화 (가속도계)'
+                    : '정차 초기화 (리셋)';
+                details.push(popupRow(label, escapeHtml(String(event?.detail || ''))));
+            });
+        }
     }
 
     if (coordtype === 'DR-based' || coordtype === 'Parking Lot State') {

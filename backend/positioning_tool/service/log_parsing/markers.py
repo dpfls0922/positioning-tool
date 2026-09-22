@@ -23,11 +23,12 @@ def build_parking_lot_state_markers(coords):
 
         with_parking_state += 1
 
-        # Set color based on parking state
+        # 분홍 계열로 통일:
+        #   ParkingLot(주차장 내): 진분홍 / EnterCandidate·EnterReady: 연분홍
         if parking_state == 'ParkingLot':
-            color = '#808080'  # 회색 - 주차장 중
+            color = '#db2777'
         elif parking_state in ('EnterCandidate', 'EnterReady'):
-            color = '#ff1493'  # 분홍색 - 진입 후보/준비
+            color = '#f9a8d4'
         else:
             continue  # Skip unknown states
 
@@ -53,6 +54,94 @@ def build_parking_lot_state_markers(coords):
 
     import sys
     print(f'[DEBUG] build_parking_lot_state_markers: DR-based={dr_based_count}, with_parking_state={with_parking_state}, markers created={len(markers)}', file=sys.stderr)
+    return markers
+
+
+def build_roll_pitch_reset_markers(coords):
+    """Extract DR-based coordinates where roll/pitch was reset (정차) as markers."""
+    markers = []
+    marker_id_counter = 50000  # Start from 50000 to avoid conflicts
+
+    for coord in coords:
+        if coord.get('type') != 'DR-based':
+            continue
+
+        events = coord.get('extra', {}).get('roll_pitch_reset_events')
+        if not events:
+            continue
+
+        event_names = {event.get('event') for event in events}
+        # 보라 계열로 통일:
+        #   SetRollPitchFromAccelerometer: 정차 중 가속도계 기반 자동 초기화 (진보라)
+        #   ResetRollPitch: MM feedback 기반 강제 초기화 (연보라)
+        if 'SetRollPitchFromAccelerometer' in event_names:
+            color = '#7c3aed'
+        else:
+            color = '#c084fc'
+
+        marker = {
+            "id": marker_id_counter,
+            "dlt_id": coord.get('dlt_id'),
+            "type": "Roll/Pitch Reset",
+            "latitude": coord.get("latitude"),
+            "longitude": coord.get("longitude"),
+            "heading": coord.get("heading"),
+            "color": color,
+            "fill": True,
+            "timestamp_ms": coord.get("timestamp_ms"),
+            "timestamp_str": coord.get("timestamp_str"),
+            "extra": {
+                "roll_pitch_reset_events": events,
+                "Speed": coord.get('extra', {}).get('Speed'),
+            }
+        }
+        markers.append(marker)
+        marker_id_counter += 1
+
+    return markers
+
+
+def build_mm_feedback_markers(coords):
+    """Extract DR-based coordinates with an MM feedback correction as markers."""
+    markers = []
+    marker_id_counter = 60000  # Start from 60000 to avoid conflicts
+
+    for coord in coords:
+        if coord.get('type') != 'DR-based':
+            continue
+
+        extra = coord.get('extra', {})
+        if not extra.get('mm_feedback'):
+            continue
+
+        reason = str(extra.get('mm_feedback_reason', '')).lower()
+        # 무채색 계열로 통일:
+        #   위치 보정 (clamped / force correction): 진한 무채색
+        #   헤딩만 보정 (heading only / correction normal): 연한 무채색
+        if "heading only" in reason or "correction normal" in reason:
+            color = '#9ca3af'
+        else:
+            color = '#111827'
+
+        marker = {
+            "id": marker_id_counter,
+            "dlt_id": coord.get('dlt_id'),
+            "type": "MM Feedback",
+            "latitude": coord.get("latitude"),
+            "longitude": coord.get("longitude"),
+            "heading": coord.get("heading"),
+            "color": color,
+            "fill": True,
+            "timestamp_ms": coord.get("timestamp_ms"),
+            "timestamp_str": coord.get("timestamp_str"),
+            "extra": {
+                "mm_feedback_reason": extra.get('mm_feedback_reason', ''),
+                "Speed": extra.get('Speed'),
+            }
+        }
+        markers.append(marker)
+        marker_id_counter += 1
+
     return markers
 
 

@@ -25,6 +25,8 @@ DLT_RELEVANT_BYTE_KEYWORDS = [
     b"processContents",
     b"GetSdiSelected select",
     b"onDriveStatusChanged SDI",
+    b"ResetRollPitch",
+    b"SetRollPitchFromAccelerometer",
     b"SDIBlock:",
     b"check tunnel",
     b"GetSDIInfo[",
@@ -81,6 +83,13 @@ GNSS_MODE_EVENT_PATTERN = re.compile(
 GNSS_MODE_INLINE_PATTERN = re.compile(r"mode=([A-Za-z_]+)")
 
 MM_FEEDBACK_PATTERN = re.compile(r"\[MM_FEEDBACK\]\s*([^\r\n\x00]+)")
+
+# 정차 중 roll/pitch 재초기화 (DeadReckoningEstimator):
+#   [DRE] ResetRollPitch | roll=0.0 pitch=0.0 heading=123.4
+#   [DRE] SetRollPitchFromAccelerometer | before_roll=... before_pitch=... | after_roll=... after_pitch=... heading=...
+ROLL_PITCH_RESET_PATTERN = re.compile(
+    r"\[DRE\]\s*(ResetRollPitch|SetRollPitchFromAccelerometer)\s*\|\s*([^\r\n\x00]+)"
+)
 
 CANDIDATE_LINK_PATTERN = re.compile(
     r"Candidate Link\[\s*(\-?\d+)\]\s*"

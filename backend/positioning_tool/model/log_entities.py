@@ -61,16 +61,9 @@ class CoordType(Enum):
             if gnss_mode == "Normal":
                 return "#14b8a6"  # 청록 — 기존 노랑은 DR 주황과 혼동
         if self == CoordType.DR:
-            if coord.extra.get("mm_feedback"):
-                reason = str(coord.extra.get("mm_feedback_reason", "")).lower()
-                # Heading-only feedback ('heading only: ...' / legacy
-                # 'correction normal') applies just the heading -> gray.
-                # Lane-width feedback ('clamped: ...' / legacy 'Force
-                # correction' / 'correction clamped ...') moves the DR
-                # position -> black.
-                if "heading only" in reason or "correction normal" in reason:
-                    return "#9e9e9e"
-                return "black"
+            # MM feedback no longer recolors the DR dot itself — feedback
+            # points are shown on the dedicated 'MM Feedback' ring layer so
+            # the DR layer stays a single red/orange family.
             if coord.extra.get("isDRGps") == 0:
                 return "orange"
         return self.color
