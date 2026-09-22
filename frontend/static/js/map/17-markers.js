@@ -172,6 +172,10 @@ function drawDerivedPointLayer(coordsData, groupName, popupType, styleFor, alway
 
             const marker = L.circleMarker([latitude, longitude], {
                 ...styleFor(coord),
+                // DR 마커와 같은 markerPane 캔버스에 그려야 bringToFront로
+                // DR 점 위에 올릴 수 있다 (pane이 다르면 캔버스가 분리되어
+                // 기본 캔버스(z=400)가 markerPane(z=600) 아래에 깔린다).
+                pane: 'markerPane',
                 bubblingMouseEvents: false
             });
 
