@@ -11,6 +11,7 @@ DLT_RELEVANT_BYTE_KEYWORDS = [
     b"[GNSS]",
     b"GNSS mode:",
     b"GNSS rejected:",
+    b"GNSS outlier:",
     b"CNaviModule::ReceiveGps pos(",
     b"Match  Pos",
     b"Match Pos",
@@ -81,6 +82,27 @@ GNSS_MODE_EVENT_PATTERN = re.compile(
 )
 
 GNSS_MODE_INLINE_PATTERN = re.compile(r"mode=([A-Za-z_]+)")
+
+# GnssFilter::classifyGnssOutlier (benz-ivi3 app/if1impl/vehicle/positioningSensors/GnssFilter.cpp).
+# raw GNSS가 후보셋 center 60m 이내이고, 모든 후보 링크까지 최소 수선거리가
+# width = max(1, round(extLane/2)) * 5m 를 넘으면 OUTLIER로 버린다.
+# 이 줄은 해당 epoch의 [GNSS] 줄 바로 뒤에 찍힌다.
+#   GNSS outlier: rejected, raw=(37.7566719, 128.0301580), nearestLinkId=1106, dist=5.0m,
+#     width=5.0m, extLane=2, centerDist=6.4m, linkCount=3
+#   GNSS outlier: state INLIER -> OUTLIER, linkCount=3
+GNSS_OUTLIER_REJECTED_PATTERN = re.compile(
+    r"GNSS outlier:\s*rejected,\s*raw=\((-?\d+\.\d+),\s*(-?\d+\.\d+)\),"
+    r"\s*nearestLinkId=(\d+),\s*dist=([\d.]+)m,\s*width=([\d.]+)m,"
+    r"\s*extLane=(-?\d+),\s*centerDist=([\d.]+)m,\s*linkCount=(\d+)"
+)
+
+# 후보 링크 ID 목록 (선택). 현재 GnssFilter 로그에는 없고, rejected 줄 끝에
+# ", candidates=[1106,1107,1200]" 처럼 덧붙이면 읽는다.
+GNSS_OUTLIER_CANDIDATES_PATTERN = re.compile(r"candidates=(?:\[([^\]]*)\]|([\d/]+))")
+
+GNSS_OUTLIER_STATE_PATTERN = re.compile(
+    r"GNSS outlier:\s*state\s+([A-Z_]+)\s*->\s*([A-Z_]+),\s*linkCount=(\d+)"
+)
 
 MM_FEEDBACK_PATTERN = re.compile(r"\[MM_FEEDBACK\]\s*([^\r\n\x00]+)")
 

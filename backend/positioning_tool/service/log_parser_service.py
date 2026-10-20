@@ -41,6 +41,7 @@ from backend.positioning_tool.service.log_parsing.line_parsers import (
     lat_lon_dist,
     parse_candidate_link_score,
     parse_gnss_mode_info,
+    parse_gnss_outlier_info,
     parse_link_extrapoint,
     parse_road_match_state,
     parse_route_match_state,
@@ -63,6 +64,7 @@ from backend.positioning_tool.service.log_parsing.markers import (
     attach_dr_event_deltas,
     build_parking_lot_state_markers,
     build_roll_pitch_reset_markers,
+    build_gnss_outlier_markers,
     build_route_info_markers,
 )
 
@@ -201,6 +203,7 @@ def parse_log(log_file_path=None):
         _track_match_states(line)
         _track_mm_feedback(state, line)
         _track_roll_pitch_reset(state, line)
+        _track_gnss_outlier(state, line)
         _collect_coordinates(state, line, dlt_id, timestamp)
 
     state.flush_pending_raw_gnss()
@@ -384,6 +387,28 @@ def _track_roll_pitch_reset(state, line):
         "event": roll_pitch_match.group(1),
         "detail": roll_pitch_match.group(2).strip(),
     })
+
+
+def _track_gnss_outlier(state, line):
+    """GnssFilter outlier 판정을 해당 epoch의 Raw GNSS 좌표에 붙인다.
+
+    판정 로그는 [GNSS] 줄 바로 뒤에 찍히므로 아직 flush 되지 않은
+    Raw GNSS 좌표(없으면 마지막으로 flush 된 것)가 대상이다.
+    """
+    outlier_info = parse_gnss_outlier_info(line)
+    if not outlier_info:
+        return
+
+    target = state.temp_gnss2_coord
+    if target is None and COORDINATES[CoordType.GNSS2]:
+        target = COORDINATES[CoordType.GNSS2][-1]
+    if target is None:
+        return
+
+    if "rejected" in outlier_info:
+        target.extra["gnss_outlier"] = outlier_info["rejected"]
+    if "transition" in outlier_info:
+        target.extra["gnss_outlier_transition"] = outlier_info["transition"]
 
 
 def _collect_coordinates(state, line, dlt_id, timestamp):
@@ -2100,6 +2125,7 @@ def build_runtime_payload():
 
     parking_lot_state_markers = build_parking_lot_state_markers(all_coords)
     roll_pitch_reset_markers = build_roll_pitch_reset_markers(all_coords)
+    gnss_outlier_markers = build_gnss_outlier_markers(all_coords)
     import sys
     print(f'[DEBUG] build_runtime_payload: parking markers = {len(parking_lot_state_markers)}, roll/pitch markers = {len(roll_pitch_reset_markers)}', file=sys.stderr)
 
@@ -2132,6 +2158,7 @@ def build_runtime_payload():
         "coords": all_coords,
         "parking_lot_state_markers": parking_lot_state_markers,
         "roll_pitch_reset_markers": roll_pitch_reset_markers,
+        "gnss_outlier_markers": gnss_outlier_markers,
         "sdi_block_timeline": build_sdi_block_timeline(),
         "shade_timeline": build_shade_timeline(),
         "lines": all_lines,

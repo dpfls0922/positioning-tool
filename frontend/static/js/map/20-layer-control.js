@@ -370,7 +370,8 @@ function isRouteLayerName(name) {
 // 좌표 레이어에서 파생된 하위 레이어. 최상위 행이 아니라 부모 행 하위에
 // 중첩해 관리하되, 부모가 꺼져 있어도 독립적으로 켜고 끌 수 있다.
 const COORD_CHILD_LAYERS = {
-    'DR-based': ['Parking Lot State', 'Roll/Pitch Reset (정차)']
+    'DR-based': ['Parking Lot State', 'Roll/Pitch Reset (정차)'],
+    'Raw GNSS': ['GNSS Outlier (제거)']
 };
 
 // 점/띠 색 의미 범례 (부모 행 아래 상시 표시).
@@ -1158,6 +1159,7 @@ function getLayerSwatchColor(name) {
         'DR-based': '#ef4444',
         'Parking Lot State': '#ff1493',
         'Roll/Pitch Reset (정차)': '#7c3aed',
+        'GNSS Outlier (제거)': '#4c1d95',
         'Road Match': '#22d3ee',
         'Route Match': '#84cc16',
         'VPM': '#2563eb',

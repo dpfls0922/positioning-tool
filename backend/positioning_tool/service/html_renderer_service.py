@@ -713,6 +713,7 @@ def add_legend():
                 </label>
             </div>
             <div><i style="background:purple; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> Raw GNSS</div>
+            <div><i style="border:2px solid rgba(76,29,149,0.6); width:10px; height:10px; display:inline-block; border-radius:50%; box-sizing:border-box;"></i> Raw GNSS (Outlier 제거됨)</div>
             <div><i style="background:#14b8a6; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> Filtered GNSS (일반)</div>
             <div><i style="background:#d946ef; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> Filtered GNSS (BusSleep)</div>
             <div><i style="background:#22c55e; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> Filtered GNSS (모드 전환)</div>

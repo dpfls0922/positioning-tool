@@ -153,6 +153,43 @@ def build_roll_pitch_reset_markers(coords):
     return markers
 
 
+def build_gnss_outlier_markers(coords):
+    """GnssFilter가 outlier로 버린 Raw GNSS 좌표를 점 마커로 추출한다 (진한 보라 링).
+    Raw GNSS 행 하위 레이어로 표시되며 Raw GNSS 점 위에 겹쳐 그린다."""
+    markers = []
+    marker_id_counter = 60000  # Roll/Pitch Reset(50000~)과 겹치지 않게
+
+    for coord in coords:
+        if coord.get('type') != 'Raw GNSS':
+            continue
+
+        extra = coord.get('extra', {})
+        outlier = extra.get('gnss_outlier')
+        if not outlier:
+            continue
+
+        markers.append({
+            "id": marker_id_counter,
+            "dlt_id": coord.get('dlt_id'),
+            "type": "GNSS Outlier",
+            "latitude": coord.get("latitude"),
+            "longitude": coord.get("longitude"),
+            "heading": coord.get("heading"),
+            "color": '#4c1d95',
+            "fill": False,
+            "timestamp_ms": coord.get("timestamp_ms"),
+            "timestamp_str": coord.get("timestamp_str"),
+            "extra": {
+                "gnss_outlier": outlier,
+                "gnss_outlier_transition": extra.get('gnss_outlier_transition'),
+                "Speed": extra.get('Speed'),
+            }
+        })
+        marker_id_counter += 1
+
+    return markers
+
+
 def build_route_info_markers(lines):
     """Convert Route Info lines to marker coordinates for displaying route details."""
     markers = []

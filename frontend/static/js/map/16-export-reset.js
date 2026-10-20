@@ -73,6 +73,7 @@ function resetVisualization() {
     markers.forEach(marker => map.removeLayer(marker));
     parkingLotStateMarkers.forEach(marker => map.removeLayer(marker));
     rollPitchResetMarkers.forEach(marker => map.removeLayer(marker));
+    gnssOutlierMarkers.forEach(marker => map.removeLayer(marker));
     polylines.forEach(polyline => map.removeLayer(polyline));
     highlightLayer.clearLayers();
     clearDistanceVisuals();
@@ -92,6 +93,7 @@ function resetVisualization() {
     markers = [];
     parkingLotStateMarkers = [];
     rollPitchResetMarkers = [];
+    gnssOutlierMarkers = [];
     polylines = [];
     requestGroups = {};
     cullTotalCounts = {};

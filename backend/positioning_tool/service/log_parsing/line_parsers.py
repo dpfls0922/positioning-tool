@@ -9,6 +9,9 @@ import re
 from datetime import datetime
 
 from backend.positioning_tool.service.log_parsing.patterns import (
+    GNSS_OUTLIER_REJECTED_PATTERN,
+    GNSS_OUTLIER_CANDIDATES_PATTERN,
+    GNSS_OUTLIER_STATE_PATTERN,
     CANDIDATE_LINK_PATTERN,
     GNSS_MODE_EVENT_PATTERN,
     GNSS_MODE_INLINE_PATTERN,
@@ -159,6 +162,46 @@ def parse_gnss_mode_info(line):
     if inline_match:
         return {
             "mode": inline_match.group(1).strip(),
+        }
+
+    return None
+
+
+def _parse_outlier_candidate_ids(line):
+    """rejected 줄의 선택 필드 candidates=[...] 를 링크 ID 리스트로. 없으면 []."""
+    match = GNSS_OUTLIER_CANDIDATES_PATTERN.search(line)
+    if not match:
+        return []
+    raw = match.group(1) if match.group(1) is not None else match.group(2)
+    return [int(token) for token in re.split(r"[,\s/]+", raw) if token.isdigit()]
+
+
+def parse_gnss_outlier_info(line):
+    """GnssFilter의 outlier 판정 로그. rejected 상세 또는 상태 전환을 돌려준다."""
+    rejected = GNSS_OUTLIER_REJECTED_PATTERN.search(line)
+    if rejected:
+        return {
+            "rejected": {
+                "raw_latitude": float(rejected.group(1)),
+                "raw_longitude": float(rejected.group(2)),
+                "nearest_link_id": int(rejected.group(3)),
+                "dist_m": float(rejected.group(4)),
+                "width_m": float(rejected.group(5)),
+                "ext_lane": int(rejected.group(6)),
+                "center_dist_m": float(rejected.group(7)),
+                "link_count": int(rejected.group(8)),
+                "candidate_link_ids": _parse_outlier_candidate_ids(line),
+            }
+        }
+
+    state = GNSS_OUTLIER_STATE_PATTERN.search(line)
+    if state:
+        return {
+            "transition": {
+                "from": state.group(1),
+                "to": state.group(2),
+                "link_count": int(state.group(3)),
+            }
         }
 
     return None

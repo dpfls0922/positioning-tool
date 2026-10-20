@@ -132,6 +132,7 @@ function refreshVisibleMarkers() {
     markers.forEach(cullPoint);
     parkingLotStateMarkers.forEach(cullPoint);
     rollPitchResetMarkers.forEach(cullPoint);
+    gnssOutlierMarkers.forEach(cullPoint);
     polylines.forEach(cullLine);
 
     // Keep parking-lot markers painted above other canvas markers

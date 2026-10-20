@@ -246,6 +246,70 @@ function drawRollPitchResetMarkers(coordsData) {
         }), true, (arr) => { rollPitchResetMarkers = arr; });
 }
 
+// Outlier 팝업의 링크 ID: 누르면 그 링크만 하이라이트
+function outlierLinkButton(linkId) {
+    if (linkId === undefined || linkId === null || linkId === '') return '-';
+    const id = escapeHtml(String(linkId));
+    return `<a href="#" style="color:#6d28d9;font-weight:600" onclick="event.preventDefault(); highlightOutlierLinks('${id}', '${id}')">${id}</a>`;
+}
+
+// Outlier 판정에 쓰인 링크들을 지도에 강조한다. 최근접 링크는 진하게,
+// 나머지 후보는 연하게. Road Shape(Link)가 로드되어 있어야 찾을 수 있다.
+async function highlightOutlierLinks(idsCsv, nearestId) {
+    const ids = String(idsCsv || '').split(',').map((v) => v.trim()).filter(Boolean);
+    if (ids.length === 0) return;
+
+    if (!roadLinkGeoLayer && !roadShapeWorker) {
+        showInfoMessage('Outlier 후보 링크', 'Road Shape(Link)를 먼저 업로드하면 링크를 하이라이트할 수 있습니다.');
+        return;
+    }
+
+    highlightLayer.clearLayers();
+    const found = [];
+    const missing = [];
+    for (const id of ids) {
+        const match = findRenderedRoadLinkByRid(id) || await requestRoadLinkByRid(id);
+        if (!match?.feature) {
+            missing.push(id);
+            continue;
+        }
+        const isNearest = String(id) === String(nearestId);
+        L.geoJSON(match.feature, {
+            style: {
+                color: '#4c1d95',
+                weight: isNearest ? 8 : 5,
+                opacity: isNearest ? 0.75 : 0.4,
+                dashArray: isNearest ? null : '6 4'
+            },
+            interactive: false
+        }).addTo(highlightLayer);
+        found.push(id);
+    }
+
+    if (missing.length > 0) {
+        showInfoMessage('Outlier 후보 링크',
+            `하이라이트 ${found.length}개 · 찾지 못한 링크: ${missing.map(escapeHtml).join(', ')}`
+            + (found.length === 0 ? '<br>Road Shape에 해당 링크가 없거나 아직 로드되지 않았습니다.' : ''));
+    }
+}
+
+// GnssFilter가 outlier로 버린 Raw GNSS 지점: 진한 보라 링을 Raw GNSS 점 위에
+// 겹쳐 그린다 (Raw GNSS 행의 하위 레이어). DR 계열(빨강/주황/검정)과 구분되는
+// 색. 솎아내기 없이 항상 표시.
+const GNSS_OUTLIER_COLOR = '#4c1d95';
+const GNSS_OUTLIER_LAYER = 'GNSS Outlier (제거)';
+function drawGnssOutlierMarkers(coordsData) {
+    drawDerivedPointLayer(coordsData, GNSS_OUTLIER_LAYER, 'GNSS Outlier',
+        (coord) => ({
+            radius: 5,
+            color: GNSS_OUTLIER_COLOR,
+            weight: 2,
+            // 반투명: 아래 Raw GNSS 점과 주변 궤적이 비쳐 보이게
+            opacity: 0.6,
+            fill: false
+        }), true, (arr) => { gnssOutlierMarkers = arr; });
+}
+
 // Re-order the shared canvas draw list after each batched render: derived
 // point layers paint above DR-based / Road Match markers, and _alwaysShow
 // DR dots (MM feedback) stay on top of stacked stationary points.
@@ -256,7 +320,7 @@ function bringParkingLotMarkersToFront() {
             marker.bringToFront();
         }
     });
-    [parkingLotStateMarkers, rollPitchResetMarkers].forEach((list) => {
+    [parkingLotStateMarkers, rollPitchResetMarkers, gnssOutlierMarkers].forEach((list) => {
         list.forEach((marker) => {
             if (marker._map && typeof marker.bringToFront === 'function') {
                 marker.bringToFront();
@@ -440,6 +504,33 @@ function makePopupText(coordinate, coordtype) {
         const transition = coordinate.extra?.gnss_mode_transition;
         if (transition?.from && transition?.to) {
             details.push(popupRow('모드 전환', `${escapeHtml(transition.from)} → ${escapeHtml(transition.to)}`));
+        }
+    }
+
+    // GnssFilter outlier 판정 (benz-ivi3 GnssFilter::classifyGnssOutlier)
+    //   width = max(1, round(extLane / 2)) × 5m, 후보셋 center 60m 이내에서만 판정
+    if (coordtype === 'Raw GNSS' || coordtype === 'GNSS Outlier') {
+        const outlier = coordinate.extra?.gnss_outlier;
+        if (outlier) {
+            const fmt = (v) => (Number.isFinite(Number(v)) ? Number(v).toFixed(1) : '-');
+            details.push(popupRow('Outlier', '<b style="color:#6d28d9">rejected (GNSS 미사용)</b>'));
+            const nearestId = outlier.nearest_link_id;
+            const candidateIds = Array.isArray(outlier.candidate_link_ids) ? outlier.candidate_link_ids : [];
+            details.push(popupRow('최근접 링크', `${outlierLinkButton(nearestId)} · extLane ${escapeHtml(String(outlier.ext_lane ?? '-'))}`));
+            details.push(popupRow('후보 링크',
+                candidateIds.length > 0
+                    ? candidateIds.map(outlierLinkButton).join(' ')
+                    : '<span style="opacity:.7">로그에 목록 없음 (최근접만)</span>'));
+            const allIds = [...new Set([nearestId, ...candidateIds].filter((v) => v !== undefined && v !== null))];
+            details.push(popupRow('하이라이트',
+                `<button type="button" class="gp-guidance-open" onclick="highlightOutlierLinks('${allIds.join(',')}', '${escapeHtml(String(nearestId ?? ''))}')">후보 링크 전체 보기</button>`));
+            details.push(popupRow('링크 거리 / 허용폭', `${fmt(outlier.dist_m)} m > ${fmt(outlier.width_m)} m`));
+            details.push(popupRow('후보 center 거리', `${fmt(outlier.center_dist_m)} m (≤ 60 m)`));
+            details.push(popupRow('후보 링크 수', escapeHtml(String(outlier.link_count ?? '-'))));
+        }
+        const outlierTransition = coordinate.extra?.gnss_outlier_transition;
+        if (outlierTransition?.from && outlierTransition?.to) {
+            details.push(popupRow('Outlier 상태', `${escapeHtml(outlierTransition.from)} → ${escapeHtml(outlierTransition.to)}`));
         }
     }
 

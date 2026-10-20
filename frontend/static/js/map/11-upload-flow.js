@@ -191,6 +191,7 @@ function handleUploadAndParse() {
         markersData = response.coords || [];
         parkingLotStateMarkersData = response.parking_lot_state_markers || [];
         rollPitchResetMarkersData = response.roll_pitch_reset_markers || [];
+        gnssOutlierMarkersData = response.gnss_outlier_markers || [];
         linesData = response.lines || [];
         setSdiBlockTimeline(response.sdi_block_timeline || []);
         setSimShadeTimeline(response.shade_timeline || []);
@@ -198,6 +199,7 @@ function handleUploadAndParse() {
             markersCount: markersData.length,
             parkingLotStateMarkersCount: parkingLotStateMarkersData.length,
             rollPitchResetMarkersCount: rollPitchResetMarkersData.length,
+            gnssOutlierMarkersCount: gnssOutlierMarkersData.length,
             linesCount: linesData.length
         });
         currentResultName = response.result_name || 'result';

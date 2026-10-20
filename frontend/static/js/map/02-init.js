@@ -6,6 +6,7 @@ function init() {
     if (typeof markersData === 'undefined') markersData = [];
     if (typeof parkingLotStateMarkersData === 'undefined') parkingLotStateMarkersData = [];
     if (typeof rollPitchResetMarkersData === 'undefined') rollPitchResetMarkersData = [];
+    if (typeof gnssOutlierMarkersData === 'undefined') gnssOutlierMarkersData = [];
     if (typeof linesData === 'undefined') linesData = [];
 
     map.zoomControl.remove();
@@ -280,6 +281,7 @@ function renderFromCurrentData() {
     drawMarkers(markersData);
     drawParkingLotStateMarkers(parkingLotStateMarkersData);
     drawRollPitchResetMarkers(rollPitchResetMarkersData);
+    drawGnssOutlierMarkers(gnssOutlierMarkersData);
     drawPolylines(linesData);
     addControlLayers();
     renderLayerControls();
