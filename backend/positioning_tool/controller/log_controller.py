@@ -10,6 +10,8 @@ from urllib import request as urllib_request
 
 from flask import Blueprint, Response, jsonify, request, send_from_directory
 
+from backend.positioning_tool.service.dynlevel_page_service import render_dynlevel_page
+from backend.positioning_tool.service.dynlevel_service import analyze as analyze_dynamic_leveling
 from backend.positioning_tool.service.log_service import LogService
 from backend.positioning_tool.service.html_renderer_service import render_html
 from backend.positioning_tool.service.road_shape_service import RoadShapeService
@@ -194,6 +196,62 @@ def create_log_controller() -> Blueprint:
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
         response.headers["Pragma"] = "no-cache"
         return response
+
+    @bp.get("/dynlevel")
+    def dynlevel_page():
+        response = Response(render_dynlevel_page(), mimetype="text/html")
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        return response
+
+# 마지막으로 업로드한 DLT 를 보관해서, 임계값만 바꿔 재계산할 때
+# 276MB 재업로드 없이 서버에서 다시 분석할 수 있게 한다.
+    dynlevel_last = {"path": None}
+
+    def _read_hold_seconds():
+        raw = request.form.get("hold_seconds") or request.args.get("hold_seconds") or ""
+        try:
+            value = float(raw)
+        except ValueError:
+            return 3.0
+        return min(max(value, 0.0), 60.0)
+
+    @bp.post("/api/dynlevel/parse")
+    def dynlevel_parse_api():
+        upload, error_response = _validate_upload_file(request)
+        if error_response:
+            return error_response
+
+        start_time = time.time()
+        tmp_path = None
+        try:
+            tmp_path = _save_upload_to_temp(upload)
+            result = analyze_dynamic_leveling(tmp_path, valid_hold_seconds=_read_hold_seconds())
+            if not result.get("ok"):
+                return jsonify(result), 400
+            _cleanup_temp_file(dynlevel_last["path"])
+            dynlevel_last["path"] = tmp_path
+            tmp_path = None
+            result["elapsed_ms"] = int((time.time() - start_time) * 1000)
+            return jsonify(result)
+        except Exception as ex:
+            return jsonify({"ok": False, "error": str(ex)}), 500
+        finally:
+            _cleanup_temp_file(tmp_path)
+
+    @bp.post("/api/dynlevel/retune")
+    def dynlevel_retune_api():
+        if not dynlevel_last["path"] or not os.path.exists(dynlevel_last["path"]):
+            return jsonify({"ok": False, "error": "먼저 DLT 파일을 업로드하세요."}), 400
+        start_time = time.time()
+        try:
+            result = analyze_dynamic_leveling(dynlevel_last["path"], valid_hold_seconds=_read_hold_seconds())
+            if not result.get("ok"):
+                return jsonify(result), 400
+            result["elapsed_ms"] = int((time.time() - start_time) * 1000)
+            return jsonify(result)
+        except Exception as ex:
+            return jsonify({"ok": False, "error": str(ex)}), 500
 
     @bp.post("/api/parse-log")
     def parse_log_api():

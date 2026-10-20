@@ -42,6 +42,7 @@ def load_script():
 _APP_TABS = """<nav class="app-tabs">
       <a class="app-tab" href="/" data-app-switch="positioning">포지셔닝</a>
       <a class="app-tab active" href="{base}" data-app-switch="sdi">SDI 검색</a>
+      <a class="app-tab" href="/dynlevel" target="_top">동적 레벨링</a>
     </nav>"""
 
 
