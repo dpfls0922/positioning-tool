@@ -38,7 +38,16 @@ class PlaceApiKeyMissingError(Exception):
 
 
 def _ssl_context():
-    """macOS 파이썬처럼 시스템 CA 를 못 찾는 환경에서도 검증을 유지한다."""
+    """macOS 파이썬처럼 시스템 CA 를 못 찾는 환경에서도 검증을 유지한다.
+    
+    회사 프록시 등 self-signed 인증서 환경에서는 PLACE_SEARCH_SKIP_SSL=1 로
+    검증을 우회할 수 있다. (개발/테스트 용도로만 사용할 것)
+    """
+    if os.environ.get("PLACE_SEARCH_SKIP_SSL"):
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
     try:
         import certifi
 
