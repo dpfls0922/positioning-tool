@@ -188,8 +188,10 @@ def parse_gnss_outlier_info(line):
                 "dist_m": float(rejected.group(4)),
                 "width_m": float(rejected.group(5)),
                 "ext_lane": int(rejected.group(6)),
-                "center_dist_m": float(rejected.group(7)),
-                "link_count": int(rejected.group(8)),
+                "center_latitude": float(rejected.group(7)) if rejected.group(7) else None,
+                "center_longitude": float(rejected.group(8)) if rejected.group(8) else None,
+                "center_dist_m": float(rejected.group(9)),
+                "link_count": int(rejected.group(10)),
                 "candidate_link_ids": _parse_outlier_candidate_ids(line),
             }
         }
@@ -201,6 +203,8 @@ def parse_gnss_outlier_info(line):
                 "from": state.group(1),
                 "to": state.group(2),
                 "link_count": int(state.group(3)),
+                "center_latitude": float(state.group(4)) if state.group(4) else None,
+                "center_longitude": float(state.group(5)) if state.group(5) else None,
             }
         }
 
