@@ -84,8 +84,9 @@ GNSS_MODE_EVENT_PATTERN = re.compile(
 GNSS_MODE_INLINE_PATTERN = re.compile(r"mode=([A-Za-z_]+)")
 
 # GnssFilter::classifyGnssOutlier (benz-ivi3 app/if1impl/vehicle/positioningSensors/GnssFilter.cpp).
-# raw GNSS가 후보셋 center 60m 이내이고, 모든 후보 링크까지 최소 수선거리가
-# width = max(1, round(extLane/2)) * 5m 를 넘으면 OUTLIER로 버린다.
+# 모든 후보 링크까지 최소 수선거리가 width = max(1, round(extLane/2)) * 7m 를
+# 넘으면 OUTLIER로 버린다. (이전 빌드: 차로폭 5m, 후보셋 center 60m 밖이면 UNKNOWN)
+# width는 로그 값을 그대로 쓰므로 차로폭이 바뀌어도 파싱은 영향 없다.
 # 이 줄은 해당 epoch의 [GNSS] 줄 바로 뒤에 찍힌다.
 #   GNSS outlier: rejected, raw=(37.7566719, 128.0301580), nearestLinkId=1106, dist=5.0m,
 #     width=5.0m, extLane=2, centerDist=6.4m, linkCount=3
