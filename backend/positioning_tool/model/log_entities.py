@@ -61,13 +61,11 @@ class CoordType(Enum):
             if gnss_mode == "Normal":
                 return "#14b8a6"  # 청록 — 기존 노랑은 DR 주황과 혼동
         if self == CoordType.DR:
+            # DR 점 색은 MM feedback까지만 표현한다. 정차(roll/pitch 초기화)는
+            # 별도 'Roll/Pitch Reset (정차)' 마커 레이어로 그린다.
+            #   검정: MM feedback 위치 보정 / 회색: 헤딩만 보정
             if coord.extra.get("mm_feedback"):
                 reason = str(coord.extra.get("mm_feedback_reason", "")).lower()
-                # Heading-only feedback ('heading only: ...' / legacy
-                # 'correction normal') applies just the heading -> gray.
-                # Lane-width feedback ('clamped: ...' / legacy 'Force
-                # correction' / 'correction clamped ...') moves the DR
-                # position -> black.
                 if "heading only" in reason or "correction normal" in reason:
                     return "#9e9e9e"
                 return "black"

@@ -1,6 +1,7 @@
 import argparse
 
 from backend.positioning_tool.app import create_app
+from backend.positioning_tool.service.env_file_service import load_env_file
 from backend.positioning_tool.service.paths import PATHS
 from backend.positioning_tool.service.log_service import LogService
 
@@ -12,6 +13,10 @@ def main() -> None:
     parser.add_argument("--port", default=5001, type=int, help="서버 포트")
     parser.add_argument("--log", default=PATHS.log_file_path, help="배치 모드에서 사용할 로그 파일 경로")
     args = parser.parse_args()
+
+    loaded_keys = load_env_file()
+    if loaded_keys:
+        print(f".env 에서 환경변수 {len(loaded_keys)}개 로드: {', '.join(loaded_keys)}")
 
     if args.serve:
         app = create_app()

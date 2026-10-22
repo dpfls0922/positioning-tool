@@ -3,7 +3,7 @@ import os
 import time
 from textwrap import dedent
 
-from backend.positioning_tool.service.paths import PATHS
+from backend.positioning_tool.service.paths import PATHS, JS_MAP_PART_FILES
 
 
 def render_html(markers_data=None, lines_data=None):
@@ -12,7 +12,8 @@ def render_html(markers_data=None, lines_data=None):
 
     head = build_html_head(int(time.time()))
     body = build_html_body()
-    script_content = load_file_content(PATHS.js_file)
+    script_content = load_map_script_content()
+    app_switch_js = load_file_content(PATHS.app_switch_js)
     data_vars = init_data_vars(markers_data, lines_data)
 
     html = dedent(
@@ -20,46 +21,72 @@ def render_html(markers_data=None, lines_data=None):
         <!DOCTYPE html>
         <html lang="ko">
         <head>{head}</head>
-        <body>
+        <body data-app="positioning">
         <div id="container">
             <div id="sidebar" class="open">
                 <div id="sidebar-header">
                     <span id="sidebar-brand">positioning map</span>
                 </div>
+                <nav class="app-tabs">
+                    <a class="app-tab active" href="/" data-app-switch="positioning">포지셔닝</a>
+                    <a class="app-tab" href="/sdi" data-app-switch="sdi">SDI 검색</a>
+                    <a class="app-tab" href="/dynlevel">동적 레벨링</a>
+                </nav>
                 <div id="sidebar-search">
-                    <div class="search-group search-group-full">
-                        <input id="searchBox" type="text" placeholder="DLT ID 검색">
-                        <button id="searchButton">DLT 검색</button>
+                    <div id="omnibox-wrap">
+                        <div id="omnibox-field">
+                            <span id="omnibox-icon">⌕</span>
+                            <input id="omnibox" type="text" autocomplete="off"
+                                placeholder="검색 — DLT/ID/좌표/RID/경로/장소">
+                            <button id="omniboxClear" type="button" title="지우기">✕</button>
+                        </div>
+                        <div id="omnibox-results" class="hidden"></div>
+                        <div id="omnibox-hint">
+                            <code>dlt:</code><code>id:</code><code>rid:</code><code>req:</code><code>@좌표</code>
+                        </div>
                     </div>
-                    <div class="search-group search-group-full">
-                        <input id="idSearchBox" type="text" placeholder="Marker/Line ID 검색">
-                        <button id="idSearchButton">ID 검색</button>
-                    </div>
-                    <div class="search-group search-group-full">
-                        <input id="latLonSearchBox" type="text" placeholder="Lat, Lon 검색">
-                        <button id="latLonSearchButton">좌표 검색</button>
-                    </div>
-                    <div class="search-group search-group-full">
-                        <input id="ridSearchBox" type="text" placeholder="RID / LINK_ID 검색">
-                        <button id="ridSearchButton">RID 검색</button>
-                    </div>
-                    <div class="search-group search-group-full">
-                        <input id="requestIdSearchBox" type="text" placeholder="Request ID 검색 (예: 10000011)">
-                        <button id="requestIdSearchButton">경로 검색</button>
+                    <!-- The original inputs stay in the DOM (hidden) so the existing
+                         search handlers keep working untouched; the omnibox fills the
+                         one matching the chosen candidate and invokes its handler. -->
+                    <div id="legacy-search-inputs" hidden>
+                        <input id="searchBox" type="text">
+                        <input id="idSearchBox" type="text">
+                        <input id="latLonSearchBox" type="text">
+                        <input id="ridSearchBox" type="text">
+                        <input id="requestIdSearchBox" type="text">
+                        <input id="placeSearchBox" type="text">
+                        <button id="searchButton"></button>
+                        <button id="idSearchButton"></button>
+                        <button id="latLonSearchButton"></button>
+                        <button id="ridSearchButton"></button>
+                        <button id="requestIdSearchButton"></button>
+                        <button id="placeSearchButton"></button>
                     </div>
                     <div class="interaction-mode-group">
                         <button id="markerInspectModeButton" class="interaction-mode-btn active" type="button">마커 클릭</button>
                         <button id="roadInspectModeButton" class="interaction-mode-btn" type="button">Road 클릭</button>
                     </div>
                 </div>
-                <div id="sidebar-result-header">
-                    <span id="sidebar-title">검색 결과</span>
+                <div id="sidebar-tabs">
+                    <button class="sidebar-tab active" type="button" data-sidebar-tab="results">
+                        결과<span class="sidebar-tab-count" id="resultsTabCount"></span>
+                    </button>
+                    <button class="sidebar-tab" type="button" data-sidebar-tab="layers">
+                        레이어<span class="sidebar-tab-count" id="layersTabCount"></span>
+                    </button>
+                    <button id="clearResultsButton" type="button" title="검색 결과 지우기">지우기</button>
                 </div>
-                <div id="sidebar-filter">
-                    <div class="filter-title">레이어 관리</div>
-                    <div id="layerControlList"></div>
+                <div id="sidebar-pane-results" class="sidebar-pane">
+                    <div id="sidebar-result-header">
+                        <span id="sidebar-title">검색 결과</span>
+                    </div>
+                    <div id="infoPanel"></div>
                 </div>
-                <div id="infoPanel"></div>
+                <div id="sidebar-pane-layers" class="sidebar-pane hidden">
+                    <div id="sidebar-filter">
+                        <div id="layerControlList"></div>
+                    </div>
+                </div>
                 <button id="btnCloseSidebar" title="접기/펼치기">◀</button>
             </div>
             <div id="main-content">
@@ -70,6 +97,9 @@ def render_html(markers_data=None, lines_data=None):
         {data_vars}
         {script_content}
         init();
+        </script>
+        <script>
+        {app_switch_js}
         </script>
         </body>
         </html>
@@ -87,6 +117,18 @@ def write_html_file(markers_data=None, lines_data=None, out_path=None):
 
 
 def build_html_head(static_version):
+    # 두 화면이 함께 쓰는 전환 스타일. 단독 파일로 내보낸 HTML 에서도 동작하게
+    # 링크가 아니라 인라인으로 심는다.
+    app_switch_css = load_file_content(PATHS.app_switch_css)
+    kakao_js_key = (os.environ.get("KAKAO_JS_KEY") or "").strip()
+    # 로드뷰는 카카오맵 JS SDK 로만 가능하다. 키가 없으면 스크립트를 넣지 않고,
+    # 프론트에서 kakaoJsKeySet 플래그로 기능을 비활성화한다.
+    kakao_sdk_tag = (
+        f'<script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey={kakao_js_key}&autoload=false"'
+        f' onerror="window.__kakaoSdkLoadFailed = true;"></script>'
+        if kakao_js_key
+        else "<!-- KAKAO_JS_KEY 미설정: 로드뷰 비활성 -->"
+    )
     return dedent(
         f"""
         <meta charset="UTF-8">
@@ -99,9 +141,13 @@ def build_html_head(static_version):
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/Leaflet.awesome-markers/2.0.2/leaflet.awesome-markers.css" />
         <script src="https://cdnjs.cloudflare.com/ajax/libs/Leaflet.awesome-markers/2.0.2/leaflet.awesome-markers.min.js"></script>
         <script src="https://unpkg.com/shpjs@latest/dist/shp.min.js"></script>
+        {kakao_sdk_tag}
         <script src="./static/js/tmap_coord.js?v={static_version}"></script>
         <script src="./static/js/tmap_tvas_parser.js?v={static_version}"></script>
         <link rel="stylesheet" href="./static/css/map.css?v={static_version}" type="text/css">
+        <style>
+{app_switch_css}
+        </style>
         <style>
         /* ===== 새 업로드 패널 UI ===== */
         .upload-section {{ margin-bottom: 10px; }}
@@ -302,11 +348,28 @@ def build_html_body():
         {add_distance_tool()}
         {add_radius_tool()}
         {add_marker_table_panel()}
+        {add_simulation_panel()}
         {add_playback_tool()}
         {add_legend()}
         <div id="toolBackdrop"></div>
         """
     ).strip()
+
+
+def load_map_script_content():
+    """frontend/static/js/map/ 의 조각 파일들을 정해진 순서로 이어붙인다.
+
+    원래 map_script.js 한 파일을 그대로 인라인했었다. 조각들을 하나의
+    <script> 로 합치므로 실행 스코프는 분리 전과 동일하다.
+    """
+    parts = []
+    for file_name in JS_MAP_PART_FILES:
+        content = load_file_content(os.path.join(PATHS.js_map_parts_dir, file_name))
+        if not content:
+            raise FileNotFoundError(f"map script 조각을 찾을 수 없습니다: {file_name}")
+        # 조각 사이에 빈 줄이 끼지 않도록 개행 하나로만 이어붙인다.
+        parts.append(content if content.endswith("\n") else content + "\n")
+    return "".join(parts)
 
 
 def load_file_content(filepath):
@@ -326,6 +389,7 @@ def init_data_vars(markers_data, lines_data):
 
     markers_json = json.dumps(markers_data)
     lines_json = json.dumps(lines_data)
+    kakao_js_key_set = json.dumps(bool((os.environ.get("KAKAO_JS_KEY") or "").strip()))
 
     return dedent(
         f"""
@@ -334,6 +398,7 @@ def init_data_vars(markers_data, lines_data):
         let minTs = {min_ts};
         let maxTs = {max_ts};
         let maxId = {max_id};
+        let kakaoJsKeySet = {kakao_js_key_set};
         """
     ).strip()
 
@@ -454,15 +519,40 @@ def add_upload_panel():
             <div class="layer-ctx-subtitle">노드 스타일</div>
             <div class="layer-ctx-row">
                 <label class="layer-ctx-label">색상</label>
-                <input id="nodeColorInput" type="color" value="#22c3d6" class="layer-ctx-color">
+                <input id="nodeColorInput" type="color" value="#38bdf8" class="layer-ctx-color">
                 <label class="layer-ctx-label">외곽</label>
-                <input id="nodeStrokeInput" type="color" value="#0f8aa6" class="layer-ctx-color">
+                <input id="nodeStrokeInput" type="color" value="#075985" class="layer-ctx-color">
                 <label class="layer-ctx-label">크기</label>
-                <input id="nodeRadiusInput" type="number" min="1" max="12" step="0.1" value="3.2" class="layer-ctx-weight">
+                <input id="nodeRadiusInput" type="number" min="1" max="12" step="0.1" value="3.4" class="layer-ctx-weight">
                 <label class="layer-ctx-label">두께</label>
-                <input id="nodeWeightInput" type="number" min="0" max="5" step="0.1" value="1" class="layer-ctx-weight">
+                <input id="nodeWeightInput" type="number" min="0" max="5" step="0.1" value="1.1" class="layer-ctx-weight">
             </div>
             <button id="applyNodeStyleButton" class="layer-ctx-btn">노드 스타일 적용</button>
+        </div>
+        <div id="layerCtxVertexSection">
+            <div class="layer-ctx-subtitle">Vertex 스타일</div>
+            <div class="layer-ctx-row">
+                <label class="layer-ctx-label">색상</label>
+                <input id="vertexColorInput" type="color" value="#f8fafc" class="layer-ctx-color">
+                <label class="layer-ctx-label">외곽</label>
+                <input id="vertexStrokeInput" type="color" value="#0f172a" class="layer-ctx-color">
+                <label class="layer-ctx-label">크기</label>
+                <input id="vertexRadiusInput" type="number" min="1" max="12" step="0.1" value="2.2" class="layer-ctx-weight">
+                <label class="layer-ctx-label">두께</label>
+                <input id="vertexWeightInput" type="number" min="0" max="5" step="0.1" value="1" class="layer-ctx-weight">
+            </div>
+            <button id="applyVertexStyleButton" class="layer-ctx-btn">Vertex 스타일 적용</button>
+        </div>
+        <div id="layerCtxSegmentFbSection">
+            <div class="layer-ctx-subtitle">Segment FB 스타일</div>
+            <div class="layer-ctx-row">
+                <label class="layer-ctx-label">색상</label>
+                <input id="fbColorInput" type="color" value="#f97316" class="layer-ctx-color">
+                <label class="layer-ctx-label">두께</label>
+                <input id="fbWeightInput" type="number" min="1" max="10" step="0.5" value="3" class="layer-ctx-weight">
+                <label class="layer-ctx-label">투명도</label>
+                <input id="fbOpacityInput" type="number" min="0.05" max="1" step="0.05" value="0.45" class="layer-ctx-weight">
+            </div>
         </div>
         <button class="layer-ctx-close" id="layerCtxClose">닫기</button>
     </div>
@@ -624,6 +714,7 @@ def add_legend():
                 </label>
             </div>
             <div><i style="background:purple; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> Raw GNSS</div>
+            <div><i style="border:2px solid rgba(76,29,149,0.6); width:10px; height:10px; display:inline-block; border-radius:50%; box-sizing:border-box;"></i> Raw GNSS (Outlier 제거됨)</div>
             <div><i style="background:#14b8a6; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> Filtered GNSS (일반)</div>
             <div><i style="background:#d946ef; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> Filtered GNSS (BusSleep)</div>
             <div><i style="background:#22c55e; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> Filtered GNSS (모드 전환)</div>
@@ -637,6 +728,42 @@ def add_legend():
             <div><i style="background:#808080; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> 주차장 상태 (ParkingLot)</div>
             <div><i style="background:#ff1493; width:10px; height:10px; display:inline-block; border-radius:50%;"></i> 주차장 상태 (진입 평가/준비)</div>
             <div><img src="https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-grey.png" style="width:10px; height:15px; display:inline-block;"> Request</div>
+        </div>
+    </div>
+    """
+
+
+def add_simulation_panel():
+    return """
+    <div id="simulationPanel" class="tool-panel hidden">
+        <div class="tool-panel-header">
+            <span>모의주행</span>
+            <button class="panel-close-btn" data-close-panel="simulationPanel">닫기</button>
+        </div>
+        <div class="tool-panel-body">
+            <div class="sim-note">VPM 궤적을 로그의 타임스탬프대로 재생합니다 — 카바타가 heading 방향으로 움직이고, 구간단속 HUD와 안내 화면이 그 시점에 맞춰 뜹니다.</div>
+            <div class="sim-controls">
+                <button id="simPlayBtn" class="sim-btn" type="button" title="재생"><i class="fa fa-play"></i></button>
+                <button id="simStopBtn" class="sim-btn" type="button" title="정지"><i class="fa fa-stop"></i></button>
+                <div class="sim-speed-group">
+                    <button class="sim-speed-btn" data-speed="0.5" type="button">0.5x</button>
+                    <button class="sim-speed-btn active" data-speed="1" type="button">1x</button>
+                    <button class="sim-speed-btn" data-speed="2" type="button">2x</button>
+                    <button class="sim-speed-btn" data-speed="3" type="button">3x</button>
+                    <button class="sim-speed-btn" data-speed="5" type="button">5x</button>
+                    <button class="sim-speed-btn" data-speed="10" type="button">10x</button>
+                    <button class="sim-speed-btn" data-speed="20" type="button">20x</button>
+                </div>
+                <button id="simFollowBtn" class="sim-btn sim-btn-wide active" type="button" title="카바타를 화면 중앙에 유지 (지도를 드래그하면 자동 해제)"><i class="fa fa-crosshairs"></i> 따라가기</button>
+                <button id="simBlockSeekBtn" class="sim-btn sim-btn-wide" type="button" title="구간단속 구간 시작 시점으로 이동"><i class="fa fa-tachometer"></i> 구간단속</button>
+                <button id="simPickBtn" class="sim-btn sim-btn-wide" type="button" title="지도를 클릭하면 가장 가까운 VPM 지점부터 주행"><i class="fa fa-map-marker"></i> 위치 선택</button>
+                <button id="simAutoSkipBtn" class="sim-btn sim-btn-wide" type="button" title="재생 중 정차 구간을 자동으로 건너뜁니다"><i class="fa fa-forward"></i> 정차 자동 건너뛰기</button>
+            </div>
+            <div id="simStatus" class="sim-status">
+                <span data-role="clock">--:--:--</span>
+                <span data-role="speed">0 km/h</span>
+                <div id="simProgress" class="sim-progress" title="눌러서 이동"><div data-role="bar"></div></div>
+            </div>
         </div>
     </div>
     """
@@ -658,6 +785,7 @@ def add_right_toolbar():
             <button class="tool-btn" id="toolUploadBtn" title="업로드/파싱"><i class="fa fa-upload"></i></button>
             <button class="tool-btn" id="toolExportBtn" title="내보내기"><i class="fa fa-share-square-o"></i></button>
             <button class="tool-btn" id="toolMarkerTableBtn" title="마커 테이블"><i class="fa fa-table"></i></button>
+            <button class="tool-btn" id="toolSimulationBtn" title="모의주행"><i class="fa fa-car"></i></button>
             <button class="tool-btn" id="toolPlaybackBtn" title="타임라인"><i class="fa fa-clock-o"></i></button>
             <button class="tool-btn" id="toolLegendBtn" title="범례"><i class="fa fa-list"></i></button>
         </div>

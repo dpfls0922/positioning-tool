@@ -1,0 +1,233 @@
+"""상호명(장소) 검색 + 리뷰 조회.
+
+장소 검색 제공자 (환경변수로 자동 선택, 카카오 우선):
+
+  1) 카카오 로컬 API      : KAKAO_REST_API_KEY
+     일 100,000건 무료, 결제수단 등록 불필요.
+  2) 네이버 검색 API '지역' : NAVER_API_HUB_KEY_ID / NAVER_API_HUB_KEY (NAVER API HUB)
+     또는 NAVER_CLIENT_ID / NAVER_CLIENT_SECRET (개발자센터, 2027-06-30 까지 유예)
+
+리뷰는 다루지 않는다. 카카오에는 리뷰 API 가 없고, 네이버 플레이스의 방문자
+리뷰/별점도 공식 API 가 없다(내부 엔드포인트는 봇 차단).
+"""
+
+import html
+import json
+import os
+import re
+import ssl
+import time
+from urllib import parse as urllib_parse
+from urllib import request as urllib_request
+
+KAKAO_KEYWORD_ENDPOINT = "https://dapi.kakao.com/v2/local/search/keyword.json"
+NAVER_HUB_LOCAL_ENDPOINT = "https://naverapihub.apigw.ntruss.com/search/v1/local"
+NAVER_LEGACY_LOCAL_ENDPOINT = "https://openapi.naver.com/v1/search/local.json"
+
+NAVER_PLACE_LINK_BASE = "https://map.naver.com/p/search/"
+
+CACHE_TTL_SECONDS = 300
+REQUEST_TIMEOUT_SECONDS = 10
+TAG_PATTERN = re.compile(r"<[^>]+>")
+
+_cache = {}
+
+
+class PlaceApiKeyMissingError(Exception):
+    """장소 검색에 쓸 API 키가 하나도 설정되지 않은 경우."""
+
+
+def _ssl_context():
+    """macOS 파이썬처럼 시스템 CA 를 못 찾는 환경에서도 검증을 유지한다.
+    
+    회사 프록시 등 self-signed 인증서 환경에서는 PLACE_SEARCH_SKIP_SSL=1 로
+    검증을 우회할 수 있다. (개발/테스트 용도로만 사용할 것)
+    """
+    if os.environ.get("PLACE_SEARCH_SKIP_SSL"):
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+    try:
+        import certifi
+
+        return ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        return ssl.create_default_context()
+
+
+def _env(name):
+    return (os.environ.get(name) or "").strip()
+
+
+def _kakao_auth():
+    key = _env("KAKAO_REST_API_KEY")
+    return {"Authorization": f"KakaoAK {key}"} if key else None
+
+
+def _naver_auth():
+    """네이버 검색 API 인증 헤더. HUB 키가 있으면 우선 사용한다."""
+    hub_key_id = _env("NAVER_API_HUB_KEY_ID")
+    hub_key = _env("NAVER_API_HUB_KEY")
+    if hub_key_id and hub_key:
+        return "hub", {
+            "X-NCP-APIGW-API-KEY-ID": hub_key_id,
+            "X-NCP-APIGW-API-KEY": hub_key,
+        }
+
+    client_id = _env("NAVER_CLIENT_ID")
+    client_secret = _env("NAVER_CLIENT_SECRET")
+    if client_id and client_secret:
+        return "legacy", {
+            "X-Naver-Client-Id": client_id,
+            "X-Naver-Client-Secret": client_secret,
+        }
+    return None, None
+
+
+def active_search_provider():
+    """지금 쓸 수 있는 장소 검색 제공자 이름."""
+    if _kakao_auth():
+        return "kakao"
+    if _naver_auth()[1]:
+        return "naver"
+    return None
+
+
+def _clean_text(value):
+    """검색 API 응답의 <b> 하이라이트 태그와 HTML 엔티티를 제거한다."""
+    if not value:
+        return ""
+    return html.unescape(TAG_PATTERN.sub("", str(value))).strip()
+
+
+def _cache_get(key):
+    hit = _cache.get(key)
+    if not hit:
+        return None
+    stored_at, value = hit
+    if time.time() - stored_at > CACHE_TTL_SECONDS:
+        _cache.pop(key, None)
+        return None
+    return value
+
+
+def _cache_put(key, value):
+    _cache[key] = (time.time(), value)
+
+
+def _get_json(endpoint, params, headers):
+    url = f"{endpoint}?{urllib_parse.urlencode(params)}"
+    req = urllib_request.Request(
+        url,
+        headers={**headers, "Accept": "application/json"},
+        method="GET",
+    )
+    with urllib_request.urlopen(req, timeout=REQUEST_TIMEOUT_SECONDS, context=_ssl_context()) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def _to_float(raw):
+    try:
+        value = float(str(raw).strip())
+    except (TypeError, ValueError):
+        return None
+    return value or None
+
+
+def _naver_to_degrees(raw):
+    """네이버 지역검색의 mapx/mapy 를 WGS84 도 단위로 변환한다.
+
+    현재 응답은 도 단위 * 1e7 정수(예: 1270276150)로 오지만, 소수점 형태로
+    오는 경우도 안전하게 처리한다.
+    """
+    value = _to_float(raw)
+    if value is None:
+        return None
+    return value / 1e7 if abs(value) > 1000 else value
+
+
+def _naver_place_link(name, address):
+    return NAVER_PLACE_LINK_BASE + urllib_parse.quote(f"{name} {address}".strip())
+
+
+def _normalize_kakao_place(item):
+    name = _clean_text(item.get("place_name"))
+    address = _clean_text(item.get("address_name"))
+    road_address = _clean_text(item.get("road_address_name"))
+    return {
+        "provider": "kakao",
+        "name": name,
+        "category": _clean_text(item.get("category_name")),
+        "telephone": _clean_text(item.get("phone")),
+        "address": address,
+        "road_address": road_address,
+        "lat": _to_float(item.get("y")),
+        "lon": _to_float(item.get("x")),
+        # 카카오맵 장소 상세 페이지 — 후기 탭이 여기 있다.
+        "place_url": _clean_text(item.get("place_url")),
+        "naver_place_url": _naver_place_link(name, road_address or address),
+    }
+
+
+def _normalize_naver_place(item):
+    name = _clean_text(item.get("title"))
+    address = _clean_text(item.get("address"))
+    road_address = _clean_text(item.get("roadAddress"))
+    return {
+        "provider": "naver",
+        "name": name,
+        "category": _clean_text(item.get("category")),
+        "telephone": _clean_text(item.get("telephone")),
+        "address": address,
+        "road_address": road_address,
+        "lat": _naver_to_degrees(item.get("mapy")),
+        "lon": _naver_to_degrees(item.get("mapx")),
+        "place_url": _naver_place_link(name, road_address or address),
+        "naver_place_url": _naver_place_link(name, road_address or address),
+    }
+
+
+class PlaceSearchService:
+    @staticmethod
+    def search_places(query, display=5):
+        keyword = (query or "").strip()
+        if not keyword:
+            raise ValueError("검색할 상호명을 입력해주세요.")
+
+        provider = active_search_provider()
+        if provider is None:
+            raise PlaceApiKeyMissingError(
+                "장소 검색 API 키가 없습니다. 카카오 개발자센터에서 REST API 키를 발급받아 "
+                "KAKAO_REST_API_KEY 환경변수를 설정한 뒤 서버를 다시 실행해주세요."
+            )
+
+        # 카카오는 최대 15, 네이버 지역검색은 최대 5 까지 허용한다.
+        limit = 15 if provider == "kakao" else 5
+        count = max(1, min(int(display or 5), limit))
+
+        cache_key = ("place", provider, keyword, count)
+        cached = _cache_get(cache_key)
+        if cached is not None:
+            return cached
+
+        if provider == "kakao":
+            payload = _get_json(
+                KAKAO_KEYWORD_ENDPOINT,
+                {"query": keyword, "size": count},
+                _kakao_auth(),
+            )
+            places = [_normalize_kakao_place(item) for item in (payload.get("documents") or [])]
+        else:
+            mode, headers = _naver_auth()
+            endpoint = NAVER_HUB_LOCAL_ENDPOINT if mode == "hub" else NAVER_LEGACY_LOCAL_ENDPOINT
+            payload = _get_json(
+                endpoint,
+                {"query": keyword, "display": count, "sort": "random"},
+                headers,
+            )
+            places = [_normalize_naver_place(item) for item in (payload.get("items") or [])]
+
+        result = {"provider": provider, "places": places}
+        _cache_put(cache_key, result)
+        return result

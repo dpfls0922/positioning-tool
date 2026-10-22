@@ -1,0 +1,19 @@
+/* ===================== 화면 전환 (포지셔닝 ↔ SDI 검색) =====================
+   탭을 눌러도 페이지를 다시 불러오지 않는다. 지금 보고 있는 화면은 자기 문서
+   안에서 계속 살아 있고, 다른 화면은 iframe 으로 한 번만 띄운 뒤 화면 전체에
+   덮었다 걷기만 한다. 그래서 지도 위치·업로드한 로그·열어둔 패널이 그대로
+   남는다. 호스트를 숨기지 않고 덮는 이유는 app-switch.js 주석에 적어 두었다. */
+
+.app-frame {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border: 0;
+    z-index: 2000;
+    background: inherit;
+}
+
+.app-hidden {
+    display: none !important;
+}

@@ -1,3 +1,11 @@
+/* 모의주행 오버레이 스타일은 sim.css 로 분리했다.
+   @import 는 파일 맨 앞에만 올 수 있어 map.css 보다 먼저 로드된다. 순서가
+   문제되지 않는 이유: 옮긴 규칙의 셀렉터(.sim-*, #sim*, #naviStack,
+   .sdi-block-hud*)는 map.css 의 어떤 규칙도 겹쳐 잡지 않고, 공유 요소를
+   건드리는 것(.leaflet-marker-icon.sim-marker-*)은 클래스를 하나 더 붙여
+   우선순위가 더 높다. 라이트 테마 오버라이드에도 sim 계열 셀렉터는 없다. */
+@import url("sim.css");
+
 :root {
     --panel-blue: #2a2d33;
     --panel-blue-dark: #1f2228;
@@ -6,8 +14,20 @@
     --border: #3a3f46;
     --text: #e6e8eb;
     --muted: #a3a9b3;
-    --accent: #7aa2ff;
+    /* 파란 계열은 이 값들로만 쓴다 — 예전에는 곳곳에 청록이 섞여 있어 같은 의미의
+       강조가 서로 다른 색으로 보였다. */
+    --accent: #86b4f0;
     --accent-soft: #2f3640;
+    /* 한 단계 연한 파랑. 더 밝히면(#3b82f6 = 3.7:1) 활성 버튼의 흰 글자가
+       대비 기준 4.5:1 아래로 떨어져 읽기 어려워진다 — 이 값이 4.63:1. */
+    --accent-strong: #2f6ded;
+    --accent-weak: #2563eb;
+    --accent-fg: #ffffff;
+    /* 지도 위 화이트 컨트롤 */
+    --control-bg: rgba(255, 255, 255, 0.97);
+    --control-border: #d2d8e1;
+    --control-fg: #475569;
+    --control-hover: #eef2f7;
     --shadow: 0 12px 28px rgba(17, 24, 39, 0.18);
 }
 
@@ -87,9 +107,24 @@ html, body {
 #sidebar.collapsed #sidebar-search,
 #sidebar.collapsed #sidebar-filter,
 #sidebar.collapsed #sidebar-result-header,
+#sidebar.collapsed #sidebar-tabs,
+#sidebar.collapsed .sidebar-pane,
 #sidebar.collapsed #infoPanel {
     opacity: 0;
     pointer-events: none;
+}
+
+/* 접히면 사이드바 폭이 0 이라 내부 absolute 버튼이 클리핑된다.
+   fixed 로 바꿔 화면 왼쪽 끝에 남겨 다시 열 수 있게 한다. */
+#sidebar.collapsed #btnCloseSidebar {
+    position: fixed;
+    left: 0;
+    right: auto;
+    opacity: 1;
+    pointer-events: auto;
+    border-left: none;
+    border-radius: 0 8px 8px 0;
+    box-shadow: 2px 3px 10px rgba(0, 0, 0, .35);
 }
 
 #sidebar.collapsed #sidebar-brand {
@@ -154,9 +189,9 @@ html, body {
 }
 
 .interaction-mode-btn.active {
-    background: #0f766e;
-    border-color: #14b8a6;
-    color: #ecfeff;
+    background: var(--accent-strong);
+    border-color: var(--accent-strong);
+    color: var(--accent-fg);
 }
 
 #sidebar-result-header {
@@ -169,13 +204,11 @@ html, body {
 }
 
 #sidebar-filter {
-    padding: 10px 12px;
-    border-bottom: 1px solid #3a3f46;
+    padding: 8px 10px;
     background: var(--surface-soft);
-    flex: 0 1 auto;
-    min-height: 180px;
-    max-height: 40vh;
-    overflow: auto;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
 }
 
 .filter-title {
@@ -287,10 +320,9 @@ html, body {
 }
 
 #infoPanel {
-    flex: 1 1 240px;
-    min-height: 200px;
-    max-height: 40vh;
-    overflow: auto;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
     padding: 8px;
     background: #23262b;
 }
@@ -390,9 +422,9 @@ html, body {
 }
 
 .tool-btn.active {
-    background: var(--accent);
-    color: #fff;
-    border-color: var(--accent);
+    background: var(--accent-strong);
+    color: var(--accent-fg);
+    border-color: var(--accent-strong);
 }
 
 .tool-zoom-btn {
@@ -851,8 +883,8 @@ html, body {
 }
 
 #exportHtmlMenuButton {
-    background: #3b82f6;
-    border-color: #3b82f6;
+    background: #dbeafe;
+    border-color: #93c5fd;
     color: #fff;
 }
 
@@ -861,9 +893,9 @@ html, body {
 }
 
 #exportCsvMenuButton {
-    background: #10b981;
-    border-color: #10b981;
-    color: #fff;
+    background: #dbeafe;
+    border-color: #93c5fd;
+    color: #1e3a8a;
 }
 
 #exportCsvMenuButton i {
@@ -1194,6 +1226,16 @@ html, body {
     max-width: 100%;
 }
 
+.candidate-weight-table thead th.weight-group-base {
+    background: #dcfce7;
+    color: #14532d;
+}
+
+.candidate-weight-table thead th.weight-group-weight {
+    background: #ede9fe;
+    color: #6d28d9;
+}
+
 .candidate-weight-table thead th.weight-group-mul {
     background: #ede9fe;
     color: #6d28d9;
@@ -1204,12 +1246,27 @@ html, body {
     color: #1e3a8a;
 }
 
+.candidate-weight-table td.weight-cell-base {
+    background: #f0fdf4;
+}
+
+.candidate-weight-table td.weight-cell-base-sub {
+    background: #f0fdf4;
+    color: #166534;
+}
+
 .candidate-weight-table td.weight-cell-mul {
     background: #f5f3ff;
 }
 
 .candidate-weight-table td.weight-cell-add {
-    background: #eff6ff;
+    background: #f0fdf4;
+}
+
+.candidate-weight-table th.weight-cell-subtotal,
+.candidate-weight-table td.weight-cell-subtotal {
+    background: #dcfce7;
+    border-left: 2px solid #86efac;
 }
 
 .layer-rule-list {
@@ -1401,6 +1458,12 @@ html, body {
         min-width: 300px;
     }
 
+    /* 좁은 화면 규칙이 접힘 상태의 width:0 을 덮지 않게 같은 컨텍스트에서 다시 지정한다. */
+    #sidebar.collapsed {
+        width: 0;
+        min-width: 0;
+    }
+
     .tool-panel,
     #playbackPanel {
         width: calc(100vw - 96px);
@@ -1438,3 +1501,1790 @@ html, body {
     border: 1px solid #cbd5e1; border-radius: 4px; text-align: center;
 }
 .time-fine-input-error { border-color: #ef4444; background: #fef2f2; }
+
+/* ===================== 상호명(장소) 검색 ===================== */
+
+.place-result-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.place-result-count {
+    font-size: 10px;
+    color: #a5adb8;
+    padding: 2px 2px 4px;
+    letter-spacing: .02em;
+}
+
+.place-empty,
+.place-review-empty,
+.place-review-loading {
+    padding: 14px;
+    font-size: 11px;
+    color: #cbd5e1;
+}
+
+.place-error {
+    padding: 10px;
+    font-size: 11px;
+    color: #fca5a5;
+    line-height: 1.45;
+}
+
+.place-key-guide {
+    padding: 0 10px 10px;
+    font-size: 11px;
+    color: #cbd5e1;
+    line-height: 1.5;
+}
+
+.place-key-guide pre {
+    margin: 6px 0 0;
+    padding: 8px;
+    background: #1b1e23;
+    border: 1px solid #3d434c;
+    border-radius: 4px;
+    font-size: 10px;
+    color: #86efac;
+    white-space: pre-wrap;
+}
+
+.place-card {
+    background: #262a31;
+    border: 1px solid #3d434c;
+    border-left: 2px solid var(--accent);
+    border-radius: 6px;
+    padding: 8px;
+}
+
+.place-card.active {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px rgba(122, 162, 255, .35);
+}
+
+.place-card-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+}
+
+.place-card-rank {
+    flex: 0 0 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--accent-strong);
+    color: var(--accent-fg);
+    font-size: 10px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.place-card-name {
+    font-size: 12px;
+    font-weight: 700;
+    color: #ffffff;
+}
+
+.place-card-category {
+    font-size: 10px;
+    color: #a5adb8;
+    margin-top: 1px;
+}
+
+.place-card-body {
+    margin-top: 6px;
+    font-size: 11px;
+    color: #e2e8f0;
+    line-height: 1.4;
+}
+
+.place-card-row {
+    display: flex;
+    gap: 6px;
+}
+
+.place-card-key {
+    flex: 0 0 42px;
+    color: #a5adb8;
+}
+
+.place-card-actions {
+    display: flex;
+    gap: 4px;
+    margin-top: 8px;
+}
+
+.place-btn {
+    flex: 1 1 auto;
+    padding: 5px 6px;
+    font-size: 10px;
+    font-weight: 600;
+    text-align: center;
+    color: #e2e8f0;
+    background: #2f343c;
+    border: 1px solid #454b55;
+    border-radius: 4px;
+    cursor: pointer;
+    text-decoration: none;
+}
+
+.place-btn:hover:not(:disabled) {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    color: #ffffff;
+}
+
+.place-btn:disabled {
+    opacity: .45;
+    cursor: not-allowed;
+}
+
+.place-btn-link {
+    color: var(--accent);
+}
+
+.place-search-pin-wrap {
+    background: transparent;
+    border: none;
+}
+
+.place-search-pin {
+    width: 24px;
+    height: 24px;
+    border-radius: 50% 50% 50% 0;
+    transform: rotate(-45deg);
+    background: var(--accent-strong);
+    border: 2px solid #ffffff;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, .45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 700;
+    color: #0b1a10;
+}
+
+.place-search-pin span {
+    transform: rotate(45deg);
+    line-height: 1;
+    color: var(--accent-fg);
+}
+
+.place-popup-name {
+    font-size: 12px;
+    font-weight: 700;
+    margin-bottom: 2px;
+}
+
+.place-popup-category,
+.place-popup-address,
+.place-popup-tel,
+.place-popup-coord {
+    font-size: 11px;
+    color: #444;
+    line-height: 1.4;
+}
+
+.place-review-note {
+    font-size: 10px;
+    color: #cbd5e1;
+    line-height: 1.5;
+    padding: 2px 2px 6px;
+}
+
+.place-review-links {
+    display: flex;
+    gap: 4px;
+}
+
+/* ===== GP 안내 화면 재현 카드 ===== */
+/* 실제 내비게이션 안내 바를 닮게 어두운 배경 + 큰 회전 도형으로 구성한다. */
+.gp-guidance-open {
+    display: block;
+    width: 100%;
+    margin: 0 0 8px;
+    padding: 6px 8px;
+    background: #1e293b;
+    color: #f8fafc;
+    border: none;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+}
+.gp-guidance-open:hover { background: #334155; }
+
+.gp-guidance-card {
+    position: relative;
+    z-index: 1200;
+    width: 236px;
+    background: #0f172a;
+    color: #f8fafc;
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    border-radius: 12px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+    overflow: hidden;
+}
+.gp-guidance-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 10px;
+    background: rgba(148, 163, 184, 0.12);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+}
+.gp-guidance-close {
+    background: none;
+    border: none;
+    color: #cbd5e1;
+    font-size: 12px;
+    cursor: pointer;
+    padding: 0 2px;
+}
+.gp-guidance-close:hover { color: #f8fafc; }
+.gp-guidance-body { padding: 8px 9px; }
+.gp-guidance-turn {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.gp-guidance-turn-name {
+    font-size: 13px;
+    font-weight: 800;
+    line-height: 1.25;
+}
+.gp-guidance-turn-sub {
+    margin-top: 3px;
+    font-size: 10px;
+    color: #94a3b8;
+    line-height: 1.4;
+}
+.gp-guidance-lane {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(148, 163, 184, 0.2);
+    text-align: center;
+}
+.gp-guidance-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(148, 163, 184, 0.2);
+    font-size: 10px;
+    color: #94a3b8;
+}
+
+/* ===== 옴니박스 (단일 검색창) ===== */
+#omnibox-wrap { position: relative; margin-bottom: 8px; }
+
+#omnibox-field {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 8px;
+    background: rgba(148, 163, 184, 0.12);
+    border: 1px solid rgba(148, 163, 184, 0.3);
+    border-radius: 8px;
+    transition: border-color .12s, background .12s;
+}
+#omnibox-field:focus-within {
+    border-color: var(--accent);
+    background: rgba(122, 162, 255, 0.1);
+}
+#omnibox-icon { color: #94a3b8; font-size: 14px; line-height: 1; }
+#omnibox {
+    flex: 1;
+    min-width: 0;
+    padding: 8px 0;
+    background: none;
+    border: none;
+    outline: none;
+    color: #e2e8f0;
+    font-size: 12px;
+}
+#omnibox::placeholder { color: #7c899c; }
+#omniboxClear {
+    background: none;
+    border: none;
+    color: #7c899c;
+    font-size: 11px;
+    cursor: pointer;
+    padding: 2px 0;
+}
+#omniboxClear:hover { color: #e2e8f0; }
+
+#omnibox-results {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    z-index: 900;
+    background: #16202f;
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    border-radius: 8px;
+    box-shadow: 0 8px 22px rgba(0, 0, 0, 0.45);
+    overflow: hidden;
+}
+#omnibox-results.hidden { display: none; }
+
+.omnibox-item {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 7px 9px;
+    cursor: pointer;
+    font-size: 12px;
+}
+.omnibox-item.active { background: rgba(122, 162, 255, 0.18); }
+.omnibox-item-kind {
+    flex: 0 0 auto;
+    min-width: 92px;
+    color: #94a3b8;
+    font-size: 10px;
+    font-weight: 700;
+}
+.omnibox-item-value {
+    color: #e2e8f0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+#omnibox-hint {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 5px;
+}
+#omnibox-hint code {
+    padding: 1px 4px;
+    background: rgba(148, 163, 184, 0.14);
+    border-radius: 4px;
+    color: #8b98ab;
+    font-size: 9px;
+}
+
+/* ===================== 카카오 로드뷰 ===================== */
+
+.floating-panel {
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    width: 460px;
+    height: 320px;
+    min-width: 320px;
+    min-height: 220px;
+    background: #1b1e23;
+    border: 1px solid #3d434c;
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, .45);
+    z-index: 2200;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.floating-panel.hidden {
+    display: none;
+}
+
+/* 우하단 고정이므로 좌상단 핸들을 끌면 패널이 커진다. */
+.floating-panel-resize-handle {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 18px;
+    height: 18px;
+    z-index: 2;
+    cursor: nwse-resize;
+    background:
+        linear-gradient(135deg, #6b7280 0 2px, transparent 2px 5px, #6b7280 5px 7px, transparent 7px 10px, #6b7280 10px 12px, transparent 12px);
+    border-top-left-radius: 8px;
+    touch-action: none;
+}
+
+.floating-panel-resize-handle:hover {
+    background:
+        linear-gradient(135deg, #f59e0b 0 2px, transparent 2px 5px, #f59e0b 5px 7px, transparent 7px 10px, #f59e0b 10px 12px, transparent 12px);
+}
+
+/* 리사이즈 중에는 로드뷰 캔버스가 포인터를 먹지 않게 한다. */
+.floating-panel.resizing .floating-panel-body {
+    pointer-events: none;
+}
+
+.floating-panel.resizing {
+    user-select: none;
+}
+
+.floating-panel-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px 6px 22px;
+    cursor: default;
+    background: #23262b;
+    border-bottom: 1px solid #3a3f46;
+}
+
+.floating-panel-title {
+    font-size: 11px;
+    font-weight: 700;
+    color: #ffffff;
+}
+
+.floating-panel-subtitle {
+    flex: 1 1 auto;
+    font-size: 10px;
+    color: #a5adb8;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.floating-panel-close {
+    flex: 0 0 auto;
+    width: 20px;
+    height: 20px;
+    background: #2f343c;
+    border: 1px solid #454b55;
+    border-radius: 4px;
+    color: #e2e8f0;
+    font-size: 10px;
+    cursor: pointer;
+}
+
+.floating-panel-close:hover {
+    border-color: #f59e0b;
+}
+
+.floating-panel-body {
+    position: relative;
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+.roadview-view {
+    width: 100%;
+    height: 100%;
+}
+
+.roadview-view.dim {
+    opacity: .25;
+}
+
+.panel-message {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    text-align: center;
+    font-size: 11px;
+    line-height: 1.5;
+    color: #cbd5e1;
+    background: rgba(27, 30, 35, .82);
+}
+
+.panel-message.hidden {
+    display: none;
+}
+
+.roadview-popup-btn {
+    margin-top: 6px;
+    padding: 4px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #7c2d12;
+    background: #fed7aa;
+    border: 1px solid #f59e0b;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.roadview-popup-btn:hover {
+    background: #fdba74;
+}
+
+.panel-message-inner {
+    max-width: 340px;
+    text-align: left;
+}
+
+.panel-message-text {
+    font-weight: 600;
+    color: #e2e8f0;
+    margin-bottom: 6px;
+}
+
+.panel-message-steps {
+    margin: 0 0 8px;
+    padding-left: 16px;
+    color: #a5adb8;
+}
+
+.panel-message-steps li {
+    margin-bottom: 2px;
+}
+
+.panel-message-code {
+    display: block;
+    padding: 6px 8px;
+    background: #0f1216;
+    border: 1px solid #3d434c;
+    border-radius: 4px;
+    color: #86efac;
+    font-size: 10px;
+    word-break: break-all;
+}
+
+/* ===================== 카카오 패널 공통/개별 스타일 ===================== */
+
+.floating-panel-body {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.roadview-view,
+.skyview-view {
+    flex: 1 1 auto;
+    min-height: 0;
+    width: 100%;
+}
+
+.roadview-view.dim,
+.skyview-view.dim {
+    opacity: .2;
+}
+
+.roadview-message-slot,
+.skyview-message-slot {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+}
+
+.roadview-message-slot .panel-message,
+.skyview-message-slot .panel-message {
+    pointer-events: auto;
+}
+
+/* --- 카카오 로컬 패널 --- */
+
+/* --- 위성 패널 --- */
+
+.skyview-toolbar {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-bottom: 1px solid #2f343c;
+    background: #1f2329;
+}
+
+.skyview-check {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 10px;
+    color: #cbd5e1;
+    cursor: pointer;
+}
+
+.floating-panel-header {
+    cursor: move;
+}
+
+.floating-panel.dragging {
+    user-select: none;
+}
+
+.floating-panel.dragging .floating-panel-body {
+    pointer-events: none;
+}
+
+.kakao-search-row select {
+    padding: 3px 4px;
+    font-size: 10px;
+    color: #e2e8f0;
+    background: #2f343c;
+    border: 1px solid #454b55;
+    border-radius: 4px;
+}
+
+/* ===================== 타이포/가독성 정리 =====================
+   글자 크기가 8~13px로 흩어져 있어 화면마다 톤이 달랐다.
+   아래 네 단계로 통일하고, 사이드바·레이어·팝업에 같은 규칙을 적용한다. */
+
+:root {
+    --fs-meta: 10px;   /* 보조 정보, 배지 */
+    --fs-body: 11px;   /* 기본 본문 */
+    --fs-title: 12px;  /* 항목 제목 */
+    --fs-head: 13px;   /* 패널/브랜드 제목 */
+    --lh-tight: 1.35;
+    --lh-body: 1.5;
+}
+
+/* --- 검색창 --- */
+
+#sidebar-search {
+    padding: 10px;
+}
+
+#omnibox {
+    font-size: var(--fs-title);
+}
+
+#omnibox-hint code {
+    font-size: 9px;
+    letter-spacing: .02em;
+}
+
+#omnibox-results {
+    font-size: var(--fs-body);
+}
+
+.interaction-mode-btn {
+    font-size: var(--fs-body);
+    padding: 6px 8px;
+}
+
+/* --- 결과 헤더 + 지우기 --- */
+
+#sidebar-result-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+#sidebar-title {
+    font-size: var(--fs-title);
+    font-weight: 700;
+    letter-spacing: .01em;
+}
+
+#clearResultsButton {
+    flex: 0 0 auto;
+    padding: 3px 8px;
+    font-size: var(--fs-meta);
+    font-weight: 600;
+    color: #cbd5e1;
+    background: #2f343c;
+    border: 1px solid #454b55;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+#clearResultsButton:hover:not(:disabled) {
+    border-color: #7aa2ff;
+    color: #ffffff;
+}
+
+#clearResultsButton:disabled {
+    opacity: .35;
+    cursor: default;
+}
+
+/* --- 레이어 관리 --- */
+
+.filter-title {
+    font-size: var(--fs-meta);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: #94a3b8;
+}
+
+#layerControlList {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.layer-control-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 24px;
+    padding: 2px 4px;
+    border-radius: 4px;
+}
+
+.layer-control-item:hover {
+    background: #2b3037;
+}
+
+.layer-control-label {
+    flex: 1 1 auto;
+    font-size: var(--fs-body);
+    line-height: var(--lh-tight);
+    color: #dbe4f0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.layer-count {
+    flex: 0 0 auto;
+    font-size: 9px;
+    font-variant-numeric: tabular-nums;
+    color: #8b95a3;
+}
+
+.layer-color-swatch {
+    flex: 0 0 auto;
+}
+
+.layer-ctx-trigger {
+    flex: 0 0 auto;
+    font-size: 9px;
+    opacity: .55;
+}
+
+.layer-control-item:hover .layer-ctx-trigger {
+    opacity: 1;
+}
+
+/* --- 검색 결과 항목 --- */
+
+.info-title {
+    font-size: var(--fs-body);
+}
+
+.info-detail,
+.info-row {
+    font-size: var(--fs-body);
+    line-height: var(--lh-body);
+}
+
+.info-key {
+    min-width: 62px;
+}
+
+/* --- 마커 팝업 --- */
+
+.mk-popup {
+    min-width: 168px;
+    /* 후보 링크 표처럼 넓은 내용이 있으므로 가로 폭을 묶지 않는다. */
+    max-width: none;
+    font-size: var(--fs-body);
+    line-height: var(--lh-tight);
+    color: #1f2937;
+}
+
+.mk-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 6px;
+    margin-bottom: 5px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.mk-head-id {
+    font-size: var(--fs-title);
+    font-weight: 400;
+    color: #111827;
+}
+
+.mk-head-type {
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    color: #6b7280;
+    white-space: nowrap;
+}
+
+.mk-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.mk-row {
+    display: flex;
+    gap: 6px;
+}
+
+.mk-key {
+    flex: 0 0 56px;
+    font-size: var(--fs-meta);
+    line-height: 1.5;
+    color: #6b7280;
+}
+
+.mk-val {
+    flex: 1 1 auto;
+    font-variant-numeric: tabular-nums;
+    word-break: break-word;
+}
+
+.mk-rows-extra {
+    margin-top: 5px;
+    padding-top: 5px;
+    border-top: 1px solid #e2e8f0;
+}
+
+/* 세로만 제한한다(후보 링크 표는 가로로 길게 봐야 한다). */
+.leaflet-popup-content {
+    margin: 9px 11px;
+    max-height: 62vh;
+    overflow-y: auto;
+    overflow-x: visible;
+}
+
+/* --- 떠 있는 패널 --- */
+
+.floating-panel-title {
+    font-size: var(--fs-body);
+}
+
+.floating-panel-subtitle {
+    font-size: var(--fs-meta);
+}
+
+/* ===================== 검색 결과 카드 =====================
+   한 줄짜리 제목 + 좌우 정렬 행이라 눈이 붙을 곳이 없었다.
+   종류 배지 / 이름 / 번호를 분리하고, 값은 고정폭 숫자로 정렬한다. */
+
+#infoPanel {
+    padding: 8px 8px 10px;
+}
+
+.info-item {
+    position: relative;
+    margin-bottom: 5px;
+    padding: 7px 9px;
+    background: #23272e;
+    border: 1px solid #343a43;
+    border-left-width: 2px;
+    border-radius: 5px;
+    transition: background .12s ease, border-color .12s ease;
+}
+
+.info-item:hover {
+    background: #2a2f37;
+    border-color: #4a5261;
+}
+
+.info-item.marker {
+    border-left-color: #7aa2ff;
+}
+
+.info-item.line {
+    border-left-color: #f7c948;
+}
+
+.info-title {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 5px;
+}
+
+.info-badge {
+    flex: 0 0 auto;
+    padding: 1px 5px;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: .05em;
+    border-radius: 3px;
+    background: #334155;
+    color: #cbd5e1;
+}
+
+.info-badge-marker {
+    background: #1e3a8a;
+    color: #bfdbfe;
+}
+
+.info-badge-line {
+    background: #713f12;
+    color: #fde68a;
+}
+
+.info-badge-coord {
+    background: #14532d;
+    color: #bbf7d0;
+}
+
+.info-badge-road {
+    background: #3f3f46;
+    color: #e4e4e7;
+}
+
+.info-name {
+    flex: 1 1 auto;
+    font-size: var(--fs-body);
+    font-weight: 600;
+    color: #f1f5f9;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.info-idx {
+    flex: 0 0 auto;
+    font-size: 9px;
+    color: #7e8794;
+    font-variant-numeric: tabular-nums;
+}
+
+.info-detail {
+    color: #dbe4f0;
+}
+
+.info-row {
+    justify-content: flex-start;
+    gap: 8px;
+    margin: 0;
+    padding: 1px 0;
+}
+
+.info-row span:last-child {
+    flex: 1 1 auto;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    color: #e8eef7;
+}
+
+.info-key {
+    flex: 0 0 58px;
+    color: #94a3b8;
+    font-size: var(--fs-meta);
+    text-align: left;
+}
+
+.info-extra {
+    border-top: 1px solid #343a43;
+    margin-top: 5px;
+    padding-top: 4px;
+}
+
+/* ===================== 사이드바 탭 (결과 / 레이어) ===================== */
+
+#sidebar-tabs {
+    display: flex;
+    align-items: stretch;
+    gap: 2px;
+    flex: 0 0 auto;
+    padding: 6px 8px 0;
+    background: var(--surface-soft);
+    border-bottom: 1px solid #3a3f46;
+}
+
+.sidebar-tab {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 6px 12px;
+    font-size: var(--fs-body);
+    font-weight: 600;
+    color: #94a3b8;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+}
+
+.sidebar-tab:hover {
+    color: #e2e8f0;
+}
+
+.sidebar-tab.active {
+    color: #ffffff;
+    border-bottom-color: #7aa2ff;
+}
+
+.sidebar-tab-count:not(:empty) {
+    padding: 0 5px;
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 15px;
+    border-radius: 999px;
+    background: #3a4150;
+    color: #cbd5e1;
+    font-variant-numeric: tabular-nums;
+}
+
+.sidebar-tab.active .sidebar-tab-count:not(:empty) {
+    background: #1e3a8a;
+    color: #bfdbfe;
+}
+
+#sidebar-tabs #clearResultsButton {
+    margin: 0 0 4px auto;
+    align-self: center;
+}
+
+#sidebar-tabs #clearResultsButton.hidden {
+    display: none;
+}
+
+.sidebar-pane {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+.sidebar-pane.hidden {
+    display: none;
+}
+
+#sidebar-result-header {
+    flex: 0 0 auto;
+}
+
+/* ===================== 검색 결과 카드 마무리 ===================== */
+
+#infoPanel:empty::after {
+    content: '검색하면 결과가 여기에 표시됩니다.';
+    display: block;
+    padding: 18px 12px;
+    font-size: var(--fs-body);
+    color: #6b7280;
+    text-align: center;
+}
+
+.info-item {
+    cursor: pointer;
+}
+
+.info-item:active {
+    background: #303640;
+}
+
+/* 결과 카드의 값이 길어도 카드 폭을 밀지 않게 한다. */
+.info-row span:last-child {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.place-card {
+    padding: 8px 9px;
+}
+
+.place-card-actions {
+    margin-top: 6px;
+}
+
+.place-error {
+    padding: 10px;
+    font-size: var(--fs-body);
+    line-height: var(--lh-body);
+    color: #fca5a5;
+}
+
+
+/* ===================== GP 안내 팝업 ===================== */
+
+.gp-popup .mk-key {
+    flex: 0 0 78px;
+}
+
+.gp-bubble-preview {
+    display: flex;
+    justify-content: center;
+    margin: 0 0 7px;
+    padding: 6px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 4px;
+}
+
+.gp-popup .gp-guidance-open {
+    display: block;
+    width: 100%;
+    margin-top: 7px;
+    padding: 5px 8px;
+    font-size: var(--fs-meta);
+    font-weight: 600;
+    color: #1e3a8a;
+    background: #e0e7ff;
+    border: 1px solid #a5b4fc;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.gp-popup .gp-guidance-open:hover {
+    background: #c7d2fe;
+}
+
+.gp-dim {
+    color: #94a3b8;
+}
+
+.gp-ok {
+    color: #16a34a;
+    font-weight: 600;
+}
+
+.gp-warn {
+    color: #dc2626;
+    font-weight: 600;
+}
+
+.gp-mismatch {
+    margin-top: 6px;
+    padding: 4px 6px;
+    font-size: var(--fs-meta);
+    font-weight: 600;
+    color: #991b1b;
+    background: #fee2e2;
+    border-left: 2px solid #dc2626;
+    border-radius: 3px;
+}
+
+.gp-section {
+    margin-top: 7px;
+    padding-top: 6px;
+    border-top: 1px solid #e2e8f0;
+}
+
+.gp-section-title {
+    font-size: var(--fs-meta);
+    font-weight: 700;
+    letter-spacing: .03em;
+    margin-bottom: 5px;
+}
+
+
+/* ===================== 우측 툴바 · 지도 컨트롤 테마 =====================
+   지도 위에 얹히는 컨트롤은 화이트로 둔다. 사이드바 다크 톤에 맞춰 어둡게 했을
+   때는 밝은 지도 타일과 싸워서 아이콘이 잘 보이지 않았고, 활성 상태도 구분이
+   어려웠다. 파란 강조색(--accent-strong)만 공유해 한 벌로 읽히게 한다. */
+
+.tool-stack {
+    border: 1px solid var(--control-border);
+    border-radius: 8px;
+    background: var(--control-bg);
+    box-shadow: 0 3px 12px rgba(15, 23, 42, .18);
+}
+
+.tool-btn {
+    width: 34px;
+    height: 34px;
+    background: transparent;
+    border: none;
+    color: var(--control-fg);
+    box-shadow: none;
+    transition: background .12s ease, color .12s ease;
+}
+
+.tool-stack .tool-btn + .tool-btn {
+    border-top: 1px solid var(--control-border);
+}
+
+.tool-btn:hover:not(:disabled) {
+    background: var(--control-hover);
+    color: var(--accent-strong);
+}
+
+.tool-btn.active {
+    background: var(--accent-strong);
+    border-color: var(--accent-strong);
+    color: var(--accent-fg);
+}
+
+.tool-btn:disabled {
+    opacity: .35;
+    cursor: not-allowed;
+}
+
+.tool-btn i {
+    font-size: 13px;
+}
+
+/* Leaflet 기본 컨트롤(레이어 토글 등)도 우측 툴바와 같은 화이트 톤으로 */
+.leaflet-touch .leaflet-bar,
+.leaflet-bar,
+.leaflet-control-layers {
+    border: 1px solid var(--control-border) !important;
+    border-radius: 8px !important;
+    background: var(--control-bg) !important;
+    box-shadow: 0 3px 12px rgba(15, 23, 42, .18) !important;
+    color: var(--control-fg);
+}
+
+.leaflet-bar a,
+.leaflet-bar a:hover,
+.leaflet-control-layers-toggle {
+    background-color: transparent;
+    border-bottom-color: var(--control-border);
+    color: var(--control-fg);
+}
+
+.leaflet-bar a:hover {
+    background-color: var(--control-hover);
+    color: var(--accent-strong);
+}
+/* 레이어 토글은 원본이 어두운 아이콘이라 화이트 배경에서 반전이 필요 없다. */
+
+/* 지도 컨트롤은 다크 테마에서도 흰 패널로 두기 때문에(위 주석 참고) 글씨는
+   테마 토큰(--text: 밝은 회색)이 아니라 진한 회색으로 고정한다. 밝은 회색이면
+   흰 배경에 묻혀서 레이어 이름이 보이지 않았다. */
+.leaflet-control-layers-expanded {
+    padding: 8px 10px;
+    font-size: var(--fs-body);
+    color: #1f2937;
+}
+
+.leaflet-control-layers-expanded label,
+.leaflet-control-layers-expanded label span,
+.leaflet-control-layers-base label,
+.leaflet-control-layers-overlays label {
+    color: #1f2937;
+}
+
+.leaflet-control-layers-separator {
+    border-top-color: #d7dee8;
+}
+
+.leaflet-control-attribution {
+    background: rgba(31, 34, 40, .82) !important;
+    color: var(--muted) !important;
+}
+
+.leaflet-control-attribution a {
+    color: var(--accent) !important;
+}
+
+/* 패널 강조색도 사이드바와 같은 파랑으로 통일(기존 주황 제거) */
+.floating-panel-resize-handle {
+    background:
+        linear-gradient(135deg, var(--muted) 0 2px, transparent 2px 5px, var(--muted) 5px 7px, transparent 7px 10px, var(--muted) 10px 12px, transparent 12px);
+}
+
+.floating-panel-resize-handle:hover {
+    background:
+        linear-gradient(135deg, var(--accent) 0 2px, transparent 2px 5px, var(--accent) 5px 7px, transparent 7px 10px, var(--accent) 10px 12px, transparent 12px);
+}
+
+.floating-panel-close:hover {
+    border-color: var(--accent);
+    color: #ffffff;
+}
+
+.kakao-tab.active {
+    border-bottom-color: var(--accent);
+}
+
+.skyview-toolbar select:focus {
+    outline: 1px solid var(--accent);
+}
+
+/* 팝업(밝은 배경) 안의 버튼도 같은 파랑 계열로 */
+.roadview-popup-btn {
+    color: #1e3a8a;
+    background: #dbeafe;
+    border-color: #93c5fd;
+}
+
+.roadview-popup-btn:hover {
+    background: #bfdbfe;
+    border-color: #60a5fa;
+}
+
+.gp-popup .gp-guidance-open {
+    color: #1e3a8a;
+    background: #dbeafe;
+    border-color: #93c5fd;
+}
+
+.gp-popup .gp-guidance-open:hover {
+    background: #bfdbfe;
+}
+
+/* ===================== 아이콘·버튼 색상 통일 =====================
+   기능마다 파랑/초록/청록이 섞여 있어서 같은 성격의 버튼이 다른 색으로 보였다.
+   역할별로 세 가지만 쓴다: 중립(기본) / 강조(활성·주요 동작) / 경고(파괴적).
+   아이콘은 항상 버튼의 글자색을 물려받는다(currentColor). */
+
+.tool-btn i,
+.interaction-mode-btn i,
+.panel-close-btn i,
+.layer-ctx-trigger i,
+#exportHtmlMenuButton i,
+#exportCsvMenuButton i,
+#exportJsonMenuButton i,
+.kakao-btn i,
+.place-btn i {
+    color: inherit;
+}
+
+/* 중립 버튼(다크 표면) — 사이드바 톤 */
+.interaction-mode-btn {
+    background: #2f343c;
+    border: 1px solid #454b55;
+    color: var(--muted);
+}
+
+.interaction-mode-btn:hover:not(.active) {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    color: #ffffff;
+}
+
+/* 밝은 도구 패널 안의 주요 동작 버튼 — 색은 하나(강조 파랑 계열)로 통일하고
+   기능은 아이콘/문구로 구분한다(기존엔 HTML=파랑, CSV=초록으로 갈렸다). */
+#exportHtmlMenuButton,
+#exportCsvMenuButton,
+#exportJsonMenuButton {
+    background: #dbeafe;
+    border: 1px solid #93c5fd;
+    color: #1e3a8a;
+}
+
+#exportHtmlMenuButton:hover,
+#exportCsvMenuButton:hover,
+#exportJsonMenuButton:hover {
+    background: #bfdbfe;
+    border-color: #60a5fa;
+    color: #16233d;
+}
+
+/* 강조 — 활성 상태는 툴바 아이콘과 같은 파랑 하나로 */
+.interaction-mode-btn.active {
+    background: var(--accent-strong);
+    border-color: var(--accent-strong);
+    color: var(--accent-fg);
+}
+
+/* 진행 표시도 같은 강조색 계열로 */
+#uploadProgressBar {
+    background: var(--accent-strong);
+}
+
+/* 경고 — 파괴적 동작만 빨강을 쓴다 */
+.distance-delete-btn {
+    background: #b91c1c;
+    border-color: #b91c1c;
+    color: #fee2e2;
+}
+
+.distance-delete-btn:hover {
+    background: #dc2626;
+    border-color: #dc2626;
+}
+
+/* ===================== 라이트 모드 =====================
+   다크가 기본이고, 아래에서 밝은 표면/글자/테두리로 덮어쓴다.
+   36-theme.js 가 html[data-theme="light"] 를 붙였다 떼는 식으로 전환한다. */
+
+html[data-theme="light"] {
+    --panel-blue: #ffffff;
+    --panel-blue-dark: #f1f5f9;
+    --surface: #ffffff;
+    --surface-soft: #f8fafc;
+    --border: #e2e8f0;
+    --text: #0f172a;
+    --muted: #64748b;
+    --accent: #2563eb;
+    --accent-soft: #e0e7ff;
+    --accent-strong: #2563eb;
+    --accent-fg: #ffffff;
+    --shadow: 0 12px 28px rgba(15, 23, 42, 0.12);
+}
+
+html[data-theme="light"] body,
+html[data-theme="light"] #container {
+    background: #eef2f7;
+    color: var(--text);
+}
+
+/* --- 사이드바 --- */
+
+html[data-theme="light"] #sidebar-header {
+    background: #ffffff;
+    color: var(--text);
+    border-bottom: 1px solid var(--border);
+}
+
+html[data-theme="light"] #sidebar-search,
+html[data-theme="light"] #sidebar-tabs,
+html[data-theme="light"] #sidebar-filter,
+html[data-theme="light"] .skyview-toolbar {
+    background: var(--surface-soft);
+    border-color: var(--border);
+}
+
+html[data-theme="light"] #sidebar-result-header,
+html[data-theme="light"] #infoPanel,
+html[data-theme="light"] .layer-tree-card,
+html[data-theme="light"] .layer-control-item,
+html[data-theme="light"] .floating-panel,
+html[data-theme="light"] .info-item,
+html[data-theme="light"] .place-card,
+html[data-theme="light"] #omnibox-results {
+    background: #ffffff;
+    border-color: var(--border);
+    color: var(--text);
+}
+
+html[data-theme="light"] .info-item:hover,
+html[data-theme="light"] .layer-control-item:hover,
+html[data-theme="light"] .omnibox-item:hover {
+    background: #f1f5f9;
+}
+
+html[data-theme="light"] .info-item:active {
+    background: #e2e8f0;
+}
+
+html[data-theme="light"] .info-name,
+html[data-theme="light"] .layer-control-label,
+html[data-theme="light"] #sidebar-title,
+html[data-theme="light"] .place-card-name,
+html[data-theme="light"] .sidebar-tab.active,
+html[data-theme="light"] .floating-panel-title,
+html[data-theme="light"] .panel-message-text {
+    color: #0f172a;
+}
+
+html[data-theme="light"] .info-detail,
+html[data-theme="light"] .info-row span:last-child,
+html[data-theme="light"] .place-card-body,
+html[data-theme="light"] .skyview-check {
+    color: #334155;
+}
+
+html[data-theme="light"] .info-key,
+html[data-theme="light"] .layer-count,
+html[data-theme="light"] .filter-title,
+html[data-theme="light"] .sidebar-tab,
+html[data-theme="light"] .place-card-category,
+html[data-theme="light"] .place-card-key,
+html[data-theme="light"] .place-result-count,
+html[data-theme="light"] .place-empty,
+html[data-theme="light"] .floating-panel-subtitle,
+html[data-theme="light"] .panel-message-steps,
+html[data-theme="light"] #infoPanel:empty::after {
+    color: #64748b;
+}
+
+/* --- 검색창 --- */
+
+html[data-theme="light"] #omnibox-field {
+    background: #ffffff;
+    border-color: #cbd5e1;
+}
+
+html[data-theme="light"] #omnibox {
+    color: var(--text);
+    background: transparent;
+}
+
+html[data-theme="light"] #omnibox-hint code {
+    background: #eef2f7;
+    color: #475569;
+    border-color: var(--border);
+}
+
+/* --- 버튼류 --- */
+
+html[data-theme="light"] .interaction-mode-btn,
+html[data-theme="light"] #clearResultsButton,
+html[data-theme="light"] #btnCloseSidebar,
+html[data-theme="light"] .place-btn,
+html[data-theme="light"] .floating-panel-close,
+html[data-theme="light"] .kakao-search-row select {
+    background: #ffffff;
+    border-color: #cbd5e1;
+    color: #475569;
+}
+
+html[data-theme="light"] .interaction-mode-btn:hover:not(.active),
+html[data-theme="light"] #clearResultsButton:hover:not(:disabled),
+html[data-theme="light"] #btnCloseSidebar:hover,
+html[data-theme="light"] .place-btn:hover:not(:disabled),
+html[data-theme="light"] .floating-panel-close:hover {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    color: #1e3a8a;
+}
+
+html[data-theme="light"] .interaction-mode-btn.active,
+html[data-theme="light"] .tool-btn.active {
+    background: var(--accent-strong);
+    border-color: var(--accent-strong);
+    color: var(--accent-fg);
+}
+
+/* --- 우측 툴바 · 지도 컨트롤 --- */
+
+html[data-theme="light"] .tool-stack,
+html[data-theme="light"] .leaflet-bar,
+html[data-theme="light"] .leaflet-touch .leaflet-bar,
+html[data-theme="light"] .leaflet-control-layers {
+    background: #ffffff !important;
+    border-color: var(--border) !important;
+    box-shadow: 0 3px 12px rgba(15, 23, 42, .14) !important;
+}
+
+html[data-theme="light"] .tool-btn,
+html[data-theme="light"] .leaflet-bar a,
+html[data-theme="light"] .leaflet-control-layers-toggle {
+    color: #475569;
+}
+
+html[data-theme="light"] .tool-btn:hover:not(:disabled),
+html[data-theme="light"] .leaflet-bar a:hover {
+    background: #eef2f7;
+    color: #0f172a;
+}
+
+html[data-theme="light"] .leaflet-control-layers-toggle {
+    filter: none;
+}
+
+html[data-theme="light"] .leaflet-control-layers-expanded,
+html[data-theme="light"] .leaflet-control-layers-expanded label {
+    color: #334155;
+}
+
+html[data-theme="light"] .leaflet-control-attribution {
+    background: rgba(255, 255, 255, .86) !important;
+    color: #475569 !important;
+}
+
+/* --- 배지 / 코드 블록 / 탭 카운트 --- */
+
+html[data-theme="light"] .info-badge {
+    background: #e2e8f0;
+    color: #334155;
+}
+
+html[data-theme="light"] .info-badge-marker {
+    background: #dbeafe;
+    color: #1e3a8a;
+}
+
+html[data-theme="light"] .info-badge-line {
+    background: #fef3c7;
+    color: #92400e;
+}
+
+html[data-theme="light"] .info-badge-coord {
+    background: #dcfce7;
+    color: #166534;
+}
+
+html[data-theme="light"] .info-badge-road {
+    background: #e5e7eb;
+    color: #374151;
+}
+
+html[data-theme="light"] .sidebar-tab-count:not(:empty) {
+    background: #e2e8f0;
+    color: #475569;
+}
+
+html[data-theme="light"] .sidebar-tab.active .sidebar-tab-count:not(:empty) {
+    background: #dbeafe;
+    color: #1e3a8a;
+}
+
+html[data-theme="light"] .panel-message,
+html[data-theme="light"] .floating-panel-header {
+    background: var(--surface-soft);
+}
+
+html[data-theme="light"] .panel-message {
+    background: rgba(248, 250, 252, .92);
+}
+
+html[data-theme="light"] .panel-message-code,
+html[data-theme="light"] .place-key-guide pre {
+    background: #f1f5f9;
+    border-color: var(--border);
+    color: #166534;
+}
+
+html[data-theme="light"] .place-error,
+html[data-theme="light"] .kakao-error {
+    color: #b91c1c;
+}
+
+html[data-theme="light"] .info-extra,
+html[data-theme="light"] .place-review-head {
+    border-color: var(--border);
+}
+
+/* 툴바에는 <button> 과 <a>(다른 툴로 나가는 링크)가 섞여 있다.
+   앵커도 버튼과 똑같이 보이도록 맞춘다. */
+a.tool-btn {
+    display: grid;
+    place-items: center;
+    text-decoration: none;
+    box-sizing: border-box;
+}
+
+/* ===================== 사이드바 정리 =====================
+   패널이 헤더 그라데이션 / 검색 / 탭 / 결과헤더로 네 겹의 서로 다른 회색
+   밴드가 쌓여 있었다. 면은 하나로 두고 얇은 선으로만 나눈다.
+   (라이트 테마가 같은 요소에 흰색을 직접 지정하는 곳은 함께 덮어쓴다) */
+
+#sidebar-header,
+html[data-theme="light"] #sidebar-header {
+    background: var(--surface);
+    color: var(--text);
+    padding: 13px 12px 11px;
+    border-bottom: 1px solid var(--border);
+}
+
+#sidebar-brand {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--muted);
+}
+
+#sidebar-search,
+#sidebar-tabs,
+#sidebar-filter,
+html[data-theme="light"] #sidebar-search,
+html[data-theme="light"] #sidebar-tabs,
+html[data-theme="light"] #sidebar-filter {
+    background: var(--surface);
+}
+
+#sidebar-search {
+    padding: 11px 12px 12px;
+    gap: 9px;
+    border-bottom: 1px solid var(--border);
+}
+
+/* 접두어 칩은 입력할 때만 필요한 참고 정보다. 평소엔 접어 둔다. */
+#omnibox-wrap { margin-bottom: 0; }
+
+#omnibox-hint {
+    max-height: 0;
+    margin-top: 0;
+    overflow: hidden;
+    opacity: 0;
+    transition: max-height .14s ease, margin-top .14s ease, opacity .14s ease;
+}
+
+#omnibox-wrap:focus-within #omnibox-hint {
+    max-height: 40px;
+    margin-top: 7px;
+    opacity: 1;
+}
+
+/* 버튼 두 개가 따로 놀던 걸 하나의 세그먼트 컨트롤로 묶는다. */
+.interaction-mode-group {
+    gap: 0;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.interaction-mode-btn {
+    height: 30px;
+    padding: 0;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    color: var(--muted);
+    font-size: 11.5px;
+    font-weight: 600;
+}
+
+.interaction-mode-btn + .interaction-mode-btn {
+    border-left: 1px solid var(--border);
+}
+
+.interaction-mode-btn:hover:not(.active) { color: var(--text); }
+
+.interaction-mode-btn.active {
+    background: var(--accent-strong);
+    border-color: var(--accent-strong);
+    color: var(--accent-fg);
+}
+
+/* 탭 */
+#sidebar-tabs {
+    padding: 0 12px;
+    gap: 0;
+    border-bottom: 1px solid var(--border);
+}
+
+.sidebar-tab {
+    padding: 10px 0 8px;
+    margin-right: 16px;
+    font-size: 12px;
+}
+
+.sidebar-tab.active { border-bottom-color: var(--accent); }
+
+#sidebar-tabs #clearResultsButton { margin: 0 0 0 auto; }
+
+/* 결과 헤더: 별도 밴드였는데, 탭 바로 아래라 배경이 한 겹 더 생겼다.
+   같은 면 위의 작은 캡션으로 낮춘다. */
+#sidebar-result-header,
+html[data-theme="light"] #sidebar-result-header {
+    padding: 11px 12px 5px;
+    background: transparent;
+    border-bottom: none;
+}
+
+#sidebar-title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .06em;
+    color: var(--muted);
+}
+
+#sidebar-filter { padding: 10px 12px 14px; }
+
+/* ===================== 앱 탭 =====================
+   포지셔닝 / SDI 검색 두 화면을 오가는 최상위 전환. 사이드바 안의
+   결과/레이어 탭과 구분되도록 헤더 바로 아래 한 줄로 둔다.
+   SDI 툴(tile.css)도 같은 마크업·같은 모양을 쓴다. */
+
+.app-tabs {
+    display: flex;
+    flex: 0 0 auto;
+    gap: 0;
+    padding: 0 12px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+}
+
+.app-tab {
+    padding: 9px 0 7px;
+    margin-right: 18px;
+    border-bottom: 2px solid transparent;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 600;
+    text-decoration: none;
+    white-space: nowrap;
+}
+
+.app-tab:hover { color: var(--text); }
+
+.app-tab.active {
+    color: var(--text);
+    border-bottom-color: var(--accent);
+}
+
+#sidebar.collapsed .app-tabs {
+    opacity: 0;
+    pointer-events: none;
+}
